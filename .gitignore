@@ -1,0 +1,21 @@
+# Environment / secrets
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Data (play-by-play pulls are large and reproducible from the API - don't commit)
+*.csv
+*.parquet
+data/raw/
+data/cache/
+
+# OS
+.DS_Store
+Thumbs.db
