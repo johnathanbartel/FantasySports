@@ -7,8 +7,13 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-api/
 venv/
 *.egg-info/
+
+# SQLite dev database
+*.db
+*.db-journal
 
 # Data (play-by-play pulls are large and reproducible from the API - don't commit)
 *.csv
@@ -19,3 +24,6 @@ data/cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code local session settings (permission approvals, not project config)
+.claude/settings.local.json
