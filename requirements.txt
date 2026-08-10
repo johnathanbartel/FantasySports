@@ -2,3 +2,6 @@ cfbd>=5.0.0
 requests>=2.31
 pandas>=2.2
 python-dotenv>=1.0
+nfl_data_py>=0.3.3
+appdirs>=1.4
+pyarrow>=17.0

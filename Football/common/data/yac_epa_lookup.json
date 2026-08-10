@@ -1,0 +1,83 @@
+{
+  "source": "nfl_data_py (nflfastR) play-by-play",
+  "years": [
+    2022,
+    2023,
+    2024
+  ],
+  "overall_mean_yac_epa": 0.6678446643525089,
+  "buckets": [
+    {
+      "label": "<=0",
+      "yards_gained_min_exclusive": -100,
+      "yards_gained_max_inclusive": 0,
+      "n": 1731,
+      "mean_epa": -1.0679707558161247,
+      "mean_yac_epa": 0.15047689204268566,
+      "std_yac_epa": 0.6851072801382156
+    },
+    {
+      "label": "1-2",
+      "yards_gained_min_exclusive": 0,
+      "yards_gained_max_inclusive": 2,
+      "n": 2403,
+      "mean_epa": -0.3621077270961701,
+      "mean_yac_epa": 0.3518456824734394,
+      "std_yac_epa": 0.7438051883950882
+    },
+    {
+      "label": "3-5",
+      "yards_gained_min_exclusive": 2,
+      "yards_gained_max_inclusive": 5,
+      "n": 6698,
+      "mean_epa": 0.03908496623167547,
+      "mean_yac_epa": 0.4426643218386493,
+      "std_yac_epa": 0.8066681600479548
+    },
+    {
+      "label": "6-9",
+      "yards_gained_min_exclusive": 5,
+      "yards_gained_max_inclusive": 9,
+      "n": 10065,
+      "mean_epa": 0.5330792309449399,
+      "mean_yac_epa": 0.6637473767841751,
+      "std_yac_epa": 0.8593536714631217
+    },
+    {
+      "label": "10-14",
+      "yards_gained_min_exclusive": 9,
+      "yards_gained_max_inclusive": 14,
+      "n": 7004,
+      "mean_epa": 1.1013831769597389,
+      "mean_yac_epa": 0.8151098951185071,
+      "std_yac_epa": 1.0465931544722447
+    },
+    {
+      "label": "15-19",
+      "yards_gained_min_exclusive": 14,
+      "yards_gained_max_inclusive": 19,
+      "n": 3800,
+      "mean_epa": 1.525504550216829,
+      "mean_yac_epa": 0.7128181661819368,
+      "std_yac_epa": 1.0866439198502456
+    },
+    {
+      "label": "20-29",
+      "yards_gained_min_exclusive": 19,
+      "yards_gained_max_inclusive": 29,
+      "n": 3178,
+      "mean_epa": 2.0013986215081485,
+      "mean_yac_epa": 0.803185787940167,
+      "std_yac_epa": 1.1622671174024461
+    },
+    {
+      "label": "30+",
+      "yards_gained_min_exclusive": 29,
+      "yards_gained_max_inclusive": 1000,
+      "n": 1883,
+      "mean_epa": 3.421349380901866,
+      "mean_yac_epa": 1.5026546626840898,
+      "std_yac_epa": 1.6167609746944627
+    }
+  ]
+}
