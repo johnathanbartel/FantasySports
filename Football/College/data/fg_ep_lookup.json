@@ -1,0 +1,405 @@
+{
+  "source": "CFBD MetricsApi.get_field_goal_expected_points",
+  "rows": [
+    {
+      "distance": 17,
+      "expected_points": 2.85
+    },
+    {
+      "distance": 18,
+      "expected_points": 2.84
+    },
+    {
+      "distance": 19,
+      "expected_points": 2.82
+    },
+    {
+      "distance": 20,
+      "expected_points": 2.81
+    },
+    {
+      "distance": 21,
+      "expected_points": 2.79
+    },
+    {
+      "distance": 22,
+      "expected_points": 2.78
+    },
+    {
+      "distance": 23,
+      "expected_points": 2.75
+    },
+    {
+      "distance": 24,
+      "expected_points": 2.73
+    },
+    {
+      "distance": 25,
+      "expected_points": 2.71
+    },
+    {
+      "distance": 26,
+      "expected_points": 2.68
+    },
+    {
+      "distance": 27,
+      "expected_points": 2.65
+    },
+    {
+      "distance": 28,
+      "expected_points": 2.62
+    },
+    {
+      "distance": 29,
+      "expected_points": 2.59
+    },
+    {
+      "distance": 30,
+      "expected_points": 2.55
+    },
+    {
+      "distance": 31,
+      "expected_points": 2.52
+    },
+    {
+      "distance": 32,
+      "expected_points": 2.48
+    },
+    {
+      "distance": 33,
+      "expected_points": 2.44
+    },
+    {
+      "distance": 34,
+      "expected_points": 2.39
+    },
+    {
+      "distance": 35,
+      "expected_points": 2.35
+    },
+    {
+      "distance": 36,
+      "expected_points": 2.3
+    },
+    {
+      "distance": 37,
+      "expected_points": 2.25
+    },
+    {
+      "distance": 38,
+      "expected_points": 2.2
+    },
+    {
+      "distance": 39,
+      "expected_points": 2.15
+    },
+    {
+      "distance": 40,
+      "expected_points": 2.09
+    },
+    {
+      "distance": 41,
+      "expected_points": 2.03
+    },
+    {
+      "distance": 42,
+      "expected_points": 1.97
+    },
+    {
+      "distance": 43,
+      "expected_points": 1.91
+    },
+    {
+      "distance": 44,
+      "expected_points": 1.85
+    },
+    {
+      "distance": 45,
+      "expected_points": 1.78
+    },
+    {
+      "distance": 46,
+      "expected_points": 1.71
+    },
+    {
+      "distance": 47,
+      "expected_points": 1.64
+    },
+    {
+      "distance": 48,
+      "expected_points": 1.57
+    },
+    {
+      "distance": 49,
+      "expected_points": 1.49
+    },
+    {
+      "distance": 50,
+      "expected_points": 1.42
+    },
+    {
+      "distance": 51,
+      "expected_points": 1.34
+    },
+    {
+      "distance": 52,
+      "expected_points": 1.26
+    },
+    {
+      "distance": 53,
+      "expected_points": 1.18
+    },
+    {
+      "distance": 54,
+      "expected_points": 1.09
+    },
+    {
+      "distance": 55,
+      "expected_points": 1
+    },
+    {
+      "distance": 56,
+      "expected_points": 0.91
+    },
+    {
+      "distance": 57,
+      "expected_points": 0.82
+    },
+    {
+      "distance": 58,
+      "expected_points": 0.73
+    },
+    {
+      "distance": 59,
+      "expected_points": 0.63
+    },
+    {
+      "distance": 60,
+      "expected_points": 0.54
+    },
+    {
+      "distance": 61,
+      "expected_points": 0.44
+    },
+    {
+      "distance": 62,
+      "expected_points": 0.34
+    },
+    {
+      "distance": 63,
+      "expected_points": 0.23
+    },
+    {
+      "distance": 64,
+      "expected_points": 0.13
+    },
+    {
+      "distance": 65,
+      "expected_points": 0.02
+    },
+    {
+      "distance": 66,
+      "expected_points": 0
+    },
+    {
+      "distance": 67,
+      "expected_points": 0
+    },
+    {
+      "distance": 68,
+      "expected_points": 0
+    },
+    {
+      "distance": 69,
+      "expected_points": 0
+    },
+    {
+      "distance": 70,
+      "expected_points": 0
+    },
+    {
+      "distance": 71,
+      "expected_points": 0
+    },
+    {
+      "distance": 72,
+      "expected_points": 0
+    },
+    {
+      "distance": 73,
+      "expected_points": 0
+    },
+    {
+      "distance": 74,
+      "expected_points": 0
+    },
+    {
+      "distance": 75,
+      "expected_points": 0
+    },
+    {
+      "distance": 76,
+      "expected_points": 0
+    },
+    {
+      "distance": 77,
+      "expected_points": 0
+    },
+    {
+      "distance": 78,
+      "expected_points": 0
+    },
+    {
+      "distance": 79,
+      "expected_points": 0
+    },
+    {
+      "distance": 80,
+      "expected_points": 0
+    },
+    {
+      "distance": 81,
+      "expected_points": 0
+    },
+    {
+      "distance": 82,
+      "expected_points": 0
+    },
+    {
+      "distance": 83,
+      "expected_points": 0
+    },
+    {
+      "distance": 84,
+      "expected_points": 0
+    },
+    {
+      "distance": 85,
+      "expected_points": 0
+    },
+    {
+      "distance": 86,
+      "expected_points": 0
+    },
+    {
+      "distance": 87,
+      "expected_points": 0
+    },
+    {
+      "distance": 88,
+      "expected_points": 0
+    },
+    {
+      "distance": 89,
+      "expected_points": 0
+    },
+    {
+      "distance": 90,
+      "expected_points": 0
+    },
+    {
+      "distance": 91,
+      "expected_points": 0
+    },
+    {
+      "distance": 92,
+      "expected_points": 0
+    },
+    {
+      "distance": 93,
+      "expected_points": 0
+    },
+    {
+      "distance": 94,
+      "expected_points": 0
+    },
+    {
+      "distance": 95,
+      "expected_points": 0
+    },
+    {
+      "distance": 96,
+      "expected_points": 0
+    },
+    {
+      "distance": 97,
+      "expected_points": 0
+    },
+    {
+      "distance": 98,
+      "expected_points": 0
+    },
+    {
+      "distance": 99,
+      "expected_points": 0
+    },
+    {
+      "distance": 100,
+      "expected_points": 0
+    },
+    {
+      "distance": 101,
+      "expected_points": 0
+    },
+    {
+      "distance": 102,
+      "expected_points": 0
+    },
+    {
+      "distance": 103,
+      "expected_points": 0
+    },
+    {
+      "distance": 104,
+      "expected_points": 0
+    },
+    {
+      "distance": 105,
+      "expected_points": 0
+    },
+    {
+      "distance": 106,
+      "expected_points": 0
+    },
+    {
+      "distance": 107,
+      "expected_points": 0
+    },
+    {
+      "distance": 108,
+      "expected_points": 0
+    },
+    {
+      "distance": 109,
+      "expected_points": 0
+    },
+    {
+      "distance": 110,
+      "expected_points": 0
+    },
+    {
+      "distance": 111,
+      "expected_points": 0
+    },
+    {
+      "distance": 112,
+      "expected_points": 0
+    },
+    {
+      "distance": 113,
+      "expected_points": 0
+    },
+    {
+      "distance": 114,
+      "expected_points": 0
+    },
+    {
+      "distance": 115,
+      "expected_points": 0
+    },
+    {
+      "distance": 116,
+      "expected_points": 0
+    }
+  ]
+}

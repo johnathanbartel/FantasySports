@@ -30,6 +30,8 @@ from Football.common.attribution import (
     YacEpaLookup,
     split_passing_epa_incomplete,
     attribute_defense,
+    FieldGoalEpLookup,
+    attribute_kicker,
 )
 
 RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
@@ -37,6 +39,7 @@ PASS_COMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.
 PASS_INCOMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass incomplete(?: to (?P<receiver>.+))?$")
 SACK_RE = re.compile(r"^(?P<passer>.+?) sacked by\b")
 INTERCEPTION_RE = re.compile(r"^(?P<passer>.+?) pass intercepted\b")
+FIELD_GOAL_RE = re.compile(r"^(?P<kicker>.+?)\s+(?P<distance>\d+)\s*[Yy]d\.?\s*(?:Field Goal|FG)\b")
 
 
 def get_api_client() -> cfbd.ApiClient:
@@ -121,12 +124,27 @@ def main():
     )
 
     lookup = YacEpaLookup()
+    fg_lookup = FieldGoalEpLookup()
     credits: dict[tuple[str, str], float] = defaultdict(float)
     unattributed: list = []
+    unattributed_fg: list = []
     scrimmage_ppa_by_team: dict[str, float] = defaultdict(float)
+    fg_credit_by_team: dict[str, float] = defaultdict(float)
     defense_credits: dict[tuple[str, str], float] = defaultdict(float)  # (team, group) -> pts
 
     for play in plays:
+        if play.play_type in ("Field Goal Good", "Field Goal Missed"):
+            m = FIELD_GOAL_RE.match(play.play_text or "")
+            if not m:
+                unattributed_fg.append(play)
+                continue
+            distance = int(m["distance"])
+            made = play.play_type == "Field Goal Good"
+            kicker_credit = attribute_kicker(distance, made, fg_lookup)
+            credits[(m["kicker"], play.offense)] += kicker_credit
+            fg_credit_by_team[play.offense] += kicker_credit
+            continue
+
         if play.ppa is None:
             continue
         scrimmage_ppa_by_team[play.offense] += play.ppa
@@ -141,7 +159,8 @@ def main():
 
     print(f"{game.away_team} {game.away_points} @ {game.home_team} {game.home_points}")
     print(f"({len(plays)} plays pulled, {len(unattributed)} scrimmage plays with ppa "
-          f"but no attribution-parser match)\n")
+          f"but no attribution-parser match, {len(unattributed_fg)} FG plays with no "
+          f"parser match)\n")
 
     print("Player fantasy points (rushing + passing attribution only):")
     for (player, team), pts in sorted(credits.items(), key=lambda kv: -kv[1]):
@@ -154,20 +173,25 @@ def main():
             pts = defense_credits.get((team, group), 0.0)
             print(f"  {pts:+6.2f}  {team:<20} {group}")
 
-    print("\nTeam scrimmage-play ppa sum vs. real final score:")
+    print("\nKicker marginal-EP credit (actual points - expected points for that distance):")
+    for team, total in fg_credit_by_team.items():
+        print(f"  {team:<20} {total:+6.2f}")
+
+    print("\nTeam scrimmage-play ppa + kicker credit sum vs. real final score:")
     real_score = {game.home_team: game.home_points, game.away_team: game.away_points}
-    for team, total_ppa in scrimmage_ppa_by_team.items():
-        print(f"  {team:<20} scrimmage ppa sum = {total_ppa:+6.2f}   real score = {real_score.get(team)}")
+    all_teams = set(scrimmage_ppa_by_team) | set(fg_credit_by_team)
+    for team in all_teams:
+        total = scrimmage_ppa_by_team.get(team, 0.0) + fg_credit_by_team.get(team, 0.0)
+        print(f"  {team:<20} model total = {total:+6.2f}   real score = {real_score.get(team)}")
 
     print(
-        "\nCaveat: scrimmage ppa sum excludes field goals, punts, kickoffs, and "
-        "defensive/return scores (CFBD gives no per-play ppa for those, and "
-        "kicker marginal-EP isn't built yet), so it will systematically "
-        "undercount teams that scored via those paths. This checks whether "
-        "the rush/pass EP model and attribution logic are sane, not the "
-        "full-score validation from the spec yet. Defensive DL/LB/DB splits "
-        "above are a play-type/yardage heuristic, not tackler-level data - "
-        "see the comment above attribute_defense() in Football/common/attribution.py."
+        "\nCaveat: model total still excludes punts, kickoffs, and defensive/"
+        "return scores (CFBD gives no per-play ppa for those). This checks "
+        "whether the rush/pass EP model, attribution logic, and kicker "
+        "marginal-EP are sane, not the full-score validation from the spec "
+        "yet. Defensive DL/LB/DB splits above are a play-type/yardage "
+        "heuristic, not tackler-level data - see the comment above "
+        "attribute_defense() in Football/common/attribution.py."
     )
 
     if unattributed:

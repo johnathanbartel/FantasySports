@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _LOOKUP_PATH = Path(__file__).parent / "data" / "yac_epa_lookup.json"
+_FG_EP_LOOKUP_PATH = Path(__file__).parent.parent / "College" / "data" / "fg_ep_lookup.json"
 
 
 @dataclass(frozen=True)
@@ -129,3 +130,34 @@ def attribute_defense(play_type: str, yards_gained: float | None, ppa: float) ->
         return None
 
     return DefenseSplit(**{group.lower(): defense_value})
+
+
+# --- Kicker marginal-EP attribution ----------------------------------------
+#
+# Flat-crediting a made FG at 3 points overvalues kickers, exactly like flat
+# TD bonuses overvalue receivers: a 20-yard chip shot and a 55-yard boot are
+# both "3 points" in standard fantasy despite being wildly different in
+# difficulty. CFBD's field-goal expected-points curve (cached by
+# Football/College/scripts/fetch_fg_ep_table.py) gives the average point
+# value of an attempt from a given distance, make probability included - so
+# a kicker's marginal contribution is the gap between what actually happened
+# and what an average attempt from that distance is worth.
+
+
+class FieldGoalEpLookup:
+    def __init__(self, path: Path = _FG_EP_LOOKUP_PATH):
+        data = json.loads(path.read_text())
+        self.source = data["source"]
+        self._by_distance = {row["distance"]: row["expected_points"] for row in data["rows"]}
+        self._distances = sorted(self._by_distance)
+
+    def expected_points(self, distance: int) -> float:
+        if distance in self._by_distance:
+            return self._by_distance[distance]
+        nearest = min(self._distances, key=lambda d: abs(d - distance))
+        return self._by_distance[nearest]
+
+
+def attribute_kicker(distance: int, made: bool, lookup: FieldGoalEpLookup) -> float:
+    actual_points = 3.0 if made else 0.0
+    return actual_points - lookup.expected_points(distance)
