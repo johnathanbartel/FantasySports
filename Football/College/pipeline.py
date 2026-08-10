@@ -25,14 +25,35 @@ RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
 # standard play-by-play phrasing, e.g. "Savion Red 1 Yd Run (Kicker Kick)"
 # rather than "Savion Red run for 1 yd ... for a TD (Kicker KICK)".
 RUSH_TD_ALT_RE = re.compile(r"^(?P<runner>.+?) \d+ Yd Run\b")
+# A third text style, seen on some smaller-conference games, e.g.
+# "M.Bailey rushed for 7 yards. TOUCHDOWN." / "B.Olson rushed for -3 yards."
+RUSH_ALT2_RE = re.compile(r"^(?P<runner>.+?) rushed for -?\d+ yards?\b")
+# Clock-killing kneel-downs: not a meaningful skill-position play, and the
+# text format varies too much to reliably pull a player name out of anyway
+# (e.g. "[NH] Kneel down by JMU at JMU18 (team loss of 2)", "N. Glantz
+# takes a knee", "Kneel down by STONE, Preston at NEV40").
+KNEEL_RE = re.compile(r"[Kk]neel down|takes a knee")
+
 PASS_COMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+?) for\b")
 PASS_COMPLETE_FALLBACK_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+)$")
 # Recap style for passing TDs: "Receiver N Yd pass from Passer (Kicker Kick)"
 PASS_TD_ALT_RE = re.compile(r"^(?P<receiver>.+?) \d+ Yd pass from (?P<passer>.+?)\b")
-PASS_INCOMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass incomplete(?: to (?P<receiver>.+))?$")
+# Third style: "J.Labas pass complete. Catch made by E.Boyd for 47 yards. TOUCHDOWN."
+PASS_COMPLETE_ALT2_RE = re.compile(r"^(?P<passer>.+?) pass complete\. Catch made by (?P<receiver>.+?) for\b")
+
+# Dropped the trailing '$' so suffixes like ", broken up by X" don't block a
+# match - we only need the passer's name, not the rest of the sentence.
+PASS_INCOMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass incomplete\b(?: to (?P<receiver>[^,.]+))?")
+
 SACK_RE = re.compile(r"^(?P<passer>.+?) sacked by\b")
 SACK_ALT_RE = re.compile(r"^(?P<passer>.+?) sacked for\b")  # no defender named
-INTERCEPTION_RE = re.compile(r"^(?P<passer>.+?) pass intercepted\b")
+# Third style: "G.Booty steps back to pass. Sacked at JST 39 for -8 yards (E.Guthrie)."
+SACK_ALT2_RE = re.compile(r"^(?P<passer>.+?) steps back to pass\. Sacked\b")
+
+# IGNORECASE covers the third style's "pass INTERCEPTED" alongside the
+# standard "pass intercepted".
+INTERCEPTION_RE = re.compile(r"^(?P<passer>.+?) pass intercepted\b", re.IGNORECASE)
+
 FIELD_GOAL_RE = re.compile(r"^(?P<kicker>.+?)\s+(?P<distance>\d+)\s*[Yy]d\.?\s*(?:Field Goal|FG)\b")
 
 # Play types that carry a real ppa but involve turnover-return yardage or
@@ -76,7 +97,10 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         return
 
     if play_type in ("Rush", "Rushing Touchdown"):
-        m = RUSH_RE.match(text) or RUSH_TD_ALT_RE.match(text)
+        if KNEEL_RE.search(text):
+            result.skipped.append(play)
+            return
+        m = RUSH_RE.match(text) or RUSH_TD_ALT_RE.match(text) or RUSH_ALT2_RE.match(text)
         if not m:
             result.unattributed.append(play)
             return
@@ -86,6 +110,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         m = (
             PASS_COMPLETE_RE.match(text)
             or PASS_TD_ALT_RE.match(text)
+            or PASS_COMPLETE_ALT2_RE.match(text)
             or PASS_COMPLETE_FALLBACK_RE.match(text)
         )
         if not m:
@@ -104,7 +129,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         result.credits[(m["passer"], play.offense)] += split.qb_credit
 
     elif play_type == "Sack":
-        m = SACK_RE.match(text) or SACK_ALT_RE.match(text)
+        m = SACK_RE.match(text) or SACK_ALT_RE.match(text) or SACK_ALT2_RE.match(text)
         if not m:
             result.unattributed.append(play)
             return
