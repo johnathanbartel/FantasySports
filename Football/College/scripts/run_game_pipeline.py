@@ -3,13 +3,10 @@ Step 4 of the NCAAF pipeline: run one real game through the whole chain -
 raw plays -> ppa -> attributed player points -> team-week total - and
 sanity-check the output against that game's real final score.
 
-Scope note: this only attributes rushing and passing plays (the pieces
-built so far). Field goals, punts, kickoffs, and defensive plays have no
-per-play `ppa` from CFBD and aren't attributed to individual players yet -
-kicker marginal-EP and defensive group attribution are separate, not-yet-
-built pieces of the spec. The team-total comparison below is therefore
-against offensive scrimmage plays only, not the final score outright - see
-the printed caveat.
+Scope note: model total excludes punts, kickoffs, and defensive/return
+scores - CFBD gives no per-play ppa for those. Player/defense/kicker
+attribution logic lives in Football/College/pipeline.py, shared with
+run_week_validation.py.
 
 Usage:
     python run_game_pipeline.py --year 2024 --week 1 --team Georgia
@@ -17,8 +14,6 @@ Usage:
 
 import argparse
 import os
-import re
-from collections import defaultdict
 from pathlib import Path
 
 import cfbd
@@ -26,20 +21,7 @@ from dotenv import load_dotenv
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from Football.common.attribution import (
-    YacEpaLookup,
-    split_passing_epa_incomplete,
-    attribute_defense,
-    FieldGoalEpLookup,
-    attribute_kicker,
-)
-
-RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
-PASS_COMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+?) for\b")
-PASS_INCOMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass incomplete(?: to (?P<receiver>.+))?$")
-SACK_RE = re.compile(r"^(?P<passer>.+?) sacked by\b")
-INTERCEPTION_RE = re.compile(r"^(?P<passer>.+?) pass intercepted\b")
-FIELD_GOAL_RE = re.compile(r"^(?P<kicker>.+?)\s+(?P<distance>\d+)\s*[Yy]d\.?\s*(?:Field Goal|FG)\b")
+from Football.College.pipeline import process_plays
 
 
 def get_api_client() -> cfbd.ApiClient:
@@ -48,59 +30,6 @@ def get_api_client() -> cfbd.ApiClient:
     if not api_key:
         raise SystemExit("CFBD_API_KEY not set - see .env.example at the repo root.")
     return cfbd.ApiClient(cfbd.Configuration(access_token=api_key))
-
-
-def attribute_play(play, lookup: YacEpaLookup, credits: dict, unattributed: list):
-    """Adds this play's ppa credit into `credits` (player -> team, points),
-    or appends it to `unattributed` if we don't have a parser rule for it."""
-    ppa = play.ppa
-    play_type = play.play_type
-    text = play.play_text or ""
-
-    if play_type in ("Rush", "Rushing Touchdown"):
-        m = RUSH_RE.match(text)
-        if not m:
-            unattributed.append(play)
-            return
-        credits[(m["runner"], play.offense)] += ppa
-
-    elif play_type in ("Pass Reception", "Passing Touchdown"):
-        m = PASS_COMPLETE_RE.match(text)
-        if not m:
-            unattributed.append(play)
-            return
-        split = lookup.split(ppa, play.yards_gained)
-        credits[(m["passer"], play.offense)] += split.qb_credit
-        credits[(m["receiver"], play.offense)] += split.receiver_credit
-
-    elif play_type == "Pass Incompletion":
-        m = PASS_INCOMPLETE_RE.match(text)
-        if not m:
-            unattributed.append(play)
-            return
-        split = split_passing_epa_incomplete(ppa)
-        credits[(m["passer"], play.offense)] += split.qb_credit
-
-    elif play_type == "Sack":
-        m = SACK_RE.match(text)
-        if not m:
-            unattributed.append(play)
-            return
-        # v1: full (negative) credit to the QB. The sacking defender's
-        # positive mirror credit is part of the not-yet-built defensive
-        # group attribution.
-        credits[(m["passer"], play.offense)] += ppa
-
-    elif play_type == "Pass Interception Return":
-        m = INTERCEPTION_RE.match(text)
-        if not m:
-            unattributed.append(play)
-            return
-        # v1: full (negative) credit to the QB, same caveat as sacks.
-        credits[(m["passer"], play.offense)] += ppa
-
-    else:
-        unattributed.append(play)
 
 
 def main():
@@ -123,66 +52,30 @@ def main():
         year=args.year, week=args.week, season_type="regular", team=args.team
     )
 
-    lookup = YacEpaLookup()
-    fg_lookup = FieldGoalEpLookup()
-    credits: dict[tuple[str, str], float] = defaultdict(float)
-    unattributed: list = []
-    unattributed_fg: list = []
-    scrimmage_ppa_by_team: dict[str, float] = defaultdict(float)
-    fg_credit_by_team: dict[str, float] = defaultdict(float)
-    defense_credits: dict[tuple[str, str], float] = defaultdict(float)  # (team, group) -> pts
-
-    for play in plays:
-        if play.play_type in ("Field Goal Good", "Field Goal Missed"):
-            m = FIELD_GOAL_RE.match(play.play_text or "")
-            if not m:
-                unattributed_fg.append(play)
-                continue
-            distance = int(m["distance"])
-            made = play.play_type == "Field Goal Good"
-            kicker_credit = attribute_kicker(distance, made, fg_lookup)
-            credits[(m["kicker"], play.offense)] += kicker_credit
-            fg_credit_by_team[play.offense] += kicker_credit
-            continue
-
-        if play.ppa is None:
-            continue
-        scrimmage_ppa_by_team[play.offense] += play.ppa
-        attribute_play(play, lookup, credits, unattributed)
-
-        d_split = attribute_defense(play.play_type, play.yards_gained, play.ppa)
-        if d_split is not None:
-            for group in ("dl", "lb", "db"):
-                value = getattr(d_split, group)
-                if value:
-                    defense_credits[(play.defense, group.upper())] += value
+    result = process_plays(plays)
 
     print(f"{game.away_team} {game.away_points} @ {game.home_team} {game.home_points}")
-    print(f"({len(plays)} plays pulled, {len(unattributed)} scrimmage plays with ppa "
-          f"but no attribution-parser match, {len(unattributed_fg)} FG plays with no "
-          f"parser match)\n")
+    print(f"({len(plays)} plays pulled, {len(result.unattributed)} scrimmage plays with "
+          f"ppa but no attribution-parser match, {len(result.unattributed_fg)} FG plays "
+          f"with no parser match)\n")
 
-    print("Player fantasy points (rushing + passing attribution only):")
-    for (player, team), pts in sorted(credits.items(), key=lambda kv: -kv[1]):
+    print("Player fantasy points (rushing + passing + kicker attribution):")
+    for (player, team), pts in sorted(result.credits.items(), key=lambda kv: -kv[1]):
         print(f"  {pts:+6.2f}  {player:<22} {team}")
 
     print("\nDefensive group fantasy points (DL / LB / DB, heuristic v1):")
-    teams = sorted({t for t, _ in defense_credits})
+    teams = sorted({t for t, _ in result.defense_credits})
     for team in teams:
         for group in ("DL", "LB", "DB"):
-            pts = defense_credits.get((team, group), 0.0)
+            pts = result.defense_credits.get((team, group), 0.0)
             print(f"  {pts:+6.2f}  {team:<20} {group}")
-
-    print("\nKicker marginal-EP credit (actual points - expected points for that distance):")
-    for team, total in fg_credit_by_team.items():
-        print(f"  {team:<20} {total:+6.2f}")
 
     print("\nTeam scrimmage-play ppa + kicker credit sum vs. real final score:")
     real_score = {game.home_team: game.home_points, game.away_team: game.away_points}
-    all_teams = set(scrimmage_ppa_by_team) | set(fg_credit_by_team)
+    all_teams = set(result.scrimmage_ppa_by_team) | set(result.fg_credit_by_team)
     for team in all_teams:
-        total = scrimmage_ppa_by_team.get(team, 0.0) + fg_credit_by_team.get(team, 0.0)
-        print(f"  {team:<20} model total = {total:+6.2f}   real score = {real_score.get(team)}")
+        print(f"  {team:<20} model total = {result.model_total(team):+6.2f}   "
+              f"real score = {real_score.get(team)}")
 
     print(
         "\nCaveat: model total still excludes punts, kickoffs, and defensive/"
@@ -194,9 +87,9 @@ def main():
         "attribute_defense() in Football/common/attribution.py."
     )
 
-    if unattributed:
-        print(f"\n{len(unattributed)} unattributed scrimmage plays (regex didn't match):")
-        for p in unattributed[:10]:
+    if result.unattributed:
+        print(f"\n{len(result.unattributed)} unattributed scrimmage plays (regex didn't match):")
+        for p in result.unattributed[:10]:
             print(f"  {p.play_type}: {p.play_text}")
 
 
