@@ -26,7 +26,11 @@ from dotenv import load_dotenv
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from Football.common.attribution import YacEpaLookup, split_passing_epa_incomplete
+from Football.common.attribution import (
+    YacEpaLookup,
+    split_passing_epa_incomplete,
+    attribute_defense,
+)
 
 RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
 PASS_COMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+?) for\b")
@@ -120,12 +124,20 @@ def main():
     credits: dict[tuple[str, str], float] = defaultdict(float)
     unattributed: list = []
     scrimmage_ppa_by_team: dict[str, float] = defaultdict(float)
+    defense_credits: dict[tuple[str, str], float] = defaultdict(float)  # (team, group) -> pts
 
     for play in plays:
         if play.ppa is None:
             continue
         scrimmage_ppa_by_team[play.offense] += play.ppa
         attribute_play(play, lookup, credits, unattributed)
+
+        d_split = attribute_defense(play.play_type, play.yards_gained, play.ppa)
+        if d_split is not None:
+            for group in ("dl", "lb", "db"):
+                value = getattr(d_split, group)
+                if value:
+                    defense_credits[(play.defense, group.upper())] += value
 
     print(f"{game.away_team} {game.away_points} @ {game.home_team} {game.home_points}")
     print(f"({len(plays)} plays pulled, {len(unattributed)} scrimmage plays with ppa "
@@ -135,6 +147,13 @@ def main():
     for (player, team), pts in sorted(credits.items(), key=lambda kv: -kv[1]):
         print(f"  {pts:+6.2f}  {player:<22} {team}")
 
+    print("\nDefensive group fantasy points (DL / LB / DB, heuristic v1):")
+    teams = sorted({t for t, _ in defense_credits})
+    for team in teams:
+        for group in ("DL", "LB", "DB"):
+            pts = defense_credits.get((team, group), 0.0)
+            print(f"  {pts:+6.2f}  {team:<20} {group}")
+
     print("\nTeam scrimmage-play ppa sum vs. real final score:")
     real_score = {game.home_team: game.home_points, game.away_team: game.away_points}
     for team, total_ppa in scrimmage_ppa_by_team.items():
@@ -143,10 +162,12 @@ def main():
     print(
         "\nCaveat: scrimmage ppa sum excludes field goals, punts, kickoffs, and "
         "defensive/return scores (CFBD gives no per-play ppa for those, and "
-        "kicker marginal-EP / defensive group attribution aren't built yet), "
-        "so it will systematically undercount teams that scored via those "
-        "paths. This checks whether the rush/pass EP model and attribution "
-        "logic are sane, not the full-score validation from the spec yet."
+        "kicker marginal-EP isn't built yet), so it will systematically "
+        "undercount teams that scored via those paths. This checks whether "
+        "the rush/pass EP model and attribution logic are sane, not the "
+        "full-score validation from the spec yet. Defensive DL/LB/DB splits "
+        "above are a play-type/yardage heuristic, not tackler-level data - "
+        "see the comment above attribute_defense() in Football/common/attribution.py."
     )
 
     if unattributed:

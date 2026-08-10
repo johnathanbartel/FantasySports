@@ -58,3 +58,74 @@ class YacEpaLookup:
 def split_passing_epa_incomplete(epa: float) -> PassSplit:
     """No catch happened, so there's no after-catch value to attribute."""
     return PassSplit(qb_credit=epa, receiver_credit=0.0)
+
+
+# --- Defensive group attribution (DL / LB / DB) ---------------------------
+#
+# CFBD gives us no tackler identity and no run-gap/coverage-responsibility
+# data (confirmed: 0/154 plays in a sample game mention a tackler in
+# playText), so there's no way to know which individual defender - let
+# alone which position group - actually made a given stop. This is a
+# situational heuristic keyed on play type and yards gained, not a
+# validated attribution model. It is the "needs a defined rule, likely
+# based on which position group's assigned gap/zone the stop occurred in,
+# to the extent that's inferable from available data" gap the spec called
+# out explicitly - this is v1's answer to that, and should be revisited if
+# a richer data source (e.g. charted participation data) becomes available.
+#
+# Rule of thumb: a defensive stop close to the line of scrimmage is a DL
+# win (they beat their block before anyone else got involved); a short
+# gain that still gets stopped is the LB reading and reacting; anything
+# that gets into the second/third level before being stopped, or any pass
+# defended, is credited to the DB group as the last line of run support /
+# the group responsible for coverage.
+#
+# Design choice: defensive credit mirrors the offense's ppa on *every*
+# scrimmage play, not just negative-EPA ones (defense_credit = -ppa
+# always) - a defense that allows a 40-yard gain should lose fantasy
+# points for it, symmetrically with how it gains points for a stop. This
+# is broader than the spec's own illustrative example (which only
+# describes the negative-play case), so flag it for review if a
+# stops-only model is preferred instead.
+
+RUN_STUFF_MAX_YARDS = 0   # <= this many yards -> DL stop at/behind the line
+RUN_SHORT_MAX_YARDS = 3   # <= this many yards -> LB stop, short gain
+PASS_UNDERNEATH_MAX_YARDS = 3  # <= this many yards -> LB, short/underneath coverage
+
+DEFENSE_GROUPS = ("DL", "LB", "DB")
+
+
+@dataclass(frozen=True)
+class DefenseSplit:
+    dl: float = 0.0
+    lb: float = 0.0
+    db: float = 0.0
+
+
+def attribute_defense(play_type: str, yards_gained: float | None, ppa: float) -> DefenseSplit | None:
+    """Returns None for play types this heuristic doesn't cover (field
+    goals, punts, kickoffs, penalties, etc. - those already carry no ppa
+    from CFBD, so callers should skip them before reaching here anyway)."""
+    defense_value = -ppa
+
+    if play_type == "Sack":
+        group = "DL"
+    elif play_type in ("Rush", "Rushing Touchdown"):
+        if yards_gained is None:
+            return None
+        if yards_gained <= RUN_STUFF_MAX_YARDS:
+            group = "DL"
+        elif yards_gained <= RUN_SHORT_MAX_YARDS:
+            group = "LB"
+        else:
+            group = "DB"
+    elif play_type in ("Pass Reception", "Passing Touchdown"):
+        if yards_gained is None:
+            return None
+        group = "LB" if yards_gained <= PASS_UNDERNEATH_MAX_YARDS else "DB"
+    elif play_type in ("Pass Incompletion", "Pass Interception Return"):
+        group = "DB"
+    else:
+        return None
+
+    return DefenseSplit(**{group.lower(): defense_value})
