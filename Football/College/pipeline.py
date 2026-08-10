@@ -125,8 +125,11 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         if not m:
             result.unattributed.append(play)
             return
-        split = split_passing_epa_incomplete(ppa)
+        receiver = m["receiver"]
+        split = split_passing_epa_incomplete(ppa, receiver_identified=bool(receiver))
         result.credits[(m["passer"], play.offense)] += split.qb_credit
+        if receiver:
+            result.credits[(receiver, play.offense)] += split.receiver_credit
 
     elif play_type == "Sack":
         m = SACK_RE.match(text) or SACK_ALT_RE.match(text) or SACK_ALT2_RE.match(text)

@@ -13,6 +13,7 @@ from pathlib import Path
 
 _LOOKUP_PATH = Path(__file__).parent / "data" / "yac_epa_lookup.json"
 _FG_EP_LOOKUP_PATH = Path(__file__).parent.parent / "College" / "data" / "fg_ep_lookup.json"
+_DROP_RATE_PATH = Path(__file__).parent / "data" / "drop_rate.json"
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,31 @@ class YacEpaLookup:
         return PassSplit(qb_credit=qb_credit, receiver_credit=receiver_credit)
 
 
-def split_passing_epa_incomplete(epa: float) -> PassSplit:
-    """No catch happened, so there's no after-catch value to attribute."""
-    return PassSplit(qb_credit=epa, receiver_credit=0.0)
+def _load_drop_rate(path: Path = _DROP_RATE_PATH) -> float:
+    return json.loads(path.read_text())["drop_rate"]
+
+
+# Population-average share of an incompletion's EPA attributed to drops,
+# from Pro Football Reference's charted weekly drop counts vs. total NFL
+# incompletions 2022-2024 (see derive_drop_rate.py) - ~14%. Neither CFBD
+# nor nflfastR's play-by-play tags individual drops, so this can't be
+# play-specific or depth-conditioned like the YAC split; it's the best
+# available correction against the alternative of always blaming the QB.
+DROP_RATE = _load_drop_rate()
+
+
+def split_passing_epa_incomplete(epa: float, receiver_identified: bool = True) -> PassSplit:
+    """Splits an incompletion's EPA between QB and receiver using
+    DROP_RATE, when a receiver is identifiable from the play text. If the
+    play text doesn't name a target (CFBD sometimes omits it entirely),
+    there's no one to attribute drop-share to, so it falls back to the old
+    all-QB behavior rather than crediting/debiting an unknown player.
+    """
+    if not receiver_identified:
+        return PassSplit(qb_credit=epa, receiver_credit=0.0)
+    receiver_credit = DROP_RATE * epa
+    qb_credit = epa - receiver_credit
+    return PassSplit(qb_credit=qb_credit, receiver_credit=receiver_credit)
 
 
 # --- Defensive group attribution (DL / LB / DB) ---------------------------

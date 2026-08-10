@@ -1,0 +1,12 @@
+{
+  "source": "nfl_data_py: import_pbp_data (nflfastR) for incompletion counts, import_weekly_pfr('rec', ...) (Pro Football Reference charting) for drop counts",
+  "years": [
+    2022,
+    2023,
+    2024
+  ],
+  "total_incompletions": 18869,
+  "total_charted_drops": 2685.0,
+  "drop_rate": 0.1422968890773226,
+  "note": "Flat population rate, not depth-conditioned - PFR's drop counts are weekly aggregates with no per-play air_yards to bucket against, and no ID crosswalk was used to join PFR's pfr_player_id to pbp's gsis-style ids."
+}
