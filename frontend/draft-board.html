@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draft Board</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Demo League</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/draft-board.html" aria-current="page">Draft</a>
+      <a href="#">Roster</a>
+      <a href="#">Lineup</a>
+      <a href="#">Scores</a>
+      <a href="#">Standings</a>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-6)">
+      <div>
+        <div class="card-kicker" id="clock-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
+        <h1 style="margin:0">Draft board</h1>
+      </div>
+      <div style="text-align:right" id="on-clock-panel"></div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
+
+      <div>
+        <div id="pos-filters" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)"></div>
+        <div id="board-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+      </div>
+
+      <div>
+        <h4 style="margin-bottom:var(--space-3)">Pick history</h4>
+        <div style="max-height:640px;overflow:auto">
+          <table class="table">
+            <thead><tr><th>Rnd</th><th>Pick</th><th>Team</th><th>Player</th></tr></thead>
+            <tbody id="picks-body"></tbody>
+          </table>
+          <p class="text-muted" id="no-picks-msg" style="display:none">No picks made yet.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// Real data only - every value below comes from the live API documented
+// in docs/data_contract.md. No mocked/simulated draft state.
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id') || 1;
+const DRAFT_ID = params.get('draft_id') || 2; // see README: draft 1 is the
+  // fully-completed historical demo draft, draft 2 is a fresh one started
+  // specifically for live pick/autopick demoing (draft 1 has 0 open picks)
+
+const POS_FILTERS = ['ALL','QB','RB','WR','TE','PK','DL','LB','DB'];
+let posFilter = 'ALL';
+let teamsById = {}; // team_id -> {id, name, is_ai_owned}
+let board = [];
+let picks = [];
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+async function loadAll() {
+  const [teams, boardData, picksData] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/teams`),
+    api(`/drafts/${DRAFT_ID}/board`),
+    api(`/drafts/${DRAFT_ID}/picks`),
+  ]);
+  teamsById = Object.fromEntries(teams.map(t => [t.id, t]));
+  board = boardData;
+  picks = picksData;
+  render();
+}
+
+function onClockPick() {
+  return picks.find(p => p.draftable_asset_id === null) || null;
+}
+
+async function makePick(assetId) {
+  showError('');
+  try {
+    await api(`/drafts/${DRAFT_ID}/pick`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({draftable_asset_id: assetId}),
+    });
+    await loadAll();
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function autopick() {
+  showError('');
+  try {
+    await api(`/drafts/${DRAFT_ID}/autopick`, {method: 'POST'});
+    await loadAll();
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function renderClock() {
+  const kicker = document.getElementById('clock-kicker');
+  const panel = document.getElementById('on-clock-panel');
+  const next = onClockPick();
+
+  if (!next) {
+    kicker.textContent = 'DRAFT COMPLETE';
+    panel.innerHTML = '';
+    return;
+  }
+
+  kicker.textContent = `ROUND ${next.round} · PICK ${((next.pick_number - 1) % Object.keys(teamsById).length) + 1} OF ${Object.keys(teamsById).length} · OVERALL ${next.pick_number}`;
+  const team = teamsById[next.team_id];
+  const teamName = team ? team.name : `Team ${next.team_id}`;
+  const isAi = team ? team.is_ai_owned : false;
+
+  panel.innerHTML = `
+    <div class="card-kicker" style="margin-bottom:2px">On the clock</div>
+    <div style="font-family:var(--font-heading);font-size:22px">${teamName}</div>
+    ${isAi ? '<button class="btn btn-secondary" id="autopick-btn" style="margin-top:var(--space-2)">Autopick</button>' : ''}
+  `;
+  if (isAi) {
+    document.getElementById('autopick-btn').onclick = autopick;
+  }
+}
+
+function renderFilters() {
+  const el = document.getElementById('pos-filters');
+  el.innerHTML = '';
+  POS_FILTERS.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = `btn ${posFilter === f ? 'btn-primary' : 'btn-secondary'}`;
+    btn.textContent = f;
+    btn.onclick = () => { posFilter = f; render(); };
+    el.appendChild(btn);
+  });
+}
+
+function renderBoard() {
+  const el = document.getElementById('board-list');
+  el.innerHTML = '';
+  const draftInProgress = onClockPick() !== null;
+  const filtered = board.filter(a => posFilter === 'ALL' || a.position === posFilter);
+
+  if (filtered.length === 0) {
+    el.innerHTML = '<p class="text-muted">No draftable assets left at this position.</p>';
+    return;
+  }
+
+  filtered.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'card elev-sm';
+    row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
+    row.innerHTML = `
+      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${a.position || '-'}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${a.display_name}</span>
+      <button class="btn btn-primary" ${draftInProgress ? '' : 'disabled'}>Make pick</button>
+    `;
+    row.querySelector('button').onclick = () => makePick(a.draftable_asset_id);
+    el.appendChild(row);
+  });
+}
+
+function renderPicks() {
+  const body = document.getElementById('picks-body');
+  const noPicksMsg = document.getElementById('no-picks-msg');
+  const made = picks.filter(p => p.draftable_asset_id !== null).sort((a, b) => b.pick_number - a.pick_number);
+
+  body.innerHTML = '';
+  noPicksMsg.style.display = made.length === 0 ? 'block' : 'none';
+
+  made.forEach(p => {
+    const team = teamsById[p.team_id];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${p.round}</td>
+      <td>${p.pick_number}</td>
+      <td style="font-size:13px">${team ? team.name : p.team_id}</td>
+      <td>${p.display_name}${p.is_autopick ? ' <span class="tag tag-accent-2" style="margin-left:6px;font-size:10px">AUTO</span>' : ''}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function render() {
+  renderClock();
+  renderFilters();
+  renderBoard();
+  renderPicks();
+}
+
+loadAll().catch(e => showError(`Failed to load draft: ${e.message}`));
+</script>
+</body>
+</html>

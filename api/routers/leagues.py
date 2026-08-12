@@ -3,7 +3,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from api.schemas import LeagueCreateRequest, LeagueOut, StandingsRow
+from api.schemas import LeagueCreateRequest, LeagueOut, StandingsRow, TeamOut
 from db.models.core import League, LeagueUniverse, Team, Universe, WeeklyMatchup
 from db.session import get_db
 
@@ -41,6 +41,16 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
     if league is None:
         raise HTTPException(404, "League not found")
     return league
+
+
+@router.get("/{league_id}/teams", response_model=list[TeamOut])
+def get_league_teams(league_id: int, db: Session = Depends(get_db)):
+    """Team-name resolution for any screen that shows picks/lineups/matchups
+    by team - those only carry team_id, not a display name."""
+    teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
+    if not teams:
+        raise HTTPException(404, "League not found or has no teams")
+    return teams
 
 
 @router.get("/{league_id}/standings", response_model=list[StandingsRow])

@@ -1,7 +1,12 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from api.routers import draft, leagues, rosters, scoring, teams
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(
     title="Fantasy Sports Platform API",
@@ -31,3 +36,9 @@ app.include_router(scoring.router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# Serves the prototype frontend (frontend/draft-board.html etc.) at
+# /static/... - a real, working page hitting the API above, not a static
+# mockup. One process (uvicorn) hosts both, so there's nothing else to run.
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
