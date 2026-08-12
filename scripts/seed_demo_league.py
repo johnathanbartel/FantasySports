@@ -172,6 +172,10 @@ def seed_reference_data(db, client) -> dict:
         ("QB", ["QB"], 1, True), ("RB", ["RB"], 2, True), ("WR", ["WR"], 2, True),
         ("TE", ["TE"], 1, True), ("FLEX", ["RB", "WR", "TE"], 1, True),
         ("DL", ["DL"], 1, True), ("LB", ["LB"], 1, True), ("DB", ["DB"], 1, True),
+        # eligible_positions is "PK" (not "K") to match CFBD's own roster
+        # position code - Player.position is seeded as "PK", so an
+        # eligible_positions=["K"] slot would never match a real player.
+        ("K", ["PK"], 1, True),
         ("BENCH", ["QB", "RB", "WR", "TE", "PK", "DL", "LB", "DB"], 10, False),
     ]
     slot_by_code = {}
@@ -424,7 +428,7 @@ def _ensure_real_team(db, ref, name, conference, classification) -> RealTeam:
 
 def set_lineups(db, ref, teams: list[Team], weeks: dict[int, Week]):
     slot_by_code = ref["slot_by_code"]
-    starter_slots = ["QB", "RB", "WR", "TE", "FLEX", "DL", "LB", "DB"]
+    starter_slots = ["QB", "RB", "WR", "TE", "FLEX", "DL", "LB", "DB", "K"]
 
     for team in teams:
         entries = db.query(RosterEntry).filter(RosterEntry.team_id == team.id).all()

@@ -85,6 +85,8 @@ Explicitly stubbed (endpoints exist and respond, but don't enforce yet — noted
 - Lineup legality validation (position-eligibility against `roster_slot_definitions`, roster ownership)
 - AI personality-driven autopick (currently just takes the first available board asset — `personality_profile` isn't consulted)
 
-**Known gap found while seeding real data: no starter slot for kickers.** `roster_slot_definitions` has QB/RB/WR/TE/FLEX/DL/LB/DB starters (matching the original spec exactly) plus one BENCH slot — but kickers (`PK`) are real, draftable, scoring players (marginal-EP credit is fully implemented) with nowhere to start. They can only ever sit on the bench. This is a genuine roster-structure gap, not a bug — the original spec's 10-starter list never included a kicker slot. Needs a decision: add a K starter slot (and shrink BENCH by one, or grow the roster past 20), or confirm kickers are bench-only by design.
+**Fixed: kickers now have a starter slot.** `roster_slot_definitions` has a `K` slot (`slot_count=1`, `eligible_positions=["PK"]` — CFBD's own position code for kickers, not `"K"`; a slot filtering on `"K"` would silently never match a real player). Verified against the reseeded demo league: all 36 team-weeks (12 teams × 3 weeks) fill exactly 11 starters including a real kicker.
+
+**New consequence worth resolving before lineup-legality validation gets built:** adding an 11th starter without shrinking `BENCH` (still `slot_count=10`) means the slot definitions now want 21 total roster spots (11 starters + 10 bench), while the roster itself is still 20 players (`draft_rounds` is unchanged at 20). Nothing breaks today since legality isn't enforced, but once it is, this needs a decision: shrink `BENCH` to 9, or grow the roster past 20.
 
 Out of scope per the original brief: salary-cap draft logic (field exists, unused), sim-recap animation data, Dual Universe crossover mechanics, baseball's locked-rotation tables.
