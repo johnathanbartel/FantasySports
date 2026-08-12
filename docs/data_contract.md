@@ -78,12 +78,13 @@ All implemented and verified against a real database; full request/response shap
 
 ## What's real vs. stubbed
 
-Built and working: the full schema, snake draft generation and picking, lineup setting, standings, and reading back a play-level score breakdown.
+Built and working: the full schema, snake draft generation and picking, lineup setting, standings, and reading back a play-level score breakdown — all backed by real data (`scripts/seed_demo_league.py` seeds a 12-team league with real CFBD rosters and three weeks of real games run through the actual attribution pipeline, `Football/College/pipeline.py`, not synthetic placeholders).
 
 Explicitly stubbed (endpoints exist and respond, but don't enforce yet — noted with TODOs in the code):
 - Draft-turn enforcement (any team can currently make the next open pick, not just the team "on the clock")
 - Lineup legality validation (position-eligibility against `roster_slot_definitions`, roster ownership)
 - AI personality-driven autopick (currently just takes the first available board asset — `personality_profile` isn't consulted)
-- Wiring live CFBD/nflfastR ingestion into `plays`/`play_credits` (the schema mirrors `Football/College/pipeline.py`'s existing output shape exactly, so this is a mapping exercise, not a redesign, when it happens)
+
+**Known gap found while seeding real data: no starter slot for kickers.** `roster_slot_definitions` has QB/RB/WR/TE/FLEX/DL/LB/DB starters (matching the original spec exactly) plus one BENCH slot — but kickers (`PK`) are real, draftable, scoring players (marginal-EP credit is fully implemented) with nowhere to start. They can only ever sit on the bench. This is a genuine roster-structure gap, not a bug — the original spec's 10-starter list never included a kicker slot. Needs a decision: add a K starter slot (and shrink BENCH by one, or grow the roster past 20), or confirm kickers are bench-only by design.
 
 Out of scope per the original brief: salary-cap draft logic (field exists, unused), sim-recap animation data, Dual Universe crossover mechanics, baseball's locked-rotation tables.

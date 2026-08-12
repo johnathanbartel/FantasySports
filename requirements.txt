@@ -5,3 +5,7 @@ python-dotenv>=1.0
 nfl_data_py>=0.3.3
 appdirs>=1.4
 pyarrow>=17.0
+
+# No pydantic dependency (unlike cfbd/fastapi), safe alongside cfbd's pydantic<2 pin -
+# used by scripts/seed_demo_league.py to write real CFBD data into the db/ schema.
+sqlalchemy>=2.0

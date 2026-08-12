@@ -74,17 +74,38 @@ SKIPPED_PLAY_TYPES = {
 
 
 @dataclass
+class PlayLevelCredit:
+    """One player/defense-group's credit on one specific play - the detail
+    behind the aggregate `credits`/`defense_credits` dicts below. Exists
+    for consumers (e.g. the DB seed script's `plays`/`play_credits`
+    tables) that need per-play breakdown, not just a running total."""
+    play: object
+    role: str  # "passer"/"receiver"/"rusher"/"kicker"/"dl"/"lb"/"db"
+    points: float
+    player_name: str | None = None   # offense/kicker credits
+    team: str | None = None          # offense team (player credits) or defense team (group credits)
+    position_group: str | None = None  # "DL"/"LB"/"DB" for defense-group credits
+
+
+@dataclass
 class PipelineResult:
     credits: dict = field(default_factory=lambda: defaultdict(float))  # (player, team) -> pts
     defense_credits: dict = field(default_factory=lambda: defaultdict(float))  # (team, group) -> pts
     scrimmage_ppa_by_team: dict = field(default_factory=lambda: defaultdict(float))
     fg_credit_by_team: dict = field(default_factory=lambda: defaultdict(float))
+    play_level_credits: list = field(default_factory=list)  # list[PlayLevelCredit]
     unattributed: list = field(default_factory=list)
     unattributed_fg: list = field(default_factory=list)
     skipped: list = field(default_factory=list)
 
     def model_total(self, team: str) -> float:
         return self.scrimmage_ppa_by_team.get(team, 0.0) + self.fg_credit_by_team.get(team, 0.0)
+
+    def _credit(self, play, role: str, points: float, player_name: str, team: str):
+        self.credits[(player_name, team)] += points
+        self.play_level_credits.append(PlayLevelCredit(
+            play=play, role=role, points=points, player_name=player_name, team=team,
+        ))
 
 
 def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
@@ -104,7 +125,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         if not m:
             result.unattributed.append(play)
             return
-        result.credits[(m["runner"], play.offense)] += ppa
+        result._credit(play, "rusher", ppa, m["runner"], play.offense)
 
     elif play_type in ("Pass Reception", "Passing Touchdown"):
         m = (
@@ -117,8 +138,8 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
             result.unattributed.append(play)
             return
         split = lookup.split(ppa, play.yards_gained)
-        result.credits[(m["passer"], play.offense)] += split.qb_credit
-        result.credits[(m["receiver"], play.offense)] += split.receiver_credit
+        result._credit(play, "passer", split.qb_credit, m["passer"], play.offense)
+        result._credit(play, "receiver", split.receiver_credit, m["receiver"], play.offense)
 
     elif play_type == "Pass Incompletion":
         m = PASS_INCOMPLETE_RE.match(text)
@@ -127,9 +148,9 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
             return
         receiver = m["receiver"]
         split = split_passing_epa_incomplete(ppa, receiver_identified=bool(receiver))
-        result.credits[(m["passer"], play.offense)] += split.qb_credit
+        result._credit(play, "passer", split.qb_credit, m["passer"], play.offense)
         if receiver:
-            result.credits[(receiver, play.offense)] += split.receiver_credit
+            result._credit(play, "receiver", split.receiver_credit, receiver, play.offense)
 
     elif play_type == "Sack":
         m = SACK_RE.match(text) or SACK_ALT_RE.match(text) or SACK_ALT2_RE.match(text)
@@ -138,7 +159,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
             return
         # v1: full (negative) credit to the QB. The sacking defender's
         # positive mirror credit is part of defensive group attribution.
-        result.credits[(m["passer"], play.offense)] += ppa
+        result._credit(play, "passer", ppa, m["passer"], play.offense)
 
     elif play_type in ("Pass Interception Return", "Interception"):
         m = INTERCEPTION_RE.match(text)
@@ -146,7 +167,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
             result.unattributed.append(play)
             return
         # v1: full (negative) credit to the QB, same caveat as sacks.
-        result.credits[(m["passer"], play.offense)] += ppa
+        result._credit(play, "passer", ppa, m["passer"], play.offense)
 
     else:
         result.unattributed.append(play)
@@ -173,7 +194,7 @@ def process_plays(
             distance = int(m["distance"])
             made = play.play_type == "Field Goal Good"
             kicker_credit = attribute_kicker(distance, made, fg_lookup)
-            result.credits[(m["kicker"], play.offense)] += kicker_credit
+            result._credit(play, "kicker", kicker_credit, m["kicker"], play.offense)
             result.fg_credit_by_team[play.offense] += kicker_credit
             continue
 
@@ -188,5 +209,9 @@ def process_plays(
                 value = getattr(d_split, group)
                 if value:
                     result.defense_credits[(play.defense, group.upper())] += value
+                    result.play_level_credits.append(PlayLevelCredit(
+                        play=play, role=group, points=value,
+                        team=play.defense, position_group=group.upper(),
+                    ))
 
     return result

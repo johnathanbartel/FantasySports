@@ -26,7 +26,7 @@ Hockey/          out of scope for v1
 
 db/              SQLAlchemy models + Alembic migrations (sport-agnostic core + football-specific tables)
 api/             FastAPI app - the API surface on top of the schema
-scripts/         init_db.py, seed_smoke_test.py
+scripts/         seed_smoke_test.py, seed_demo_league.py
 docs/            data_contract.md - plain-English schema summary for design handoff
 ```
 
@@ -43,13 +43,22 @@ pip install -r requirements.txt
 copy .env.example .env   # then fill in your API keys
 ```
 
-**DB/API layer** (`db/`, `api/`, `scripts/`):
+**DB/API layer** (`db/`, `api/`):
 
 ```bash
 python -m venv .venv-api
 .venv-api\Scripts\activate
 pip install -r requirements-api.txt
 alembic upgrade head              # creates fantasy.db (SQLite, default)
-python scripts/seed_smoke_test.py # round-trips real data through the schema + API
+python scripts/seed_smoke_test.py # round-trips fake data through the schema + API - quick sanity check
 uvicorn api.main:app --reload     # http://127.0.0.1:8000/docs
 ```
+
+**Demo data for local prototyping** (real CFBD rosters + games, not fake data - run from the *data pipeline* venv, `.venv`, not `.venv-api`; SQLAlchemy has no pydantic dependency so it installs cleanly there alongside `cfbd`):
+
+```bash
+.venv\Scripts\activate
+python scripts/seed_demo_league.py  # resets fantasy.db and reseeds a full 12-team demo league
+```
+
+Seeds a 12-team league (4 human-owned, 8 AI-owned), a completed 240-pick snake draft drawn from real rosters across 16 real FBS teams (players + DL/LB/DB defense groups, same pool), and three weeks (2024, weeks 1-3) of real games run through the actual attribution pipeline - so lineups, scores, and standings all reflect real football, not placeholders. Safe to re-run any time to reset the local DB (drops and recreates everything - not incremental).
