@@ -1,0 +1,12 @@
+{
+  "name": "fantasysports",
+  "version": "1.0.0",
+  "description": "League creation flow: create a league, set roster size, add a placeholder team.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,75 @@
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f1115;
+  color: #e6e6e6;
+  display: flex;
+  justify-content: center;
+  padding: 3rem 1rem;
+}
+
+.wizard {
+  width: 100%;
+  max-width: 420px;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.step-indicator {
+  color: #9aa0a6;
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.step label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.step input {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #1a1d24;
+  color: #e6e6e6;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.step button {
+  width: 100%;
+  padding: 0.6rem;
+  border-radius: 6px;
+  border: none;
+  background: #4f7cff;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.step button:hover {
+  background: #3d67e0;
+}
+
+.hidden {
+  display: none;
+}
+
+.error {
+  color: #ff6b6b;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+}
+
+#summary {
+  background: #1a1d24;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.85rem;
+}

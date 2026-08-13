@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create a League</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="wizard">
+    <h1>Create a League</h1>
+    <p class="step-indicator" id="step-indicator">Step 1 of 3</p>
+
+    <section id="step-name" class="step">
+      <label for="league-name">League name</label>
+      <input type="text" id="league-name" placeholder="e.g. The Gridiron Gurus" />
+      <button id="btn-create-league">Create League</button>
+      <p class="error" id="error-name"></p>
+    </section>
+
+    <section id="step-roster" class="step hidden">
+      <label for="roster-size">Roster size (players per team)</label>
+      <input type="number" id="roster-size" min="1" max="40" placeholder="e.g. 15" />
+      <button id="btn-set-roster">Set Roster Size</button>
+      <p class="error" id="error-roster"></p>
+    </section>
+
+    <section id="step-team" class="step hidden">
+      <p>Add a placeholder team to get your league started.</p>
+      <button id="btn-add-team">Add Placeholder Team</button>
+      <p class="error" id="error-team"></p>
+    </section>
+
+    <section id="step-done" class="step hidden">
+      <h2>League created!</h2>
+      <pre id="summary"></pre>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
