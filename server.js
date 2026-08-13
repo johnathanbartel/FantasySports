@@ -77,8 +77,8 @@ async function handleApi(req, res, url, store) {
 
   try {
     if (req.method === 'POST' && parts.length === 2 && parts[1] === 'leagues') {
-      const { name } = await readJsonBody(req);
-      const league = store.createLeague(name);
+      const { name, leagueSize } = await readJsonBody(req);
+      const league = store.createLeague(name, leagueSize);
       return sendJson(res, 201, league);
     }
 

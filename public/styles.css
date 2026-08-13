@@ -66,6 +66,13 @@ h1 {
   min-height: 1.2em;
 }
 
+.hint {
+  color: #9aa0a6;
+  font-size: 0.8rem;
+  margin: -0.4rem 0 0.75rem;
+  line-height: 1.4;
+}
+
 #summary {
   background: #1a1d24;
   padding: 1rem;

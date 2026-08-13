@@ -33,8 +33,9 @@
   document.getElementById('btn-create-league').addEventListener('click', async () => {
     setError('error-name', '');
     const name = document.getElementById('league-name').value;
+    const leagueSize = document.getElementById('league-size').value;
     try {
-      const league = await postJson('/api/leagues', { name });
+      const league = await postJson('/api/leagues', { name, leagueSize });
       state.leagueId = league.id;
       showStep(stepRoster, 'Step 2 of 3');
     } catch (err) {

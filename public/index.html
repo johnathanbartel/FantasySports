@@ -14,13 +14,21 @@
     <section id="step-name" class="step">
       <label for="league-name">League name</label>
       <input type="text" id="league-name" placeholder="e.g. The Gridiron Gurus" />
+
+      <label for="league-size">League size (number of teams)</label>
+      <input type="number" id="league-size" min="2" max="32" value="12" />
+
       <button id="btn-create-league">Create League</button>
       <p class="error" id="error-name"></p>
     </section>
 
     <section id="step-roster" class="step hidden">
       <label for="roster-size">Roster size (players per team)</label>
-      <input type="number" id="roster-size" min="1" max="40" placeholder="e.g. 15" />
+      <input type="number" id="roster-size" min="10" max="40" value="20" />
+      <p class="hint">
+        10 starters (QB, 2 RB, 2 WR, TE, FLEX, DL, LB, DB) + bench. The draft
+        will run one pick per roster spot.
+      </p>
       <button id="btn-set-roster">Set Roster Size</button>
       <p class="error" id="error-roster"></p>
     </section>

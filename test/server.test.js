@@ -24,6 +24,7 @@ test('end-to-end HTTP flow: create league, set roster size, add placeholder team
     assert.equal(createRes.status, 201);
     const league = await createRes.json();
     assert.equal(league.name, 'Web League');
+    assert.equal(league.leagueSize, 12);
 
     const rosterRes = await fetch(`${baseUrl}/api/leagues/${league.id}/roster-size`, {
       method: 'POST',
@@ -33,6 +34,9 @@ test('end-to-end HTTP flow: create league, set roster size, add placeholder team
     assert.equal(rosterRes.status, 200);
     const afterRoster = await rosterRes.json();
     assert.equal(afterRoster.rosterSize, 16);
+    assert.equal(afterRoster.benchSize, 6);
+    assert.equal(afterRoster.draftSize, 16);
+    assert.equal(afterRoster.positions.starterCount, 10);
 
     const teamRes = await fetch(`${baseUrl}/api/leagues/${league.id}/teams/placeholder`, {
       method: 'POST',
@@ -62,6 +66,39 @@ test('rejects adding a placeholder team before roster size is set', async () => 
       method: 'POST',
     });
     assert.equal(teamRes.status, 400);
+  });
+});
+
+test('honors a custom league size and enforces it when adding teams', async () => {
+  await withServer(async (baseUrl) => {
+    const createRes = await fetch(`${baseUrl}/api/leagues`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Small League', leagueSize: 2 }),
+    });
+    const league = await createRes.json();
+    assert.equal(league.leagueSize, 2);
+
+    await fetch(`${baseUrl}/api/leagues/${league.id}/roster-size`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rosterSize: 10 }),
+    });
+
+    const firstTeamRes = await fetch(`${baseUrl}/api/leagues/${league.id}/teams/placeholder`, {
+      method: 'POST',
+    });
+    assert.equal(firstTeamRes.status, 201);
+
+    const secondTeamRes = await fetch(`${baseUrl}/api/leagues/${league.id}/teams/placeholder`, {
+      method: 'POST',
+    });
+    assert.equal(secondTeamRes.status, 201);
+
+    const thirdTeamRes = await fetch(`${baseUrl}/api/leagues/${league.id}/teams/placeholder`, {
+      method: 'POST',
+    });
+    assert.equal(thirdTeamRes.status, 400);
   });
 });
 
