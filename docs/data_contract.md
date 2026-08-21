@@ -45,7 +45,7 @@ Two families of tables: **sport-agnostic** (leagues, teams, rosters, draft, cale
 | `weekly_player_scores` | A player/group's total for a week | draftable_asset_id, week_id, points — aggregate of play_credits, recomputable, not independently authoritative |
 | `weekly_real_team_epa_totals` | Validation-only: a real team's modeled total vs. its actual real score that week | Not part of live fantasy scoring — this is the spec's "does the model track reality" check, persisted |
 
-A player's fantasy score for a play is never the full play value credited twice — `play_credits` rows for the same play sum back to that play's actual `ppa`, by construction (see `Football/common/attribution.py` for the underlying logic this schema stores the output of).
+A player's fantasy score for a play is never the full play value credited twice — `play_credits` rows for the same play sum back to that play's actual `ppa`, by construction (see `src/fantasy_sports/sports/football/shared/attribution.py` for the underlying logic this schema stores the output of).
 
 ## Decision: DL/LB/DB draft pool
 
@@ -78,7 +78,7 @@ All implemented and verified against a real database; full request/response shap
 
 ## What's real vs. stubbed
 
-Built and working: the full schema, snake draft generation and picking, lineup setting, standings, and reading back a play-level score breakdown — all backed by real data (`scripts/seed_demo_league.py` seeds a 12-team league with real CFBD rosters and three weeks of real games run through the actual attribution pipeline, `Football/College/pipeline.py`, not synthetic placeholders).
+Built and working: the full schema, snake draft generation and picking, lineup setting, standings, and reading back a play-level score breakdown — all backed by real data (`scripts/seed_demo_league.py` seeds a 12-team league with real CFBD rosters and three weeks of real games run through the actual attribution pipeline, `src/fantasy_sports/sports/football/college/pipeline.py`, not synthetic placeholders).
 
 Explicitly stubbed (endpoints exist and respond, but don't enforce yet — noted with TODOs in the code):
 - Draft-turn enforcement (any team can currently make the next open pick, not just the team "on the clock")

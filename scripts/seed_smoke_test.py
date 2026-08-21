@@ -4,7 +4,7 @@ FastAPI's TestClient, so this exercises the actual HTTP routes, not just
 raw DB session calls): create a universe + league + teams -> run a snake
 draft covering both a player and a defense group (proving the same-pool
 recommendation works) -> set a week-1 lineup -> insert a couple of plays
-and play_credits shaped like what Football/College/pipeline.py already
+and play_credits shaped like what sports/football/college/pipeline.py already
 produces -> roll up to a weekly player/team score -> read it back out
 through the API.
 
@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 os.environ["DATABASE_URL"] = "sqlite:///./smoke_test.db"
 
 # Fresh DB file every run.
@@ -28,10 +28,10 @@ if db_path.exists():
 
 from fastapi.testclient import TestClient
 
-from api.main import app
-from db.base import Base
-from db.session import SessionLocal, engine
-from db.models.core import (
+from fantasy_sports.api.main import app
+from fantasy_sports.platform.db.base import Base
+from fantasy_sports.platform.db.session import SessionLocal, engine
+from fantasy_sports.platform.db.models.core import (
     DefenseGroup,
     DraftableAsset,
     Game,
@@ -44,7 +44,7 @@ from db.models.core import (
     User,
     Week,
 )
-from db.models.football import Play, PlayCredit, WeeklyPlayerScore
+from fantasy_sports.sports.football.models import Play, PlayCredit, WeeklyPlayerScore
 
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)

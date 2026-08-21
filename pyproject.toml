@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fantasy-sports-platform"
+version = "0.1.0"
+description = "Single-site, multi-sport fantasy league platform"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.13",
+  "fastapi>=0.110",
+  "pydantic>=2.0",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.27",
+]
+
+[project.optional-dependencies]
+football-data = [
+  "cfbd",
+  "nfl_data_py",
+  "pandas",
+  "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"fantasy_sports.sports.football" = ["shared/data/*.json", "college/data/*.json"]
+

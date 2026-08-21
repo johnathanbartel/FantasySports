@@ -2,7 +2,7 @@
 Seeds a realistic demo league for local prototype work: real CFBD rosters
 (not fake names), a full 240-pick snake draft drawing from the same
 player/defense-group pool, and three weeks of real games run through the
-actual attribution pipeline (Football/College/pipeline.py) - so the
+actual attribution pipeline (sports/football/college/pipeline.py) - so the
 weekly score breakdown and standings screens have real, explainable
 numbers to render, not placeholders.
 
@@ -29,14 +29,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import cfbd
 from dotenv import load_dotenv
 
-from db.base import Base
-from db.session import SessionLocal, engine
-from db.models.core import (
+from fantasy_sports.platform.db.base import Base
+from fantasy_sports.platform.db.session import SessionLocal, engine
+from fantasy_sports.platform.db.models.core import (
     DefenseGroup,
     DraftableAsset,
     Draft,
@@ -56,9 +56,9 @@ from db.models.core import (
     WeeklyMatchup,
     WeeklyTeamScore,
 )
-from db.models.football import Play, PlayCredit, WeeklyPlayerScore
-from Football.College.pipeline import process_plays
-from Football.common.attribution import YacEpaLookup, FieldGoalEpLookup
+from fantasy_sports.sports.football.models import Play, PlayCredit, WeeklyPlayerScore
+from fantasy_sports.sports.football.college.pipeline import process_plays
+from fantasy_sports.sports.football.shared.attribution import YacEpaLookup, FieldGoalEpLookup
 
 YEAR = 2024
 WEEKS = [1, 2, 3]

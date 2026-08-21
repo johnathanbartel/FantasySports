@@ -1,79 +1,84 @@
 # Fantasy Sports Company
 
-Internal fantasy sports platform. Football module (NCAAF + NFL) is the current
-build target; baseball uses a related but distinct locked-rotation mechanic
-and is out of scope for now.
+A single-site fantasy platform for major sports. Shared league mechanics live
+once in the platform layer; each sport supplies only its provider integrations,
+scoring rules, and sport-specific persistence.
 
-## Core idea
+Football (NCAAF first, NFL next) is the current working implementation. The
+baseball, basketball, and hockey package boundaries are ready for MLB, NBA, and
+NHL modules without duplicating site infrastructure.
 
-Standard fantasy football double-counts touchdowns (QB gets the full passing
-TD, the receiver gets the full receiving TD) and rewards yardage that never
-actually produced points. This platform scores players on **Expected Points
-Added (EPA)** instead: every play's value is the change in a field-position-
-based Expected Points model, split among the players involved in that specific
-play. See `Football/README.md` for the full scoring spec.
+## Repository layout
 
-## Layout
-
+```text
+src/fantasy_sports/
+  api/                     one API for the site
+  platform/db/             shared users, leagues, drafts, rosters, and schedules
+  sports/
+    football/              shared football scoring plus college/pro adapters
+    baseball/              MLB module boundary
+    basketball/            NBA module boundary
+    hockey/                NHL module boundary
+web/static/                site assets served by the API
+migrations/                one Alembic history for every sport
+scripts/                   seeding and operational commands
+docs/                      architecture and data contracts
 ```
-Football/
-  common/        shared EPA model + credit-attribution logic (used by both College and Professional)
-  College/       NCAAF data pipeline (CollegeFootballData.com)
-  Professional/  NFL data pipeline (nflfastR) - not started yet
-Baseball/        out of scope for v1
-Basketball/      out of scope for v1
-Hockey/          out of scope for v1
 
-db/              SQLAlchemy models + Alembic migrations (sport-agnostic core + football-specific tables)
-api/             FastAPI app - the API surface on top of the schema
-frontend/        Real prototype pages (draft-board.html, ...), served by the API itself - no separate frontend server
-scripts/         seed_smoke_test.py, seed_demo_league.py
-docs/            data_contract.md - plain-English schema summary for design handoff
-```
+See [docs/architecture.md](docs/architecture.md) for placement and branch rules,
+and [the football spec](src/fantasy_sports/sports/football/README.md) for EPA
+scoring details.
+
+## Branch model
+
+`master` is the single integration branch and deployable source of truth. Sport
+work belongs in short-lived feature branches and returns to `master`; sports do
+not get permanent branches. `origin/main` is a stale initial-commit branch and
+should be removed by a repository administrator once protected-branch settings
+and external integrations have been checked.
 
 ## Setup
 
-Two separate environments - `cfbd` pins pydantic<2 and breaks under pydantic v2, while the DB/API layer wants modern FastAPI + pydantic v2. Two concerns, two venvs.
+Create the API environment and install the application in editable mode:
 
-**Data pipeline** (CFBD/nflfastR ingestion, scoring scripts under `Football/`):
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env   # then fill in your API keys
-```
-
-**DB/API layer** (`db/`, `api/`):
-
-```bash
+```powershell
 python -m venv .venv-api
-.venv-api\Scripts\activate
-pip install -r requirements-api.txt
-alembic upgrade head              # creates fantasy.db (SQLite, default)
-python scripts/seed_smoke_test.py # round-trips fake data through the schema + API - quick sanity check
-uvicorn api.main:app --reload     # http://127.0.0.1:8000/docs
+.venv-api\Scripts\Activate.ps1
+pip install -e .
+alembic upgrade head
+uvicorn fantasy_sports.api.main:app --reload
 ```
 
-**Demo data for local prototyping** (real CFBD rosters + games, not fake data - run from the *data pipeline* venv, `.venv`, not `.venv-api`; SQLAlchemy has no pydantic dependency so it installs cleanly there alongside `cfbd`):
+The API and web UI run in the same process. Open the API documentation at
+`http://127.0.0.1:8000/docs` or the current draft board at
+`http://127.0.0.1:8000/static/draft-board.html`.
 
-```bash
-.venv\Scripts\activate
-python scripts/seed_demo_league.py  # resets fantasy.db and reseeds a full 12-team demo league
+Football ingestion currently needs its separate legacy-compatible environment
+because `cfbd` pins Pydantic below version 2:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:PYTHONPATH = "src"
 ```
 
-Seeds a 12-team league (4 human-owned, 8 AI-owned), a completed 240-pick snake draft drawn from real rosters across 16 real FBS teams (players + DL/LB/DB defense groups, same pool), and three weeks (2024, weeks 1-3) of real games run through the actual attribution pipeline - so lineups, scores, and standings all reflect real football, not placeholders. Safe to re-run any time to reset the local DB (drops and recreates everything - not incremental).
+Copy `.env.example` to `.env` and supply provider credentials before running
+ingestion. Lookup data and Python packages are included by `pyproject.toml`.
 
-Also starts a second, fresh draft (`draft_id=2`) for the same league via a real `POST /drafts/start` call: `draft_id=1` from the seed is already 100% complete (240/240 picks), so there's nothing left to interactively draft against it - `draft_id=2` has all 240 picks open, for demoing the live pick/autopick flow. If you reset the DB with `seed_demo_league.py` again, re-create it:
+## Local verification and demo data
 
-```bash
-curl -X POST http://127.0.0.1:8000/drafts/start -H "Content-Type: application/json" -d "{\"league_id\": 1}"
+Run the isolated API/database smoke test:
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_smoke_test.py
 ```
 
-## Viewing the prototype
+To reset and seed the local demo league with real CFBD roster and game data:
 
-Real, working pages - not static mockups - served by the API itself, so there's nothing else to run beyond `uvicorn` (see DB/API layer setup above):
+```powershell
+.venv\Scripts\python.exe scripts/seed_demo_league.py
+```
 
-- **Draft board**: `http://127.0.0.1:8000/static/draft-board.html` - live board, pick history, make-pick and autopick, all hitting the real API against `draft_id=2` by default (override with `?draft_id=`).
-
-Styled with the Broadsheet design system pulled from the Claude Design project (`frontend/styles.css`) - tokens and component classes only; the design's decorative CMYK print-separation animation was left out as unused on this screen.
+The demo seed intentionally drops and recreates the configured local database.
+It creates a completed draft and a second open draft for the live draft board.
