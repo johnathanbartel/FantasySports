@@ -16,6 +16,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",  # FastAPI's TestClient
+]
 football-data = [
   "cfbd",
   "nfl_data_py",
@@ -29,3 +33,6 @@ where = ["src"]
 [tool.setuptools.package-data]
 "fantasy_sports.sports.football" = ["shared/data/*.json", "college/data/*.json"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

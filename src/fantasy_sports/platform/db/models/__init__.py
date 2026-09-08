@@ -24,6 +24,14 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     WeeklyMatchup,
     WeeklyTeamScore,
 )
+from fantasy_sports.platform.db.models.auction import (  # noqa: F401
+    AuctionSession,
+    AuctionTier,
+    AuctionBudget,
+    AuctionRound,
+    AuctionBid,
+    AuctionRoundResult,
+)
 from fantasy_sports.sports.football.models import (  # noqa: F401
     Play,
     PlayCredit,
