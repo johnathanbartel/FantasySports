@@ -35,21 +35,30 @@ budget, on an asset already won in this session, or on an asset outside the
 league's universe(s). One-bid-per-owner-per-round is also enforced by a
 unique constraint on `auction_bids`.
 
-**Reveal.** Bids are invisible until the round resolves. `GET
-/auctions/{id}/rounds/{n}` returns a bid *count* but an empty bid list while
-the round is open; passing `team_id` echoes back that one owner's own bid.
-Once resolved, the same endpoint returns every bid in the round.
+**Reveal.** Bids are invisible until the round resolves. While a round is
+open, `GET /auctions/{id}/rounds/{n}` returns a bid *count* and nothing else —
+no asset, no amount, not even for the caller's own bid. That last part is
+deliberate: with no auth in the application yet, any "show me my own bid"
+parameter is a parameter every other owner can point at you, and reading a
+rival's blind bid and beating it by one is exactly what this mechanic exists
+to prevent. An owner sees their own bid in the response to the bid they
+submitted, and the board remembers it client-side for the rest of the round;
+serving it on request can come back once there is an authenticated user.
+Once the round resolves, the same endpoint returns every bid at once.
 
-**Debit.** Bids are grouped by asset. Each asset goes to its highest bidder,
-whose budget is debited by exactly their bid — losing bidders pay nothing.
-A round therefore has as many outcomes as it had distinct assets bid on: a
-twelve-team league can produce twelve separate winners in one round, or one
-winner and eleven losers if everyone piles onto the same player. Each win is
-written into the *existing* draft tables — a `draft_picks` row plus a
-`roster_entries` row (`acquired_via="auction"`) — so the already-built draft
-board, pick history, and roster endpoints see auction results with no
-special-casing, and the won asset drops out of the pool by the same query
-that removes a snake pick.
+**Debit.** Before amounts are compared, bids that cannot be honoured are
+screened out and cost their owner nothing: the asset was already won earlier
+in the auction, the bidder already rosters it, or the bid no longer fits
+their remaining budget. The survivors are grouped by asset. Each asset goes
+to its highest bidder, whose budget is debited by exactly their bid — losing
+bidders pay nothing. A round therefore has as many outcomes as it had
+distinct assets bid on: a twelve-team league can produce twelve separate
+winners in one round, or one winner and eleven losers if everyone piles onto
+the same player. Each win is written into the *existing* draft tables — a
+`draft_picks` row plus a `roster_entries` row (`acquired_via="auction"`) — so
+the already-built draft board, pick history, and roster endpoints see auction
+results with no special-casing, and the won asset drops out of the pool by
+the same query that removes a snake pick.
 
 **Advance.** The round is marked resolved and the next round opens *at the
 moment of resolution*, with every later round's window sliding along behind
@@ -143,14 +152,38 @@ shortcut) and an optional `seed` for a reproducible tie-break. Without
 The live UI is `web/static/auction-board.html`, linked from the existing
 draft board.
 
+## Known limits
+
+**No bidder identity.** Any caller can bid as any team, exactly as any caller
+can make the next snake pick — the "no auth yet" posture noted in
+`docs/data_contract.md`. Blind bids are not *readable* by anyone, but they
+are overwritable by an impostor until there are real users.
+
+**No locking around resolution.** Two simultaneous `resolve` calls both pass
+the "is this round open?" check. Budgets are still safe — one bid per owner
+per round means a debit can only run once — and the uniqueness constraints on
+`draft_picks` and `auction_round_results` stop the second writer, but it
+fails as a 500 rather than a clean 409. A bid arriving in the same instant a
+round resolves can also end up stranded in `submitted`: never charged, never
+shown as a contest. Single-process SQLite makes this hard to hit today and
+the snake path has the same shape, but a status-guarded UPDATE (or
+`SELECT ... FOR UPDATE`) is the real fix once this runs on Postgres.
+
+**One live auction per league, but not one draft.** Starting a second auction
+while one is open is refused. A league that already ran a *snake* draft can
+still open an auction over the same pool, because `GET /drafts/{id}/board`
+scopes "already gone" per draft — pre-existing behaviour the demo seed relies
+on. An owner cannot re-buy someone they already roster (the bid is refused,
+and screened again at reveal), but two *different* teams can end up holding
+the same asset across two drafts. Worth resolving before any league runs both
+for real.
+
 ## Not in scope
 
-Draft-turn/ownership enforcement is as unenforced here as it is on the snake
-path — any caller can bid as any team, matching the existing "no auth yet"
-posture noted in `docs/data_contract.md`. There is also no "reserve enough
-budget to fill your remaining slots" rule: an owner may spend down to zero
-and simply win nothing in later rounds. Dual Universe, Relegation, AI
-coaches, and AI drafting are explicitly out of scope for this engine.
+There is no "reserve enough budget to fill your remaining slots" rule: an
+owner may spend down to zero and simply win nothing in later rounds. Dual
+Universe, Relegation, AI coaches, and AI drafting are explicitly out of scope
+for this engine.
 
 ## Verification
 

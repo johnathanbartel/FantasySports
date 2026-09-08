@@ -128,14 +128,13 @@ async function loadAll() {
     api(`/auctions/${AUCTION_ID}/results`),
   ]);
 
-  // Blind auction: this only ever returns the selected team's own bid while
-  // the round is open. Other owners' bids arrive at reveal time.
-  ownBid = null;
-  if (session.current_round && bidderTeamId !== null) {
-    const round = await api(
-      `/auctions/${AUCTION_ID}/rounds/${session.current_round.round_number}?team_id=${bidderTeamId}`
-    );
-    ownBid = round.bids[0] || null;
+  // Blind auction: the server will not hand back any bid - not even your own
+  // - while the round is open, because with no auth yet any such endpoint
+  // would be readable by every other owner too. So the bid shown below is the
+  // one this browser submitted, remembered locally and dropped as soon as the
+  // round it belonged to is over.
+  if (!session.current_round || (ownBid && ownBid.round !== session.current_round.round_number)) {
+    ownBid = null;
   }
   render();
 }
@@ -159,11 +158,18 @@ async function startAuction() {
 async function placeBid(assetId, amount) {
   showError('');
   try {
-    await api(`/auctions/${AUCTION_ID}/bids`, {
+    const placed = await api(`/auctions/${AUCTION_ID}/bids`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({team_id: bidderTeamId, draftable_asset_id: assetId, amount: amount}),
     });
+    // The POST response is the only place an owner sees their own bid.
+    ownBid = {
+      team_id: placed.team_id,
+      amount: placed.amount,
+      display_name: placed.display_name,
+      round: placed.round_number,
+    };
     await loadAll();
   } catch (e) {
     showError(e.message);
@@ -231,13 +237,21 @@ function renderTeamSelect() {
     if (t.id === bidderTeamId) opt.selected = true;
     el.appendChild(opt);
   });
-  el.onchange = () => { bidderTeamId = Number(el.value); loadAll(); };
+  el.onchange = () => {
+    bidderTeamId = Number(el.value);
+    ownBid = null;  // that bid belonged to the previous team
+    loadAll();
+  };
 
   const budget = budgets.find(b => b.team_id === bidderTeamId);
   const own = document.getElementById('own-bid');
   const parts = [];
   if (budget) parts.push(`${budget.remaining_budget} left of ${budget.starting_budget}`);
-  parts.push(ownBid ? `bid this round: ${ownBid.amount} on ${ownBid.display_name}` : 'no bid this round');
+  parts.push(
+    ownBid && ownBid.team_id === bidderTeamId
+      ? `bid this round: ${ownBid.amount} on ${ownBid.display_name}`
+      : 'no bid submitted from this browser this round'
+  );
   own.textContent = parts.join(' · ');
 }
 

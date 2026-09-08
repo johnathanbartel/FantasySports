@@ -85,7 +85,7 @@ All implemented and verified against a real database; full request/response shap
 | View the revealed auction pool | `GET /auctions/{id}/board` |
 | View every team's tier and remaining budget | `GET /auctions/{id}/budgets` |
 | Submit one blind bid | `POST /auctions/{id}/bids` |
-| View a round (blind while open, full reveal after) | `GET /auctions/{id}/rounds/{n}` |
+| View a round (bid count only while open, full reveal after) | `GET /auctions/{id}/rounds/{n}` |
 | Resolve a round (reveal -> debit -> advance) | `POST /auctions/{id}/rounds/{n}/resolve` |
 | View everything won in the auction so far | `GET /auctions/{id}/results` |
 | Set a weekly lineup | `PUT /teams/{id}/lineup` |
@@ -106,7 +106,7 @@ Explicitly stubbed (endpoints exist and respond, but don't enforce yet — noted
 - Draft-turn enforcement (any team can currently make the next open pick, not just the team "on the clock")
 - Lineup legality validation (position-eligibility against `roster_slot_definitions`, roster ownership)
 - AI personality-driven autopick (currently just takes the first available board asset — `personality_profile` isn't consulted)
-- Bidder identity in the auction (any caller can bid as any team, same posture as draft-turn enforcement above)
+- Bidder identity in the auction (any caller can bid as any team, same posture as draft-turn enforcement above). Blind bids are not readable by anyone while a round is open, but they are overwritable by an impostor until real users exist
 
 **Fixed: kickers now have a starter slot.** `roster_slot_definitions` has a `K` slot (`slot_count=1`, `eligible_positions=["PK"]` — CFBD's own position code for kickers, not `"K"`; a slot filtering on `"K"` would silently never match a real player). Verified against the reseeded demo league: all 36 team-weeks (12 teams × 3 weeks) fill exactly 11 starters including a real kicker.
 

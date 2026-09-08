@@ -124,6 +124,21 @@ def create_session(
     if league is None:
         raise AuctionError("League not found", status_code=404)
 
+    live = (
+        db.query(AuctionSession)
+        .filter(
+            AuctionSession.league_id == league_id,
+            AuctionSession.status.in_(("pending", "in_progress")),
+        )
+        .first()
+    )
+    if live is not None:
+        raise AuctionError(
+            f"League {league_id} already has auction {live.id} open; "
+            "finish it before starting another",
+            status_code=409,
+        )
+
     teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
     if not teams:
         raise AuctionError("League has no teams yet")
@@ -294,6 +309,24 @@ def drafted_asset_ids(db: Session, session: AuctionSession) -> set[int]:
     }
 
 
+def _already_rostered(db: Session, team_id: int, draftable_asset_id: int) -> bool:
+    """Does this fantasy team already own this asset?
+
+    Possible because a league that already ran a draft can start another one
+    over the same pool - the snake path allows that too, and the demo seed
+    relies on it.
+    """
+    return (
+        db.query(RosterEntry.id)
+        .filter(
+            RosterEntry.team_id == team_id,
+            RosterEntry.draftable_asset_id == draftable_asset_id,
+        )
+        .first()
+        is not None
+    )
+
+
 def _league_universe_ids(db: Session, session: AuctionSession) -> list[int]:
     return [
         lu.universe_id
@@ -376,6 +409,8 @@ def submit_bid(
         raise AuctionError("Asset is not in this league's universe(s)")
     if draftable_asset_id in drafted_asset_ids(db, session):
         raise AuctionError("That asset has already been won in this auction", status_code=409)
+    if _already_rostered(db, team_id, draftable_asset_id):
+        raise AuctionError("Your team already rosters that asset", status_code=409)
 
     bid = (
         db.query(AuctionBid)
@@ -460,12 +495,23 @@ def resolve_round(
     resolution = RoundResolution(round_number=round_number)
 
     # Reveal: every bid in the round is now visible at once. Screen out the
-    # ones that can't be honoured before comparing amounts.
+    # ones that can't be honoured before comparing amounts - a screened-out
+    # bid costs its owner nothing.
+    bids_per_asset: dict[int, int] = defaultdict(int)
     live_by_asset: dict[int, list[AuctionBid]] = defaultdict(list)
     for bid in bids:
+        bids_per_asset[bid.draftable_asset_id] += 1
         if bid.draftable_asset_id in already_drafted:
             bid.status = "lost"
             bid.lost_reason = "already_drafted"
+            resolution.losing_bid_ids.append(bid.id)
+            continue
+        if _already_rostered(db, bid.team_id, bid.draftable_asset_id):
+            # The bidder already owns this asset from an earlier draft in the
+            # same league. Winning it again would buy them nothing, so it is
+            # screened out here rather than charged for at debit time.
+            bid.status = "lost"
+            bid.lost_reason = "already_rostered"
             resolution.losing_bid_ids.append(bid.id)
             continue
         if bid.amount > _budget(db, session, bid.team_id).remaining_budget:
@@ -519,33 +565,23 @@ def resolve_round(
         db.flush()
         pick_number += 1
 
-        # roster_entries is unique on (team, asset). A league that already ran
-        # a draft can start a second one over the same pool (the snake path
-        # allows this too), so the winner may already hold this asset - in
-        # which case the roster is already right and there is nothing to add.
-        already_rostered = (
-            db.query(RosterEntry)
-            .filter(
-                RosterEntry.team_id == winning_bid.team_id,
-                RosterEntry.draftable_asset_id == winning_bid.draftable_asset_id,
+        # A winner here can never already hold the asset: bids from owners who
+        # do are screened out at reveal above, so this insert can't collide
+        # with roster_entries' (team, asset) uniqueness.
+        db.add(
+            RosterEntry(
+                team_id=winning_bid.team_id,
+                draftable_asset_id=winning_bid.draftable_asset_id,
+                acquired_via="auction",
             )
-            .first()
         )
-        if already_rostered is None:
-            db.add(
-                RosterEntry(
-                    team_id=winning_bid.team_id,
-                    draftable_asset_id=winning_bid.draftable_asset_id,
-                    acquired_via="auction",
-                )
-            )
         db.add(
             AuctionRoundResult(
                 auction_round_id=round_row.id,
                 draftable_asset_id=winning_bid.draftable_asset_id,
                 winning_team_id=winning_bid.team_id,
                 winning_amount=winning_bid.amount,
-                bid_count=len(contenders),
+                bid_count=bids_per_asset[winning_bid.draftable_asset_id],
                 tie_break_used=bool(tied_team_ids),
                 tied_team_ids=tied_team_ids or None,
                 draft_pick_id=pick.id,
@@ -556,7 +592,7 @@ def resolve_round(
                 draftable_asset_id=winning_bid.draftable_asset_id,
                 winning_team_id=winning_bid.team_id,
                 winning_amount=winning_bid.amount,
-                bid_count=len(contenders),
+                bid_count=bids_per_asset[winning_bid.draftable_asset_id],
                 tie_break_used=bool(tied_team_ids),
                 tied_team_ids=tied_team_ids,
             )

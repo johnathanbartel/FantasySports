@@ -111,7 +111,13 @@ def test_board_lists_defense_groups_individually(client, seeded_league):
     ]
 
 
-def test_bids_stay_blind_until_the_round_resolves(client, seeded_league):
+def test_no_open_bid_is_readable_by_anyone(client, seeded_league):
+    """Blind means blind. While the round is open, no request - however it is
+    parameterised - can surface another owner's asset or amount. There is no
+    auth yet, so a "show me my own bid" parameter would be readable by
+    anyone, and reading a rival's bid and beating it by one would defeat the
+    whole mechanic.
+    """
     alpha, bravo, _ = seeded_league.team_ids
     session = start_auction(client, seeded_league)
     auction_id = session["id"]
@@ -123,18 +129,79 @@ def test_bids_stay_blind_until_the_round_resolves(client, seeded_league):
             json={"team_id": team_id, "draftable_asset_id": beck, "amount": amount},
         )
         assert response.status_code == 200, response.text
+        # The bidder does get their own bid echoed back at submission time.
+        assert response.json()["team_id"] == team_id
+        assert response.json()["amount"] == amount
 
-    # No team_id: the round says how many bids exist, but not what they are.
     blind = client.get(f"/auctions/{auction_id}/rounds/1").json()
     assert blind["status"] == "open"
-    assert blind["bid_count"] == 2
+    assert blind["bid_count"] == 2  # how many owners have acted, nothing more
     assert blind["bids"] == []
     assert blind["contests"] == []
 
-    # An owner can see their own bid back, and only their own.
-    own = client.get(f"/auctions/{auction_id}/rounds/1", params={"team_id": alpha}).json()
-    assert [b["team_id"] for b in own["bids"]] == [alpha]
-    assert own["bids"][0]["amount"] == 60
+    # The old leak: asking for a specific team must not open a side door.
+    for probe in ({"team_id": bravo}, {"team_id": alpha}):
+        peek = client.get(f"/auctions/{auction_id}/rounds/1", params=probe).json()
+        assert peek["bids"] == [], f"open bids leaked via {probe}"
+
+    # Nothing anywhere else exposes them either while the round is open.
+    assert client.get(f"/auctions/{auction_id}/results").json() == []
+
+    # After resolution, everything is revealed at once.
+    client.post(f"/auctions/{auction_id}/rounds/1/resolve", params={"force": True, "seed": 1})
+    revealed = client.get(f"/auctions/{auction_id}/rounds/1").json()
+    assert sorted(bid["team_id"] for bid in revealed["bids"]) == sorted([alpha, bravo])
+    assert sorted(bid["amount"] for bid in revealed["bids"]) == [45, 60]
+
+
+def test_a_timezone_aware_start_time_is_accepted(client, seeded_league):
+    """`Date.toISOString()` emits a trailing Z; that must not 500."""
+    response = client.post(
+        "/auctions/start",
+        json={
+            "league_id": seeded_league.league.id,
+            "slots": 2,
+            "starts_at": "2030-01-01T12:00:00Z",
+        },
+    )
+    assert response.status_code == 200, response.text
+    session = response.json()
+    assert session["status"] == "pending"
+    assert session["current_round"] is None
+
+    # And reading it back does not blow up on the naive/aware comparison.
+    assert client.get(f"/auctions/{session['id']}").status_code == 200
+
+
+def test_a_rejected_bid_does_not_un_start_the_auction(client, db, seeded_league):
+    """Opening the Recruiting Period and placing a bid are separate
+    transactions, so a bad bid can't roll the period back to pending."""
+    alpha = seeded_league.team_ids[0]
+    session = start_auction(client, seeded_league)
+    auction_id = session["id"]
+
+    bad = client.post(
+        f"/auctions/{auction_id}/bids",
+        json={
+            "team_id": alpha,
+            "draftable_asset_id": seeded_league.player_assets["Carson Beck"].id,
+            "amount": 99999,
+        },
+    )
+    assert bad.status_code == 400
+
+    after = client.get(f"/auctions/{auction_id}").json()
+    assert after["status"] == "in_progress"
+    assert after["current_round"]["round_number"] == 1
+    assert after["current_round"]["status"] == "open"
+
+
+def test_a_second_live_auction_for_one_league_is_refused(client, seeded_league):
+    start_auction(client, seeded_league)
+
+    second = client.post("/auctions/start", json={"league_id": seeded_league.league.id})
+    assert second.status_code == 409
+    assert "already has auction" in second.json()["detail"]
 
 
 def test_resolve_reveals_debits_and_advances(client, db, seeded_league):

@@ -420,21 +420,88 @@ def test_tie_break_picks_one_tied_owner_and_only_charges_them(db, seeded_league)
     assert stored.tied_team_ids == sorted([alpha, bravo, charlie])
 
 
-def test_tie_break_is_deterministic_for_a_given_seed(db, seeded_league):
-    """Same seed, same winner - which is what makes the mechanic testable and
-    a disputed draft auditable."""
-    alpha, bravo, _ = seeded_league.team_ids
-    winners = []
-    for _ in range(3):
-        session = start_session(db, seeded_league)
-        beck = seeded_league.player_assets["Carson Beck"].id
-        submit_bid(db, session, team_id=alpha, draftable_asset_id=beck, amount=50, now=START)
-        submit_bid(db, session, team_id=bravo, draftable_asset_id=beck, amount=50, now=START)
-        resolution = resolve_round(db, session, rng=random.Random(99), now=START, force=True)
-        winners.append(resolution.contests[0].winning_team_id)
-        db.rollback()
+class RiggedRandom(random.Random):
+    """A random source that always picks a known position, and counts calls.
 
-    assert len(set(winners)) == 1
+    Asserting against a *seed* can only catch an engine that ignores the
+    injected rng probabilistically - an engine using its own source would
+    still land on the "expected" winner some of the time. Rigging the draw
+    makes the assertion exact.
+    """
+
+    def __init__(self, index: int):
+        super().__init__()
+        self.index = index
+        self.calls = 0
+
+    def choice(self, seq):
+        self.calls += 1
+        return seq[self.index]
+
+
+def test_the_tie_break_actually_uses_the_injected_random_source(db, seeded_league):
+    """The contested asset draws from the rng it was given - not from a
+    private one, and not from a hidden "lowest team id wins" rule.
+
+    Two rounds, each a three-way tie, with the draw rigged to opposite ends of
+    the candidate list. Only an engine that really consults the injected rng
+    can satisfy both.
+    """
+    alpha, bravo, charlie = seeded_league.team_ids
+    session = start_session(db, seeded_league, config=make_config(slots=2))
+
+    # Candidates are sorted by team id, so index 0 is the lowest id and -1 the
+    # highest.
+    rigging = [
+        (seeded_league.player_assets["Carson Beck"].id, 0, min(seeded_league.team_ids)),
+        (seeded_league.player_assets["Riley Leonard"].id, -1, max(seeded_league.team_ids)),
+    ]
+
+    for round_index, (asset_id, index, expected) in enumerate(rigging):
+        now = START + datetime.timedelta(seconds=round_index)
+        for team_id in (alpha, bravo, charlie):
+            submit_bid(
+                db, session, team_id=team_id, draftable_asset_id=asset_id, amount=60, now=now
+            )
+
+        rigged = RiggedRandom(index)
+        resolution = resolve_round(db, session, rng=rigged, now=now, force=True)
+
+        assert rigged.calls == 1, "the engine never consulted the injected rng"
+        assert resolution.contests[0].winning_team_id == expected
+
+    db.commit()
+    # 60 to the lowest team id in round 1, 60 to the highest in round 2.
+    assert budget_for(db, session, min(seeded_league.team_ids)).spent_budget == 60
+    assert budget_for(db, session, max(seeded_league.team_ids)).spent_budget == 60
+
+
+def test_tie_break_is_reproducible_for_a_given_seed(db, seeded_league):
+    """Same seed, same winner - what makes a disputed draft auditable.
+
+    Two identical ties in the same session, resolved with equal seeds, must
+    pick the owner in the same position of the tie.
+    """
+    alpha, bravo, _ = seeded_league.team_ids
+    session = start_session(db, seeded_league, config=make_config(slots=2))
+    contested = [
+        seeded_league.player_assets["Carson Beck"].id,
+        seeded_league.player_assets["Riley Leonard"].id,
+    ]
+
+    picked_positions = []
+    for round_index, asset_id in enumerate(contested):
+        now = START + datetime.timedelta(seconds=round_index)
+        for team_id in (alpha, bravo):
+            submit_bid(
+                db, session, team_id=team_id, draftable_asset_id=asset_id, amount=30, now=now
+            )
+        resolution = resolve_round(db, session, rng=random.Random(99), now=now, force=True)
+        contest = resolution.contests[0]
+        assert contest.tie_break_used is True
+        picked_positions.append(sorted([alpha, bravo]).index(contest.winning_team_id))
+
+    assert picked_positions[0] == picked_positions[1]
 
 
 def test_player_choice_is_uniform_over_the_tied_owners():
@@ -528,31 +595,104 @@ def test_two_owners_can_contest_a_single_defense_group(db, seeded_league):
     assert budget_for(db, session, bravo).spent_budget == 45
     assert budget_for(db, session, alpha).spent_budget == 0
 
-def test_re_winning_an_already_rostered_asset_does_not_duplicate_the_roster(db, seeded_league):
-    """A league can run a second draft over the same pool (the snake path
-    allows it), so a winner may already hold the asset. roster_entries is
-    unique on (team, asset) - re-winning must not blow up on that."""
+def test_bidding_on_an_asset_you_already_roster_is_refused(db, seeded_league):
+    """A league that already drafted can run a second draft over the same
+    pool, so an owner can be looking at a player they already hold. Winning
+    them again would buy nothing, so the bid is refused outright."""
     alpha = seeded_league.team_ids[0]
     beck = seeded_league.player_assets["Carson Beck"].id
     db.add(RosterEntry(team_id=alpha, draftable_asset_id=beck, acquired_via="draft"))
     db.commit()
 
     session = start_session(db, seeded_league)
+    with pytest.raises(AuctionError, match="already rosters"):
+        submit_bid(db, session, team_id=alpha, draftable_asset_id=beck, amount=25, now=START)
+
+
+def test_a_bid_is_screened_out_if_the_bidder_acquires_the_asset_mid_round(db, seeded_league):
+    """The same check again at reveal, for the case where the roster changed
+    after the bid was submitted. The owner must not be charged for an asset
+    they cannot receive."""
+    alpha = seeded_league.team_ids[0]
+    beck = seeded_league.player_assets["Carson Beck"].id
+    session = start_session(db, seeded_league)
     submit_bid(db, session, team_id=alpha, draftable_asset_id=beck, amount=25, now=START)
-    resolve_round(db, session, rng=random.Random(1), now=START, force=True)
+
+    # Acquired by some other route (a trade, a waiver, a parallel draft)
+    # after the bid went in.
+    db.add(RosterEntry(team_id=alpha, draftable_asset_id=beck, acquired_via="draft"))
+    db.flush()
+
+    resolution = resolve_round(db, session, rng=random.Random(1), now=START, force=True)
     db.commit()
 
-    entries = (
+    assert resolution.contests == []
+    losing = db.get(AuctionBid, resolution.losing_bid_ids[0])
+    assert losing.lost_reason == "already_rostered"
+    # Not charged, no duplicate roster row, no pick.
+    assert budget_for(db, session, alpha).spent_budget == 0
+    assert (
         db.query(RosterEntry)
         .filter(RosterEntry.team_id == alpha, RosterEntry.draftable_asset_id == beck)
-        .all()
-    )
-    assert len(entries) == 1
-    # The bid still cost real money and still produced a draft pick.
-    assert budget_for(db, session, alpha).spent_budget == 25
-    assert (
-        db.query(DraftPick)
-        .filter(DraftPick.draft_id == session.draft_id, DraftPick.draftable_asset_id == beck)
         .count()
         == 1
     )
+    assert db.query(DraftPick).filter(DraftPick.draft_id == session.draft_id).count() == 0
+
+
+def test_a_bid_beyond_the_budget_at_reveal_time_is_screened_out(db, seeded_league):
+    """The resolve-time affordability re-check: a bid that was affordable when
+    submitted but isn't when the round settles must lose, not overdraw."""
+    alpha = seeded_league.team_ids[0]
+    session = start_session(db, seeded_league, tier_by_index={0: "small"})
+    beck = seeded_league.player_assets["Carson Beck"].id
+    submit_bid(db, session, team_id=alpha, draftable_asset_id=beck, amount=150, now=START)
+
+    # Something else spent the money first.
+    budget_for(db, session, alpha).spent_budget = 140
+    db.flush()
+
+    resolution = resolve_round(db, session, rng=random.Random(1), now=START, force=True)
+    db.commit()
+
+    assert resolution.contests == []
+    losing = db.get(AuctionBid, resolution.losing_bid_ids[0])
+    assert losing.lost_reason == "insufficient_budget"
+    assert budget_for(db, session, alpha).spent_budget == 140  # never overdrawn
+
+
+def test_a_league_can_only_have_one_live_auction(db, seeded_league):
+    start_session(db, seeded_league)
+
+    with pytest.raises(AuctionError, match="already has auction"):
+        start_session(db, seeded_league)
+
+
+def test_an_unopened_round_cannot_be_resolved(db, seeded_league):
+    session = start_session(db, seeded_league, config=make_config(slots=3))
+
+    with pytest.raises(AuctionError, match="has not opened yet"):
+        resolve_round(db, session, round_number=3, rng=random.Random(1), now=START, force=True)
+
+    # Round 1 is the open one, and it resolves fine.
+    assert resolve_round(db, session, rng=random.Random(1), now=START, force=True).round_number == 1
+
+
+def test_bid_count_includes_bids_that_were_screened_out(db, seeded_league):
+    """The reported bid count is how many owners went after the asset, not
+    how many of their bids survived screening."""
+    alpha, bravo, _ = seeded_league.team_ids
+    session = start_session(db, seeded_league, tier_by_index={0: "large", 1: "small"})
+    beck = seeded_league.player_assets["Carson Beck"].id
+
+    submit_bid(db, session, team_id=alpha, draftable_asset_id=beck, amount=100, now=START)
+    submit_bid(db, session, team_id=bravo, draftable_asset_id=beck, amount=90, now=START)
+    budget_for(db, session, bravo).spent_budget = 150  # Bravo can no longer pay
+    db.flush()
+
+    resolution = resolve_round(db, session, rng=random.Random(1), now=START, force=True)
+    db.commit()
+
+    contest = resolution.contests[0]
+    assert contest.winning_team_id == alpha
+    assert contest.bid_count == 2

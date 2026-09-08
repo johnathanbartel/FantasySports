@@ -78,6 +78,20 @@ def _fail(exc: AuctionError) -> HTTPException:
     return HTTPException(exc.status_code, str(exc))
 
 
+def _as_naive_utc(value: datetime.datetime | None) -> datetime.datetime | None:
+    """Normalise an incoming timestamp to naive UTC.
+
+    Every DateTime column in this schema is naive UTC (see platform/db), but
+    Pydantic happily parses an offset-aware value out of a JSON string like
+    "2030-01-01T12:00:00Z" - which is exactly what JavaScript's
+    `Date.toISOString()` produces. Comparing the two raises TypeError, so
+    normalise at the boundary rather than letting it reach the engine.
+    """
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
+
 def _session_or_404(db: Session, auction_id: int) -> AuctionSession:
     session = db.get(AuctionSession, auction_id)
     if session is None:
@@ -275,7 +289,7 @@ def start_auction(payload: AuctionStartRequest, db: Session = Depends(get_db)):
             league_id=league.id,
             config=config,
             team_tier_codes=payload.team_tiers,
-            starts_at=payload.starts_at,
+            starts_at=_as_naive_utc(payload.starts_at),
         )
     except AuctionError as exc:
         db.rollback()
@@ -347,6 +361,11 @@ def place_bid(auction_id: int, payload: AuctionBidRequest, db: Session = Depends
     owner's bid until the round resolves.
     """
     session = _session_or_404(db, auction_id)
+    # Start a scheduled period in its own transaction first: a bid that gets
+    # rejected below must not roll back the fact that the auction opened.
+    ensure_started(db, session)
+    db.commit()
+
     try:
         bid = submit_bid(
             db,
@@ -366,15 +385,17 @@ def place_bid(auction_id: int, payload: AuctionBidRequest, db: Session = Depends
 
 
 @router.get("/{auction_id}/rounds/{round_number}", response_model=AuctionRoundRevealOut)
-def get_auction_round(
-    auction_id: int,
-    round_number: int,
-    team_id: int | None = Query(
-        None, description="Echo back only this team's own bid while the round is open"
-    ),
-    db: Session = Depends(get_db),
-):
-    """Blind while the round is open, full reveal once it has resolved."""
+def get_auction_round(auction_id: int, round_number: int, db: Session = Depends(get_db)):
+    """Blind while the round is open, full reveal once it has resolved.
+
+    While the round is open this returns how many bids are in but not a single
+    bid's asset or amount - not even the caller's own. There is no auth in
+    this application yet, so any "just show me *my* bid" parameter would be a
+    parameter anyone could point at anyone else, and reading a rival's blind
+    bid and beating it by one is precisely what the mechanic exists to
+    prevent. The bid endpoint echoes an owner's own bid back to them at
+    submission time instead; serving it on demand can come back with auth.
+    """
     session = _session_or_404(db, auction_id)
     round_row = (
         db.query(AuctionRound)
@@ -394,12 +415,7 @@ def get_auction_round(
         .all()
     )
 
-    if round_row.status == "resolved":
-        visible = bids
-    elif team_id is not None:
-        visible = [b for b in bids if b.team_id == team_id]
-    else:
-        visible = []
+    visible = bids if round_row.status == "resolved" else []
 
     results = (
         db.query(AuctionRoundResult)
@@ -452,7 +468,7 @@ def resolve_auction_round(
         raise _fail(exc) from exc
 
     db.commit()
-    out = get_auction_round(auction_id, round_number, team_id=None, db=db)
+    out = get_auction_round(auction_id, round_number, db=db)
     out.next_round_number = resolution.next_round_number
     out.session_complete = resolution.session_complete
     return out
