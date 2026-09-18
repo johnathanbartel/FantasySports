@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fantasy-sports-api",
+      "runtimeExecutable": ".venv-api/Scripts/uvicorn.exe",
+      "runtimeArgs": ["fantasy_sports.api.main:app", "--reload", "--port", "8000"],
+      "port": 8000
+    }
+  ]
+}

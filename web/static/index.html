@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fantasy Sports Company</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html" aria-current="page">Home</a>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)">Single-site fantasy platform</div>
+      <h1 style="margin:0 0 var(--space-2)">Pick a sport</h1>
+      <p class="text-muted" style="max-width:640px;margin:0">
+        Shared league mechanics - drafting, rosters, scoring, standings - live
+        once in the platform. Each sport below plugs into that platform as
+        it's built out.
+      </p>
+    </div>
+
+    <div id="sport-tabs" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-6)"></div>
+
+    <div id="sport-panel"></div>
+
+  </div>
+</div>
+
+<script>
+const SPORTS = [
+  {
+    id: 'college-football',
+    label: 'College Football',
+    status: 'live',
+    statusLabel: 'Live',
+    summary: 'The NCAAF universe is the working implementation: real Georgia roster data, a live draft board, and Expected-Points-Added (EPA) scoring instead of flat per-stat bonuses.',
+    features: [
+      'EPA-based scoring: fantasy points track the real point value a play contributed, not flat stat bonuses',
+      'Live draft board with autopick for AI-owned teams',
+      "Defense drafted as position groups (DL/LB/DB) by default",
+      'Demo league seeded with real 2024 CFBD play-by-play and roster data',
+    ],
+    links: [
+      { href: '/static/draft-board.html', label: 'Open draft board', primary: true },
+      { href: '/docs', label: 'API docs' },
+    ],
+  },
+  {
+    id: 'football',
+    label: 'Football',
+    status: 'progress',
+    statusLabel: 'In progress',
+    summary: "The NFL universe shares the platform's EPA scoring model with College Football, and the two are planned to combine into a Dual Universe league. Offense attribution is built and validated against real play-by-play; there's no live league or draft board for it yet.",
+    features: [
+      "NFL offense attribution pipeline, validated against real 2024 week-1 play-by-play",
+      "Exact QB/receiver EPA splits from nflfastR's per-play yac_epa (no yards-bucket approximation needed)",
+      "Leagues can choose group or individual defensive-player scoring for NFL",
+    ],
+    links: [
+      { href: '/docs', label: 'API docs' },
+    ],
+  },
+  {
+    id: 'college-basketball',
+    label: 'College Basketball',
+    status: 'planned',
+    statusLabel: 'Coming soon',
+    summary: 'No college basketball work has started yet - only the shared basketball module boundary exists in the codebase.',
+    features: [],
+    links: [],
+  },
+  {
+    id: 'basketball',
+    label: 'Basketball',
+    status: 'planned',
+    statusLabel: 'Coming soon',
+    summary: 'No NBA work has started yet - only the shared basketball module boundary exists in the codebase.',
+    features: [],
+    links: [],
+  },
+  {
+    id: 'baseball',
+    label: 'Baseball',
+    status: 'planned',
+    statusLabel: 'Coming soon',
+    summary: 'Module boundary is in place in the codebase. Scoring rules and provider integrations have not been built yet.',
+    features: [],
+    links: [],
+  },
+  {
+    id: 'hockey',
+    label: 'Hockey',
+    status: 'planned',
+    statusLabel: 'Coming soon',
+    summary: 'Module boundary is in place in the codebase. Scoring rules and provider integrations have not been built yet.',
+    features: [],
+    links: [],
+  },
+];
+
+const VALID_IDS = SPORTS.map(s => s.id);
+function currentTab() {
+  const hash = location.hash.replace('#', '');
+  return VALID_IDS.includes(hash) ? hash : 'college-football';
+}
+
+function renderTabs() {
+  const active = currentTab();
+  const el = document.getElementById('sport-tabs');
+  el.innerHTML = '';
+  SPORTS.forEach(sport => {
+    const btn = document.createElement('button');
+    btn.className = `btn ${active === sport.id ? 'btn-primary' : 'btn-secondary'}`;
+    btn.textContent = sport.label;
+    btn.onclick = () => { location.hash = sport.id; };
+    el.appendChild(btn);
+  });
+}
+
+function renderPanel() {
+  const sport = SPORTS.find(s => s.id === currentTab());
+  const el = document.getElementById('sport-panel');
+
+  const tagClass = sport.status === 'live' ? 'tag-accent' : sport.status === 'progress' ? 'tag-accent-2' : 'tag-neutral';
+  const featuresHtml = sport.features.length
+    ? `<ul style="margin:var(--space-4) 0 0;padding-left:1.2em">${sport.features.map(f => `<li style="margin-bottom:var(--space-1)">${f}</li>`).join('')}</ul>`
+    : `<p class="text-muted" style="margin-top:var(--space-4)">Nothing to show yet - check back once work on this sport starts.</p>`;
+  const linksHtml = sport.links.length
+    ? `<div style="display:flex;gap:var(--space-3);margin-top:var(--space-5)">${sport.links.map(l => `<a class="btn ${l.primary ? 'btn-primary' : 'btn-secondary'}" href="${l.href}">${l.label}</a>`).join('')}</div>`
+    : '';
+
+  el.innerHTML = `
+    <div class="card elev-sm" style="padding:var(--space-6)">
+      <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
+        <h2 style="margin:0">${sport.label}</h2>
+        <span class="tag ${tagClass}">${sport.statusLabel}</span>
+      </div>
+      <p style="margin:0;max-width:680px">${sport.summary}</p>
+      ${featuresHtml}
+      ${linksHtml}
+    </div>
+  `;
+}
+
+function render() {
+  renderTabs();
+  renderPanel();
+}
+
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body>
+</html>
