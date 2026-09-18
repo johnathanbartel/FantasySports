@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _LOOKUP_PATH = Path(__file__).parent / "data" / "yac_epa_lookup.json"
-_FG_EP_LOOKUP_PATH = Path(__file__).parent.parent / "College" / "data" / "fg_ep_lookup.json"
+_FG_EP_LOOKUP_PATH = Path(__file__).parent.parent / "college" / "data" / "fg_ep_lookup.json"
 _DROP_RATE_PATH = Path(__file__).parent / "data" / "drop_rate.json"
 
 
