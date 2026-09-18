@@ -53,6 +53,11 @@ class Universe(Base):
     level: Mapped[str] = mapped_column(String(30))  # "college", "pro"
     code: Mapped[str] = mapped_column(String(20), unique=True)  # "ncaaf", "nfl"
     display_name: Mapped[str] = mapped_column(String(60))
+    # Whether this universe's data source identifies individual defenders on
+    # a play (nflfastR: sack_player_name, interception_player_name, tackle
+    # columns, ...). CFBD has none of that for NCAAF, so "individual" is a
+    # league_universes.defense_mode option only where this is True.
+    supports_individual_defense: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class League(Base):
@@ -75,11 +80,20 @@ class LeagueUniverse(Base):
     """A normal league has one row here; a Dual Universe league has two."""
 
     __tablename__ = "league_universes"
-    __table_args__ = (UniqueConstraint("league_id", "universe_id"),)
+    __table_args__ = (
+        UniqueConstraint("league_id", "universe_id"),
+        CheckConstraint("defense_mode IN ('group', 'individual')", name="ck_league_universe_defense_mode"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
     universe_id: Mapped[int] = mapped_column(ForeignKey("universes.id"))
+    # A league's choice, per universe, of whether defense is drafted/scored
+    # as DL/LB/DB position groups or as individual defenders. "individual"
+    # is only a legal choice when universe.supports_individual_defense is
+    # True - enforced at the API layer (create_league), not by a DB
+    # constraint, since that check spans two tables.
+    defense_mode: Mapped[str] = mapped_column(String(20), default="group")
 
     league: Mapped["League"] = relationship(back_populates="universes")
     universe: Mapped["Universe"] = relationship()
@@ -187,6 +201,12 @@ class RosterSlotDefinition(Base):
     this table's shape."""
 
     __tablename__ = "roster_slot_definitions"
+    __table_args__ = (
+        CheckConstraint(
+            "defense_mode IS NULL OR defense_mode IN ('group', 'individual')",
+            name="ck_roster_slot_definition_defense_mode",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     universe_id: Mapped[int] = mapped_column(ForeignKey("universes.id"))
@@ -194,6 +214,14 @@ class RosterSlotDefinition(Base):
     eligible_positions: Mapped[list] = mapped_column(JSON)  # e.g. ["RB","WR","TE"] for FLEX
     slot_count: Mapped[int] = mapped_column(Integer)
     is_starter: Mapped[bool] = mapped_column(Boolean, default=True)
+    # NULL applies to every league on this universe regardless of
+    # defense_mode (all offensive slots, BENCH). Only set on slot rows that
+    # are specific to one defense_mode - e.g. a universe offering both
+    # modes has one set of DL/LB/DB slots tagged "group" and a different
+    # set of individual-position slots tagged "individual"; a league only
+    # sees the slots matching its own league_universes.defense_mode plus
+    # every NULL row.
+    defense_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class Draft(Base):

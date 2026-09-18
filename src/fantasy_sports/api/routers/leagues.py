@@ -18,6 +18,16 @@ def create_league(payload: LeagueCreateRequest, db: Session = Depends(get_db)):
         missing = set(payload.universe_codes) - found
         raise HTTPException(400, f"Unknown universe code(s): {sorted(missing)}")
 
+    for code, mode in payload.defense_modes.items():
+        if mode not in ("group", "individual"):
+            raise HTTPException(400, f"Invalid defense_mode '{mode}' for universe '{code}'")
+    unsupported = [
+        u.code for u in universes
+        if payload.defense_modes.get(u.code) == "individual" and not u.supports_individual_defense
+    ]
+    if unsupported:
+        raise HTTPException(400, f"Universe(s) {sorted(unsupported)} don't support individual defense")
+
     league = League(
         name=payload.name,
         commissioner_user_id=payload.commissioner_user_id,
@@ -28,7 +38,10 @@ def create_league(payload: LeagueCreateRequest, db: Session = Depends(get_db)):
     db.flush()  # assigns league.id without committing yet
 
     for universe in universes:
-        db.add(LeagueUniverse(league_id=league.id, universe_id=universe.id))
+        db.add(LeagueUniverse(
+            league_id=league.id, universe_id=universe.id,
+            defense_mode=payload.defense_modes.get(universe.code, "group"),
+        ))
 
     db.commit()
     db.refresh(league)

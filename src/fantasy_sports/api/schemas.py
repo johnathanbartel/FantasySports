@@ -22,6 +22,11 @@ class LeagueCreateRequest(BaseModel):
     universe_codes: list[str]  # e.g. ["ncaaf"], or ["ncaaf", "nfl"] for Dual Universe
     size: int = 12
     draft_rounds: int = 20
+    # universe_code -> "group"/"individual", e.g. {"nfl": "individual"}.
+    # Any universe_code not present here defaults to "group". Rejected at
+    # creation if a universe doesn't support the requested mode (see
+    # Universe.supports_individual_defense).
+    defense_modes: dict[str, str] = {}
 
 
 class LeagueOut(ORMModel):
