@@ -74,6 +74,18 @@ Run the isolated API/database smoke test:
 .venv-api\Scripts\python.exe scripts/seed_smoke_test.py
 ```
 
+Run the auction draft engine's smoke test (timed rounds, sealed bids, budget debits, tie-break):
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_auction_smoke_test.py
+```
+
+Run the conference/program-size smoke test (baseline conferences, team placement, season goals, tier-balanced expansion):
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_conference_smoke_test.py
+```
+
 To reset and seed the local demo league with real CFBD roster and game data:
 
 ```powershell

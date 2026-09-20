@@ -17,16 +17,21 @@ Two families of tables: **sport-agnostic** (leagues, teams, rosters, draft, cale
 |---|---|---|---|
 | `users` | A person using the platform | email, display_name | owns leagues, owns teams |
 | `universes` | Reference list of league contexts | sport, level, code ("ncaaf"/"nfl") | referenced by leagues, players, real teams |
-| `leagues` | A fantasy league | name, size (default 12), draft_rounds (default 20), salary_cap_enabled (placeholder, unused) | has teams, has one or more universes |
+| `leagues` | A fantasy league | name, size (default 12), draft_rounds (default 20), salary_cap_enabled (placeholder, unused), program_size_mode ("team_choice"/"dynamic" — "dynamic" stubbed, rejected at creation), draft_type ("recruit"/"snake", default "snake"), draft_scheduled_at (nullable, "snake" leagues only) | has teams, has one or more universes, has conferences |
 | `league_universes` | Which universe(s) a league covers | — | join table; 2 rows = Dual Universe |
-| `teams` | A fantasy team within a league | name, owner_user_id (null if AI-owned), is_ai_owned, personality_profile (JSON, AI trait hook — trait system itself not built) | belongs to a league; owned by a user OR AI |
+| `conferences` | Groups a league's teams by program_size tier | league_id, program_size, name | every league starts with 3 (one per tier); grows one full tier-set at a time |
+| `teams` | A fantasy team within a league | name, owner_user_id (null if AI-owned), is_ai_owned, program_size ("large"/"moderate"/"small" — sets auction starting budget + conference + season_goal, default "small"), conference_id, personality_profile (JSON, AI trait hook — trait system itself not built) | belongs to a league and a conference; owned by a user OR AI |
 | `real_teams` | A real-world team (Georgia, Chiefs, ...) | name, conference, classification | scopes players, games, plays |
 | `players` | A real player | full_name, position, universe_id | scoped to exactly one universe — never spans college/NFL |
 | `defense_groups` | A real team's draftable DL/LB/DB unit | real_team_id, position_group | one row per real team per group |
 | `draftable_assets` | Unifies players + defense groups into one pickable pool | asset_type ("player"/"defense_group") | referenced by draft picks, roster entries, lineup entries |
 | `roster_slot_definitions` | Defines starting-lineup structure per universe, as data | slot_code (QB/RB/WR/TE/FLEX/DL/LB/DB/BENCH), eligible_positions, slot_count | a different sport gets its own rows here, no schema change |
-| `drafts` | One draft event for a league | status | has many draft_picks |
+| `drafts` | One snake draft event for a league | status | has many draft_picks |
 | `draft_picks` | One pick slot, pre-generated in snake order at draft creation | round, pick_number, team_id, draftable_asset_id (null until picked) | fills in as the draft runs |
+| `auction_drafts` | One timed sealed-bid auction draft for a league | status, round_seconds, nomination_order, next_nominator_index | has many auction_rounds; has one auction_team_budgets row per team |
+| `auction_team_budgets` | A team's auction budget, snapshotted from its program_size at auction start | starting_budget, remaining_budget, assets_won | debited as that team wins rounds |
+| `auction_rounds` | One nominated asset up for bid, with its timed window | round_number, draftable_asset_id, opens_at/closes_at, status (open/resolved/unsold), winning_team_id, winning_bid_amount, was_tie_broken_randomly | has many auction_bids |
+| `auction_bids` | A team's single sealed bid for a round, overwritable while open | auction_round_id, team_id, amount | hidden from other teams until the round resolves |
 | `roster_entries` | A team's season-long 20-man roster | team_id, draftable_asset_id | populated by draft picks |
 | `weeks` | Maps a fantasy week to a universe's real calendar | universe_id, season_year, week_number | scopes games, lineups, scores |
 | `lineup_entries` | A team's starters for one specific week | team_id, week_id, draftable_asset_id, roster_slot_id | separate from roster_entries — this is what changes weekly |
@@ -51,15 +56,50 @@ A player's fantasy score for a play is never the full play value credited twice 
 
 **Same pool as offensive players**, not reserved rounds. A defense group can go in round 4 right alongside a WR2 if a manager values it that highly. Reasoning: matches the platform's own stated intent (real strategic trade-offs), and is the *simpler* schema — reserved rounds would need an extra table locking specific rounds to specific slot types, which same-pool doesn't need. Verified working in the smoke test (a defense group and a player were drafted back-to-back with no special-casing).
 
+## Decision: auction draft budget & round resolution
+
+**Sealed-bid, not live ascending.** A nominated asset gets one fixed-length bidding window (`round_seconds`); every team submits one hidden bid (overwritable while the window is open); at close, all bids reveal at once, the highest wins, and their `auction_team_budgets.remaining_budget` is debited by the winning amount. Ties for the top bid are broken by **random choice among the tied teams** — there's no secondary tiebreaker (earlier bid, nomination order, etc.) by design, to keep the rule simple and unexploitable. A round with zero bids resolves as `"unsold"` and the asset returns to the board for a future nomination, rather than forcing the nominating team to take it at a floor price.
+
+**Budget comes from `Team.program_size`, not the league.** Each team picks/is assigned a size tier (large/moderate/small — see `platform/auction/constants.py` for the dollar amounts) and that team alone gets that budget, snapshotted onto `auction_team_budgets` when the auction starts so a later `program_size` change can't retroactively alter a budget already being spent. This is deliberately narrow: program_size is described (by the person commissioning this feature) as eventually also driving each team's conference placement and season goals, plus a commissioner-configurable "dynamic mode" where a team starts small and has to build up across multiple seasons — none of that is built here, only the auction-budget piece.
+
+**Defense groups share the same auction pool as players** — same decision as the snake draft's DL/LB/DB same-pool call above, just applied to `auction.engine.available_assets()` instead of `drafts/{id}/board`. No reserved rounds, no separate budget bucket; a defense group can be nominated and bid on like any player.
+
+**Round resolution currently trusts the caller**, same gap as the snake draft's `pick`/`autopick` endpoints: `nominate` and `bids` take `team_id` in the request body with no authentication behind it. `resolve` has a `force=true` override (meant for a commissioner) to close a round before its timer expires — normal play should let the timer run out.
+
+## Decision: conferences & season goals
+
+**Every league starts with exactly 3 conferences** — one per program_size tier (large/moderate/small) — created automatically at `POST /leagues`. A team is placed into its tier's **least-populated** conference at creation (simple load balancing; there's no draft/rebalancing once assigned). Conference count only ever grows **one full tier-set at a time** (`POST /leagues/{id}/conferences/expand` adds one large + one moderate + one small conference, never a single one) — this is the commissioner's stated rule that conference count must grow in multiples of however many program-size tiers are in use. Per-league tier subsetting (a league that only offers 2 of the 3 tiers, so its multiple would be 2 instead of 3) isn't implemented — every league gets all 3 tiers today.
+
+**Season goals are a fixed, informational label per tier** — Large: "Win the championship," Moderate: "Make the playoffs," Small: "Win the conference" (`Team.season_goal`, a computed property, not a stored column — see `platform/team_tiers.py`). They don't feed into scoring or standings. The commissioner's stated longer-term intent is that in a multi-season league, reaching or missing a goal could raise or lower a team's budget or tier the next season — that needs a season-rollover concept this schema doesn't have at all yet, so it's explicitly out of scope here.
+
+**"Dynamic" program_size_mode is schema-only, rejected at the API layer.** A league's `program_size_mode` accepts `"team_choice"` (teams pick their own size, the only usable option today) or `"dynamic"` (every team starts "small" and is promoted/relegated by performance) — but `POST /leagues` rejects `"dynamic"` with a clear "not implemented yet" error, because dynamic mode was explicitly described as multi-season-only and there's no multi-season concept to hang promotion/relegation off of. The column accepts the value now so turning dynamic mode on later doesn't need another migration.
+
+**The first real "create team" endpoint.** Every team before this was inserted directly via the ORM (seed scripts, smoke tests) — `POST /teams` is the first one a real client (the team-creation screen the commissioner described) could call. It takes `program_size` and handles conference placement; it does not yet handle "join an existing league" flows, auth, or a real user-session concept.
+
+## Decision: league + team creation wizard, and branching by draft_type
+
+**`draft_type` is chosen once, at league creation, and never changes.** `POST /leagues` now takes `draft_type` ("recruit" or "snake", default "snake") and, for "snake" leagues, an optional `draft_scheduled_at`. It's a plain column on `leagues`, not a separate table, because unlike `drafts`/`auction_drafts` (one row per actual draft *event*), this is a standing league setting decided before any draft event exists — it's what tells the wizard which event to point a newly created team at.
+
+**"Recruit" is the user-facing name for the existing auction draft** (`auction_drafts`/`auction_rounds`/etc.) — no new backend draft engine, just new terminology and a new entry screen (`web/static/start-recruiting.html`) in front of `POST /auctions/start`. Renamed here because "recruiting period" is how the commissioner described this draft type to the wizard, not "auction."
+
+**The wizard (`web/static/create-league.html`) is a two-step form**: league details (including `draft_type`) via `POST /leagues`, then team details via `POST /teams` using the league id from step one. After team creation it branches purely on the just-created league's `draft_type`:
+- `"recruit"` → `start-recruiting.html?league_id=&team_id=`, a screen that starts the recruiting period (`POST /auctions/start`) on demand and hands off to `auction-board.html`.
+- `"snake"` → `roster.html?league_id=&team_id=`, a new roster-viewing screen (the dead `Roster` nav link on the other screens now points here too) that shows `draft_scheduled_at` if the commissioner set one, or a "not yet scheduled" message otherwise.
+
+**`draft_scheduled_at` is stored and returned as naive UTC**, same convention as every other timestamp on this platform (see the auction round timer note below) — `roster.html` has to explicitly treat the API's timestamp as UTC before formatting it for display, rather than handing it to `new Date(...)` as-is, or it renders in the wrong hour for any browser not in UTC.
+
 ## Key API actions
 
 All implemented and verified against a real database; full request/response shapes at `/docs`.
 
 | Action | Endpoint |
 |---|---|
-| Create a league | `POST /leagues` |
+| Create a league (auto-creates 3 baseline conferences; sets draft_type) | `POST /leagues` |
 | View league settings | `GET /leagues/{id}` |
+| View a league's conferences | `GET /leagues/{id}/conferences` |
+| Grow conferences (adds one per tier, commissioner action) | `POST /leagues/{id}/conferences/expand` |
 | View standings | `GET /leagues/{id}/standings` |
+| Create a team (picks program_size, placed into a conference) | `POST /teams` |
 | View a team | `GET /teams/{id}` |
 | View a team's roster | `GET /teams/{id}/roster` |
 | View available free agents | `GET /teams/{id}/free-agents` |
@@ -68,13 +108,25 @@ All implemented and verified against a real database; full request/response shap
 | Make a draft pick | `POST /drafts/{id}/pick` |
 | View pick history | `GET /drafts/{id}/picks` |
 | Autopick (AI-owned teams) | `POST /drafts/{id}/autopick` |
+| Start a timed auction draft (budgets snapshotted from program_size) | `POST /auctions/start` |
+| View auction budgets | `GET /auctions/{id}/budgets` |
+| View the auction board (what's left) | `GET /auctions/{id}/board` |
+| Nominate an asset, opening a timed bid round | `POST /auctions/{id}/nominate` |
+| Place/overwrite a sealed bid | `POST /auctions/{id}/rounds/{round_id}/bids` |
+| View bids (sealed while open, revealed once resolved) | `GET /auctions/{id}/rounds/{round_id}/bids` |
+| View the currently open round, if any | `GET /auctions/{id}/rounds/current` |
+| Resolve a round (bid → reveal → debit → next round) | `POST /auctions/{id}/rounds/{round_id}/resolve` |
 | Set a weekly lineup | `PUT /teams/{id}/lineup` |
 | View a weekly lineup | `GET /teams/{id}/lineup` |
 | View a player's weekly score breakdown (per-play detail) | `GET /players/{id}/weekly-score` |
 | View a team's weekly total | `GET /teams/{id}/weekly-score` |
 | View a matchup result | `GET /matchups/{id}` |
 
-**Note for design purposes:** there's no "create team" / "join league" endpoint yet — teams are currently created directly, not through the API. If mockups need a "join league" flow, flag it back; it's a natural next endpoint, just not built in this pass.
+**Note for design purposes:** `POST /teams` covers "pick a program size, get placed on a team" but there's still no "join league" flow (no auth/user-session concept exists yet — `owner_user_id` is passed in the request body, trusted as-is). If mockups need real "join league" semantics, flag it back.
+
+**A working auction draft UI exists**: `web/static/auction-board.html` (linked from the landing page and the snake draft board's nav). It's a separate page from `draft-board.html`, not a mode toggle on it — the two draft types have different enough concepts (budgets, sealed bids, a countdown, nomination turn) that reusing the snake board's markup would have meant branching most of it. Since there's no auth, it has an "Acting as" team switcher so one browser tab can play every team's side of the auction (nominate as the team on the clock, bid as any team) — the same trust gap `POST /auctions/{id}/nominate` and the bid endpoint already document.
+
+**A working league + team creation wizard exists**: `web/static/create-league.html`, linked from the landing page. It hardcodes `universe_codes: ["ncaaf"]` (the only live universe) and `program_size_mode: "team_choice"` rather than exposing them as form fields — those are real platform concepts, not stubbed, just not ones this wizard needed to surface yet. See the draft_type decision above for its post-creation branch to `start-recruiting.html` or `roster.html`.
 
 ## What's real vs. stubbed
 

@@ -32,6 +32,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from fantasy_sports.platform.db.base import Base
+from fantasy_sports.platform.team_tiers import SEASON_GOAL_BY_PROGRAM_SIZE
 
 
 class User(Base):
@@ -63,6 +64,13 @@ class Universe(Base):
 class League(Base):
     __tablename__ = "leagues"
 
+    __table_args__ = (
+        CheckConstraint(
+            "program_size_mode IN ('team_choice', 'dynamic')", name="ck_league_program_size_mode"
+        ),
+        CheckConstraint("draft_type IN ('recruit', 'snake')", name="ck_league_draft_type"),
+    )
+
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
     commissioner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -70,6 +78,26 @@ class League(Base):
     draft_rounds: Mapped[int] = mapped_column(Integer, default=20)
     # Placeholder only - no salary-cap logic is implemented anywhere yet.
     salary_cap_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # "team_choice": teams pick their own program_size (see Team below).
+    # "dynamic": every team starts "small" and is promoted/relegated by
+    # season performance - stubbed only. The column/CHECK accepts it so a
+    # future migration isn't needed to add the value, but the API layer
+    # (create_league) currently rejects actually setting it, since dynamic
+    # mode needs a multi-season/season-rollover concept this schema doesn't
+    # have yet.
+    program_size_mode: Mapped[str] = mapped_column(String(20), default="team_choice")
+    # "recruit": a timed sealed-bid auction (AuctionDraft) - user-facing name
+    # is "recruiting period", started on demand once the commissioner is
+    # ready. "snake": a traditional position-by-position snake draft
+    # (Draft/DraftPick), run at a scheduled time instead. Set once at league
+    # creation (the create-league wizard) and used there to decide which
+    # screen a newly created team lands on next.
+    draft_type: Mapped[str] = mapped_column(String(20), default="snake")
+    # Only meaningful for draft_type="snake" - lets the roster page tell a
+    # team when to expect the live draft. Nullable because a commissioner
+    # may not have picked a time yet, and because "recruit" leagues start
+    # their recruiting period on demand instead of at a fixed time.
+    draft_scheduled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
@@ -99,6 +127,31 @@ class LeagueUniverse(Base):
     universe: Mapped["Universe"] = relationship()
 
 
+class Conference(Base):
+    """Groups a league's teams by program_size tier. Every league starts
+    with one conference per tier (a baseline of len(PROGRAM_SIZES), i.e. 3
+    today); growing conference count is only ever done one full tier-set at
+    a time (platform/conferences/service.py::expand_conferences), so a
+    league's total conference count is always a multiple of the number of
+    tiers in use.
+
+    Per-league tier subsetting (a league that only uses 2 of the 3 tiers,
+    so conferences would only ever grow 2 at a time) isn't implemented yet
+    - every league currently gets all 3 tiers."""
+
+    __tablename__ = "conferences"
+    __table_args__ = (
+        CheckConstraint("program_size IN ('large', 'moderate', 'small')", name="ck_conference_program_size"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    program_size: Mapped[str] = mapped_column(String(20))
+    name: Mapped[str] = mapped_column(String(80))
+
+    league: Mapped["League"] = relationship()
+
+
 class Team(Base):
     __tablename__ = "teams"
     __table_args__ = (
@@ -107,6 +160,9 @@ class Team(Base):
             "(owner_user_id IS NULL AND is_ai_owned = 1)",
             name="ck_team_owner_xor_ai",
         ),
+        CheckConstraint(
+            "program_size IN ('large', 'moderate', 'small')", name="ck_team_program_size"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -114,12 +170,36 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(80))
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_ai_owned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Sets this team's starting auction-draft budget (see
+    # auction.constants.STARTING_BUDGET_BY_PROGRAM_SIZE), its conference
+    # (see conference_id below), and its season_goal. Default "small"
+    # matches the eventual dynamic-mode rule (stubbed only - see
+    # League.program_size_mode) that a program starts small and has to
+    # build up over multiple seasons.
+    program_size: Mapped[str] = mapped_column(String(20), default="small")
+    # Assigned at team creation (api/routers/teams.py::create_team) by
+    # platform/conferences/service.py::assign_team_to_conference, to the
+    # least-populated conference matching program_size. Nullable because
+    # teams inserted directly (as every team is today - there's no
+    # create-team endpoint's callers yet outside scripts/tests) predate
+    # this column and never get one.
+    conference_id: Mapped[int | None] = mapped_column(ForeignKey("conferences.id"), nullable=True)
     # Trait system design TBD - just a JSON hook for now, e.g.
     # {"aggression": 0.8, "reactive_to_trends": true}.
     personality_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     league: Mapped["League"] = relationship(back_populates="teams")
+    conference: Mapped["Conference | None"] = relationship()
+
+    @property
+    def season_goal(self) -> str:
+        """Fixed per-tier goal label (see platform/team_tiers.py) - purely
+        informational for now, not fed into scoring. The commissioner's
+        stated intent is that reaching/missing it could move next season's
+        budget or tier; that needs season-rollover, which doesn't exist
+        yet."""
+        return SEASON_GOAL_BY_PROGRAM_SIZE[self.program_size]
 
 
 class RealTeam(Base):
@@ -254,6 +334,96 @@ class DraftPick(Base):
     is_autopick: Mapped[bool] = mapped_column(Boolean, default=False)
 
     draftable_asset: Mapped["DraftableAsset | None"] = relationship()
+
+
+class AuctionDraft(Base):
+    """A timed, sealed-bid auction draft. Teams take turns nominating a
+    draftable asset; everyone gets one hidden bid within a fixed time
+    window (round_seconds); the highest bid wins and is debited from that
+    team's budget - see platform/auction/engine.py for the round-resolution
+    rules this table supports.
+
+    Separate from Draft/DraftPick (snake-shaped: fixed team-per-slot picks
+    pre-generated up front) because an auction has no fixed pick order and
+    price is a first-class concept neither of those tables has room for.
+    """
+
+    __tablename__ = "auction_drafts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/in_progress/complete
+    round_seconds: Mapped[int] = mapped_column(Integer, default=30)
+    # Nomination turn order, as a list of team_id - e.g. [3, 1, 2]. Rotates
+    # via next_nominator_index regardless of who wins each round's bid.
+    nomination_order: Mapped[list] = mapped_column(JSON)
+    next_nominator_index: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AuctionTeamBudget(Base):
+    """One row per team per auction draft - the budget the engine debits
+    against. starting_budget is snapshotted from Team.program_size at
+    auction start, so a program_size change mid-auction can't rewrite a
+    budget that's already being spent."""
+
+    __tablename__ = "auction_team_budgets"
+    __table_args__ = (UniqueConstraint("auction_draft_id", "team_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    auction_draft_id: Mapped[int] = mapped_column(ForeignKey("auction_drafts.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    starting_budget: Mapped[int] = mapped_column(Integer)
+    remaining_budget: Mapped[int] = mapped_column(Integer)
+    assets_won: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AuctionRound(Base):
+    """One nominated asset up for bid. opens_at/closes_at is the round's
+    timed sealed-bid window (opens_at + round_seconds); the engine rejects
+    bids placed after closes_at even if the round hasn't been resolved yet.
+
+    status: "open" (bidding window running) -> "resolved" (had at least one
+    bid, winner recorded) or "unsold" (window closed with no bids at all -
+    the asset returns to the board for a future nomination).
+    """
+
+    __tablename__ = "auction_rounds"
+    __table_args__ = (UniqueConstraint("auction_draft_id", "round_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    auction_draft_id: Mapped[int] = mapped_column(ForeignKey("auction_drafts.id"))
+    round_number: Mapped[int] = mapped_column(Integer)  # sequential across the whole auction
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    nominated_by_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    opens_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    closes_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(20), default="open")
+    winning_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    winning_bid_amount: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # True when the winner was chosen by random tie-break among two or more
+    # equal top bids, rather than being the only top bidder.
+    was_tie_broken_randomly: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
+class AuctionBid(Base):
+    """A team's single sealed bid for a round - hidden from other teams
+    until the round resolves (bid -> reveal -> debit -> next round). A team
+    may overwrite its own bid as many times as it likes while the round is
+    still open; only the latest amount counts."""
+
+    __tablename__ = "auction_bids"
+    __table_args__ = (UniqueConstraint("auction_round_id", "team_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    auction_round_id: Mapped[int] = mapped_column(ForeignKey("auction_rounds.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    amount: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class RosterEntry(Base):

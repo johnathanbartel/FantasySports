@@ -60,7 +60,10 @@ personalities fill out incomplete leagues (design TBD).
 
 ## Draft
 
-Snake, 20 rounds. No salary cap/auction in v1 (flagged as a future feature).
+Snake, 20 rounds. A timed sealed-bid auction draft is also available
+(`platform/auction/`, `POST /auctions/start`) as an alternative to the snake
+draft - see the "Decision: auction draft budget & round resolution" section
+of `docs/data_contract.md`.
 
 ## Data pipeline
 
@@ -75,6 +78,7 @@ Snake, 20 rounds. No salary cap/auction in v1 (flagged as a future feature).
 
 ## Out of scope for v1
 
-Salary cap/auction drafts, offensive line scoring, individual defensive
-player drafting, public/multi-tenant release, full Dual Universe mechanics,
-AI owner personality details.
+Salary-cap scoring itself (the auction draft's per-team budget is separate
+from the still-unused `League.salary_cap_enabled` field), offensive line
+scoring, individual defensive player drafting, public/multi-tenant release,
+full Dual Universe mechanics, AI owner personality details.

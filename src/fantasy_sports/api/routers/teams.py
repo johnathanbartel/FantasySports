@@ -2,11 +2,47 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamOut
+from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCreateRequest, TeamOut
+from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import DraftableAsset, League, LeagueUniverse, RosterEntry, Team
 from fantasy_sports.platform.db.session import get_db
+from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 
 router = APIRouter(prefix="/teams", tags=["teams"])
+
+
+@router.post("", response_model=TeamOut)
+def create_team(payload: TeamCreateRequest, db: Session = Depends(get_db)):
+    """The team-creation screen this backs: a user picks a name and a
+    program_size, and is placed into that tier's least-populated conference
+    (see platform/conferences/service.py). This is the first real
+    "create team" endpoint - every existing team in this codebase (seed
+    scripts, smoke tests) was inserted directly via the ORM instead."""
+    league = db.get(League, payload.league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if payload.program_size not in PROGRAM_SIZES:
+        raise HTTPException(400, f"Invalid program_size '{payload.program_size}'")
+    if payload.is_ai_owned == (payload.owner_user_id is not None):
+        raise HTTPException(400, "Exactly one of owner_user_id or is_ai_owned must be set")
+
+    try:
+        conference = conferences.assign_team_to_conference(db, league.id, payload.program_size)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    team = Team(
+        league_id=league.id,
+        name=payload.name,
+        owner_user_id=payload.owner_user_id,
+        is_ai_owned=payload.is_ai_owned,
+        program_size=payload.program_size,
+        conference_id=conference.id,
+    )
+    db.add(team)
+    db.commit()
+    db.refresh(team)
+    return team
 
 
 @router.get("/{team_id}", response_model=TeamOut)

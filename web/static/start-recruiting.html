@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start Recruiting Period</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/create-league.html">Create league</a>
+    </div>
+  </div>
+
+  <div style="max-width:640px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)">Team created</div>
+      <h1 style="margin:0" id="heading">Recruiting period</h1>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div class="card elev-sm" style="padding:var(--space-5)">
+      <p id="summary">Loading...</p>
+
+      <p class="text-muted" style="font-size:13px">
+        This league drafts by recruiting period: a timed, sealed-bid auction where every team nominates
+        and bids on players instead of taking turns. Your recruiting budget is set from your program size
+        the moment the period opens.
+      </p>
+
+      <div class="field" style="margin-bottom:var(--space-4)">
+        <label for="round-seconds" style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:14px;display:block;margin-bottom:6px">Seconds per bidding round</label>
+        <input type="number" id="round-seconds" min="5" value="30" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);width:120px">
+      </div>
+
+      <button class="btn btn-primary btn-block" id="start-btn">Start recruiting period</button>
+      <p class="text-muted" style="font-size:12px;margin-top:var(--space-2);margin-bottom:0" id="wait-hint">
+        Waiting on other teams to be created? You can leave this page and come back - the recruiting period
+        starts whenever a commissioner clicks the button above.
+      </p>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id');
+const TEAM_ID = params.get('team_id');
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function showResult(msg) {
+  const el = document.getElementById('result-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+async function loadSummary() {
+  if (!LEAGUE_ID || !TEAM_ID) {
+    showError('Missing league_id/team_id - start from the create-league wizard.');
+    return;
+  }
+  try {
+    const [league, team] = await Promise.all([
+      api(`/leagues/${LEAGUE_ID}`),
+      api(`/teams/${TEAM_ID}`),
+    ]);
+    document.getElementById('summary').textContent =
+      `"${team.name}" is set up in "${league.name}". Once every team is ready, start the recruiting period below.`;
+  } catch (e) {
+    showError(`Failed to load: ${e.message}`);
+  }
+}
+
+document.getElementById('start-btn').onclick = async () => {
+  showError('');
+  const roundSeconds = Number(document.getElementById('round-seconds').value) || 30;
+  try {
+    const auction = await api('/auctions/start', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({league_id: Number(LEAGUE_ID), round_seconds: roundSeconds}),
+    });
+    showResult('Recruiting period started - taking you to the board...');
+    setTimeout(() => {
+      location.href = `/static/auction-board.html?league_id=${LEAGUE_ID}&auction_id=${auction.id}`;
+    }, 800);
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
+loadSummary();
+</script>
+</body>
+</html>

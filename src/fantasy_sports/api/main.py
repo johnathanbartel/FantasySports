@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from fantasy_sports.api.routers import draft, leagues, rosters, scoring, teams
+from fantasy_sports.api.routers import auction, draft, leagues, rosters, scoring, teams
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
 
@@ -30,6 +30,7 @@ app.add_middleware(
 app.include_router(leagues.router)
 app.include_router(teams.router)
 app.include_router(draft.router)
+app.include_router(auction.router)
 app.include_router(rosters.router)
 app.include_router(scoring.router)
 

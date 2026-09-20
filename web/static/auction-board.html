@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auction Draft</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Demo League</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/draft-board.html">Draft</a>
+      <a href="/static/auction-board.html" aria-current="page">Auction</a>
+      <a href="/static/roster.html">Roster</a>
+      <a href="#">Lineup</a>
+      <a href="#">Scores</a>
+      <a href="#">Standings</a>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-6)">
+      <div>
+        <div class="card-kicker" id="clock-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
+        <h1 style="margin:0">Auction draft</h1>
+      </div>
+      <div style="text-align:right">
+        <div class="card-kicker" style="margin-bottom:2px">Acting as</div>
+        <select id="acting-as-select" style="font-family:var(--font-heading);font-size:15px;padding:6px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text)"></select>
+        <div class="text-muted" id="acting-as-budget" style="font-size:12px;margin-top:4px"></div>
+      </div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
+
+      <div>
+        <div id="round-panel" style="margin-bottom:var(--space-5)"></div>
+
+        <h4 style="margin-bottom:var(--space-3)">Board</h4>
+        <div id="board-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+      </div>
+
+      <div>
+        <h4 style="margin-bottom:var(--space-3)">Budgets</h4>
+        <table class="table" style="margin-bottom:var(--space-5)">
+          <thead><tr><th>Team</th><th>Size</th><th>Budget</th><th>Won</th></tr></thead>
+          <tbody id="budgets-body"></tbody>
+        </table>
+
+        <h4 style="margin-bottom:var(--space-3)">Bids</h4>
+        <div id="bids-panel"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// Real data only - every value below comes from the live API documented in
+// docs/data_contract.md (the "Decision: auction draft budget & round
+// resolution" section). No mocked/simulated auction state.
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id') || 1;
+const AUCTION_ID = params.get('auction_id') || 1; // see scripts/seed_auction_smoke_test.py
+  // and the seed run during development for how auction 1 was created
+
+let teamsById = {};      // team_id -> {id, name, is_ai_owned, program_size, ...}
+let auction = null;      // AuctionDraftOut
+let budgets = [];        // AuctionBudgetOut[]
+let board = [];          // DraftBoardAsset[]
+let currentRound = null; // AuctionRoundOut | null
+let bids = [];           // AuctionBidOut[] - empty while the round is sealed
+let actingAsTeamId = null;
+let lastResult = null;   // the last round this client personally resolved
+
+// Countdown is anchored to (server seconds_remaining, client fetch time) so
+// it never has to parse the server's naive-UTC timestamps as local time.
+let roundAnchorMs = null;
+let roundAnchorRemaining = 0;
+let tickHandle = null;
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function showResult(msg) {
+  const el = document.getElementById('result-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function onClockTeamId() {
+  if (!auction || auction.status !== 'in_progress') return null;
+  return auction.nomination_order[auction.next_nominator_index];
+}
+
+function remainingSeconds() {
+  if (!currentRound) return 0;
+  const elapsed = (Date.now() - roundAnchorMs) / 1000;
+  return Math.max(0, roundAnchorRemaining - elapsed);
+}
+
+async function loadAll() {
+  const [teams, auctionData, budgetsData, boardData, roundData] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/teams`),
+    api(`/auctions/${AUCTION_ID}`),
+    api(`/auctions/${AUCTION_ID}/budgets`),
+    api(`/auctions/${AUCTION_ID}/board`),
+    api(`/auctions/${AUCTION_ID}/rounds/current`),
+  ]);
+  teamsById = Object.fromEntries(teams.map(t => [t.id, t]));
+  auction = auctionData;
+  budgets = budgetsData;
+  board = boardData;
+  currentRound = roundData;
+
+  if (actingAsTeamId === null) actingAsTeamId = onClockTeamId() || teams[0]?.id || null;
+
+  roundAnchorMs = Date.now();
+  roundAnchorRemaining = currentRound ? currentRound.seconds_remaining : 0;
+
+  bids = currentRound ? await api(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/bids`) : [];
+
+  if (!currentRound) lastResult = null; // clears once a fresh round opens
+  render();
+}
+
+async function nominate(assetId) {
+  showError('');
+  try {
+    await api(`/auctions/${AUCTION_ID}/nominate`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({draftable_asset_id: assetId, nominated_by_team_id: actingAsTeamId}),
+    });
+    await loadAll();
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function placeBid(amount) {
+  showError('');
+  try {
+    await api(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/bids`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({team_id: actingAsTeamId, amount}),
+    });
+    showResult(`You bid $${amount} as ${teamsById[actingAsTeamId]?.name || actingAsTeamId} (sealed until the round resolves).`);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function resolveRound(force) {
+  showError('');
+  try {
+    const resolved = await api(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/resolve${force ? '?force=true' : ''}`, {method: 'POST'});
+    lastResult = resolved;
+    await loadAll();
+    if (resolved.status === 'resolved') {
+      showResult(`${teamsById[resolved.winning_team_id]?.name || 'Team ' + resolved.winning_team_id} won ${resolved.display_name} for $${resolved.winning_bid_amount}` +
+        (resolved.was_tie_broken_randomly ? ' (tie broken randomly).' : '.'));
+    } else {
+      showResult(`${resolved.display_name} got no bids and returns to the board, unsold.`);
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function renderActingAs() {
+  const select = document.getElementById('acting-as-select');
+  const budgetEl = document.getElementById('acting-as-budget');
+  select.innerHTML = Object.values(teamsById).map(t =>
+    `<option value="${t.id}" ${t.id === actingAsTeamId ? 'selected' : ''}>${t.name}</option>`
+  ).join('');
+  select.onchange = () => { actingAsTeamId = Number(select.value); render(); };
+
+  const b = budgets.find(b => b.team_id === actingAsTeamId);
+  budgetEl.textContent = b ? `$${b.remaining_budget} of $${b.starting_budget} left` : '';
+}
+
+function renderClock() {
+  const kicker = document.getElementById('clock-kicker');
+  if (!auction) { kicker.textContent = ''; return; }
+  if (auction.status === 'complete') {
+    kicker.textContent = 'AUCTION COMPLETE';
+    return;
+  }
+  if (currentRound) {
+    kicker.textContent = `ROUND ${currentRound.round_number} · BIDDING ON ${currentRound.display_name.toUpperCase()}`;
+    return;
+  }
+  const onClock = teamsById[onClockTeamId()];
+  kicker.textContent = `ON THE CLOCK TO NOMINATE: ${onClock ? onClock.name.toUpperCase() : '?'}`;
+}
+
+function renderRoundPanel() {
+  const el = document.getElementById('round-panel');
+  if (!auction || auction.status === 'complete') {
+    el.innerHTML = auction ? '<p class="text-muted">Auction complete - no more rounds.</p>' : '';
+    return;
+  }
+  if (!currentRound) {
+    el.innerHTML = '<p class="text-muted">No round open - nominate an asset from the board below.</p>';
+    return;
+  }
+
+  const remaining = remainingSeconds();
+  const expired = remaining <= 0;
+  const bidsSealed = currentRound.status === 'open';
+
+  el.innerHTML = `
+    <div class="card elev-sm" style="padding:var(--space-4)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="card-title">${currentRound.display_name}</div>
+          <div class="card-meta">Nominated by ${teamsById[currentRound.nominated_by_team_id]?.name || currentRound.nominated_by_team_id}</div>
+        </div>
+        <div class="tag ${expired ? 'tag-accent-2' : 'tag-accent'}" id="round-timer" style="font-variant-numeric:tabular-nums">${expired ? 'TIME UP' : Math.ceil(remaining) + 's'}</div>
+      </div>
+      <div style="display:flex;gap:var(--space-2);align-items:center;margin-top:var(--space-3)">
+        <input id="bid-amount" type="number" min="1" placeholder="Bid amount" style="width:140px;padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text)">
+        <button class="btn btn-primary" id="bid-btn" ${expired ? 'disabled' : ''}>Place bid</button>
+        <button class="btn btn-secondary" id="resolve-btn" ${expired ? '' : 'disabled'}>Resolve round</button>
+        <button class="btn btn-ghost" id="force-resolve-btn">Force resolve now</button>
+      </div>
+      <p class="text-muted" style="margin:var(--space-2) 0 0;font-size:12px">
+        ${bidsSealed ? 'Bids are sealed until the round resolves.' : `Revealed: ${bids.map(b => `${teamsById[b.team_id]?.name || b.team_id} $${b.amount}`).join(', ') || 'no bids'}`}
+      </p>
+    </div>
+  `;
+  document.getElementById('bid-btn').onclick = () => {
+    const amount = Number(document.getElementById('bid-amount').value);
+    if (amount > 0) placeBid(amount);
+  };
+  document.getElementById('resolve-btn').onclick = () => resolveRound(false);
+  document.getElementById('force-resolve-btn').onclick = () => resolveRound(true);
+}
+
+function renderBoard() {
+  const el = document.getElementById('board-list');
+  el.innerHTML = '';
+  const canNominate = auction && auction.status === 'in_progress' && !currentRound && actingAsTeamId === onClockTeamId();
+
+  if (board.length === 0) {
+    el.innerHTML = '<p class="text-muted">No draftable assets left.</p>';
+    return;
+  }
+
+  board.forEach(a => {
+    const row = document.createElement('div');
+    row.className = 'card elev-sm';
+    row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
+    row.innerHTML = `
+      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${a.position || '-'}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${a.display_name}</span>
+      <button class="btn btn-primary" ${canNominate ? '' : 'disabled'}>Nominate</button>
+    `;
+    row.querySelector('button').onclick = () => nominate(a.draftable_asset_id);
+    el.appendChild(row);
+  });
+}
+
+function renderBudgets() {
+  const body = document.getElementById('budgets-body');
+  body.innerHTML = '';
+  budgets.forEach(b => {
+    const team = teamsById[b.team_id];
+    const tr = document.createElement('tr');
+    if (b.team_id === onClockTeamId() && !currentRound) tr.style.background = 'color-mix(in srgb, var(--color-accent) 8%, transparent)';
+    tr.innerHTML = `
+      <td>${team ? team.name : b.team_id}</td>
+      <td><span class="tag tag-neutral">${team ? team.program_size : '?'}</span></td>
+      <td>$${b.remaining_budget} / $${b.starting_budget}</td>
+      <td>${b.assets_won}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function renderBids() {
+  const el = document.getElementById('bids-panel');
+  if (!currentRound) {
+    el.innerHTML = '<p class="text-muted">No open round.</p>';
+    return;
+  }
+  if (currentRound.status === 'open') {
+    el.innerHTML = `<p class="text-muted">Sealed until the round resolves.</p>`;
+    return;
+  }
+  el.innerHTML = bids.length
+    ? `<table class="table"><thead><tr><th>Team</th><th>Bid</th></tr></thead><tbody>${
+        bids.map(b => `<tr><td>${teamsById[b.team_id]?.name || b.team_id}</td><td>$${b.amount}</td></tr>`).join('')
+      }</tbody></table>`
+    : '<p class="text-muted">No bids were placed.</p>';
+}
+
+function render() {
+  renderActingAs();
+  renderClock();
+  renderRoundPanel();
+  renderBoard();
+  renderBudgets();
+  renderBids();
+}
+
+function tick() {
+  if (currentRound && currentRound.status === 'open') {
+    const timerEl = document.getElementById('round-timer');
+    const resolveBtn = document.getElementById('resolve-btn');
+    const bidBtn = document.getElementById('bid-btn');
+    const remaining = remainingSeconds();
+    if (timerEl) timerEl.textContent = remaining <= 0 ? 'TIME UP' : Math.ceil(remaining) + 's';
+    if (remaining <= 0) {
+      if (resolveBtn) resolveBtn.disabled = false;
+      if (bidBtn) bidBtn.disabled = true;
+    }
+  }
+}
+tickHandle = setInterval(tick, 500);
+
+loadAll().catch(e => showError(`Failed to load auction: ${e.message}`));
+</script>
+</body>
+</html>

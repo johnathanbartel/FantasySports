@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/draft-board.html">Draft</a>
+      <a href="/static/auction-board.html">Auction</a>
+      <a href="/static/roster.html" aria-current="page">Roster</a>
+      <a href="#">Lineup</a>
+      <a href="#">Scores</a>
+      <a href="#">Standings</a>
+    </div>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)" id="league-kicker">&nbsp;</div>
+      <h1 style="margin:0" id="team-heading">Roster</h1>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div id="schedule-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-4);border-radius:var(--radius-md);margin-bottom:var(--space-5)"></div>
+
+    <h4 style="margin-bottom:var(--space-3)">Your roster</h4>
+    <div id="roster-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+    <p class="text-muted" id="empty-roster-msg" style="display:none">No players rostered yet.</p>
+
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const TEAM_ID = params.get('team_id') || 1;
+
+async function api(path) {
+  const res = await fetch(path);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function formatScheduled(iso) {
+  // The API returns a naive UTC timestamp (no trailing "Z" - same convention
+  // as the rest of the platform, see auction-board.html's round-timer
+  // comment). Without appending it, `new Date(iso)` would misread this as
+  // local time and show the wrong hour.
+  const utcIso = iso.endsWith('Z') ? iso : iso + 'Z';
+  return new Date(utcIso).toLocaleString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function renderScheduleBanner(league) {
+  const el = document.getElementById('schedule-banner');
+  if (league.draft_type !== 'snake') { el.style.display = 'none'; return; }
+
+  el.style.display = 'block';
+  el.textContent = league.draft_scheduled_at
+    ? `Your snake draft is scheduled for ${formatScheduled(league.draft_scheduled_at)}.`
+    : "Your snake draft hasn't been scheduled yet - check back soon.";
+}
+
+function renderRoster(entries) {
+  const list = document.getElementById('roster-list');
+  const emptyMsg = document.getElementById('empty-roster-msg');
+  list.innerHTML = '';
+  emptyMsg.style.display = entries.length === 0 ? 'block' : 'none';
+
+  entries.forEach(e => {
+    const row = document.createElement('div');
+    row.className = 'card elev-sm';
+    row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
+    row.innerHTML = `
+      <span class="tag tag-neutral" style="min-width:70px;justify-content:center">${e.asset_type === 'defense_group' ? 'DEF' : ''}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${e.display_name}</span>
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function loadAll() {
+  try {
+    const team = await api(`/teams/${TEAM_ID}`);
+    const [league, roster] = await Promise.all([
+      api(`/leagues/${team.league_id}`),
+      api(`/teams/${TEAM_ID}/roster`),
+    ]);
+    document.getElementById('league-kicker').textContent = league.name.toUpperCase();
+    document.getElementById('team-heading').textContent = team.name;
+    renderScheduleBanner(league);
+    renderRoster(roster);
+  } catch (e) {
+    showError(`Failed to load roster: ${e.message}`);
+  }
+}
+
+loadAll();
+</script>
+</body>
+</html>

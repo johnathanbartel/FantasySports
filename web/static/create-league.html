@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create a League</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:var(--space-4)}
+  .field label{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:14px}
+  .field input[type=text], .field input[type=number], .field input[type=datetime-local], .field select {
+    padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);
+    background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);
+  }
+  .field .hint{font-size:12px;color:color-mix(in srgb, var(--color-text) 55%, transparent)}
+  .choice-card {
+    display:flex;gap:var(--space-3);align-items:flex-start;padding:var(--space-3);
+    border:1px solid var(--color-divider);border-radius:var(--radius-md);cursor:pointer;
+  }
+  .choice-card.selected { border-color:var(--color-accent); background:color-mix(in srgb, var(--color-accent) 6%, transparent); }
+  .choice-card input { margin-top:3px }
+  .step-indicator{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-accent);margin-bottom:var(--space-1)}
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/create-league.html" aria-current="page">Create league</a>
+    </div>
+  </div>
+
+  <div style="max-width:640px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="margin-bottom:var(--space-6)">
+      <div class="step-indicator" id="step-indicator">Step 1 of 2</div>
+      <h1 style="margin:0" id="step-heading">Create your league</h1>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div id="step-league" class="card elev-sm" style="padding:var(--space-5)">
+      <div class="field">
+        <label for="league-name">League name</label>
+        <input type="text" id="league-name" placeholder="e.g. The Gridiron Gauntlet" value="My League">
+      </div>
+
+      <div class="field">
+        <label for="commissioner-id">Your user ID (commissioner)</label>
+        <input type="number" id="commissioner-id" min="1" value="1">
+        <span class="hint">No sign-in yet on this platform - enter the numeric user id you're testing as.</span>
+      </div>
+
+      <div style="display:flex;gap:var(--space-4)">
+        <div class="field" style="flex:1">
+          <label for="league-size">League size</label>
+          <input type="number" id="league-size" min="2" value="12">
+        </div>
+        <div class="field" style="flex:1">
+          <label for="draft-rounds">Draft rounds</label>
+          <input type="number" id="draft-rounds" min="1" value="20">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Draft type</label>
+        <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+          <label class="choice-card selected" id="choice-snake">
+            <input type="radio" name="draft-type" value="snake" checked>
+            <span>
+              <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);display:block">Snake draft</span>
+              <span class="text-muted" style="font-size:13px">A live, scheduled draft where teams take turns picking players in snake order.</span>
+            </span>
+          </label>
+          <label class="choice-card" id="choice-recruit">
+            <input type="radio" name="draft-type" value="recruit">
+            <span>
+              <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);display:block">Recruiting period</span>
+              <span class="text-muted" style="font-size:13px">A timed, sealed-bid auction that opens whenever the commissioner is ready - teams nominate and bid instead of taking turns.</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field" id="draft-schedule-field">
+        <label for="draft-scheduled-at">When is your snake draft scheduled?</label>
+        <input type="datetime-local" id="draft-scheduled-at">
+        <span class="hint">Optional - you can set this later, but teams will see "not yet scheduled" until you do.</span>
+      </div>
+
+      <button class="btn btn-primary btn-block" id="create-league-btn">Continue to team setup</button>
+    </div>
+
+    <div id="step-team" class="card elev-sm" style="padding:var(--space-5);display:none">
+      <p class="text-muted" style="margin-top:0" id="team-league-summary"></p>
+
+      <div class="field">
+        <label for="team-name">Team name</label>
+        <input type="text" id="team-name" placeholder="e.g. The Bulldogs" value="My Team">
+      </div>
+
+      <div class="field">
+        <label for="program-size">Program size</label>
+        <select id="program-size">
+          <option value="large">Large - Win the championship</option>
+          <option value="moderate">Moderate - Make the playoffs</option>
+          <option value="small" selected>Small - Win the conference</option>
+        </select>
+        <span class="hint">Sets your recruiting/auction budget, conference, and season goal.</span>
+      </div>
+
+      <div class="field">
+        <label>Ownership</label>
+        <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+          <label class="choice-card selected" id="choice-human">
+            <input type="radio" name="owner-type" value="human" checked>
+            <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight)">I own this team</span>
+          </label>
+          <label class="choice-card" id="choice-ai">
+            <input type="radio" name="owner-type" value="ai">
+            <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight)">AI-owned team</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field" id="owner-id-field">
+        <label for="owner-id">Your user ID</label>
+        <input type="number" id="owner-id" min="1" value="1">
+      </div>
+
+      <div style="display:flex;gap:var(--space-3)">
+        <button class="btn btn-secondary" id="back-btn">Back</button>
+        <button class="btn btn-primary" style="flex:1" id="create-team-btn">Create team</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+let league = null; // LeagueOut, once step 1 succeeds
+
+function selectedDraftType() {
+  return document.querySelector('input[name=draft-type]:checked').value;
+}
+
+function updateDraftTypeCards() {
+  document.getElementById('choice-snake').classList.toggle('selected', selectedDraftType() === 'snake');
+  document.getElementById('choice-recruit').classList.toggle('selected', selectedDraftType() === 'recruit');
+  document.getElementById('draft-schedule-field').style.display = selectedDraftType() === 'snake' ? 'flex' : 'none';
+}
+document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = updateDraftTypeCards);
+updateDraftTypeCards();
+
+function updateOwnerTypeCards() {
+  const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
+  document.getElementById('choice-human').classList.toggle('selected', isHuman);
+  document.getElementById('choice-ai').classList.toggle('selected', !isHuman);
+  document.getElementById('owner-id-field').style.display = isHuman ? 'flex' : 'none';
+}
+document.querySelectorAll('input[name=owner-type]').forEach(r => r.onchange = updateOwnerTypeCards);
+updateOwnerTypeCards();
+
+document.getElementById('create-league-btn').onclick = async () => {
+  showError('');
+  const name = document.getElementById('league-name').value.trim();
+  if (!name) return showError('League name is required.');
+
+  const draftType = selectedDraftType();
+  const scheduledRaw = document.getElementById('draft-scheduled-at').value;
+
+  try {
+    league = await api('/leagues', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name,
+        commissioner_user_id: Number(document.getElementById('commissioner-id').value),
+        universe_codes: ['ncaaf'], // NCAAF is the only live universe today - see index.html
+        size: Number(document.getElementById('league-size').value),
+        draft_rounds: Number(document.getElementById('draft-rounds').value),
+        program_size_mode: 'team_choice',
+        draft_type: draftType,
+        draft_scheduled_at: draftType === 'snake' && scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
+      }),
+    });
+    document.getElementById('team-league-summary').textContent =
+      `Joining "${league.name}" - ${league.draft_type === 'recruit' ? 'recruiting period' : 'snake'} draft.`;
+    document.getElementById('step-league').style.display = 'none';
+    document.getElementById('step-team').style.display = 'block';
+    document.getElementById('step-indicator').textContent = 'Step 2 of 2';
+    document.getElementById('step-heading').textContent = 'Set up your team';
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
+document.getElementById('back-btn').onclick = () => {
+  document.getElementById('step-team').style.display = 'none';
+  document.getElementById('step-league').style.display = 'block';
+  document.getElementById('step-indicator').textContent = 'Step 1 of 2';
+  document.getElementById('step-heading').textContent = 'Create your league';
+};
+
+document.getElementById('create-team-btn').onclick = async () => {
+  showError('');
+  const name = document.getElementById('team-name').value.trim();
+  if (!name) return showError('Team name is required.');
+  const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
+
+  try {
+    const team = await api('/teams', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        league_id: league.id,
+        name,
+        program_size: document.getElementById('program-size').value,
+        owner_user_id: isHuman ? Number(document.getElementById('owner-id').value) : null,
+        is_ai_owned: !isHuman,
+      }),
+    });
+
+    if (league.draft_type === 'recruit') {
+      location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${team.id}`;
+    } else {
+      location.href = `/static/roster.html?league_id=${league.id}&team_id=${team.id}`;
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+};
+</script>
+</body>
+</html>
