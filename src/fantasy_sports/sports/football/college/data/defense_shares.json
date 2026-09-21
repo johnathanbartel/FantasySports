@@ -1,0 +1,73 @@
+{
+ "source": "derived from named defenders/tacklers in FBS play text, seasons [2022, 2023, 2024]",
+ "group_baseline_per_play": {
+  "DL": 0.04528,
+  "LB": -0.03145,
+  "DB": -0.12935
+ },
+ "defended_plays": 358209,
+ "shares": {
+  "sack": {
+   "DL": 0.5859,
+   "LB": 0.3246,
+   "DB": 0.0895
+  },
+  "interception": {
+   "DL": 0.0445,
+   "LB": 0.1937,
+   "DB": 0.7618
+  },
+  "forced_fumble": {
+   "DL": 0.2038,
+   "LB": 0.2986,
+   "DB": 0.4976
+  },
+  "incompletion": {
+   "DL": 0.1382,
+   "LB": 0.1557,
+   "DB": 0.7061
+  },
+  "run_short": {
+   "DL": 0.4055,
+   "LB": 0.413,
+   "DB": 0.1814
+  },
+  "run_mid": {
+   "DL": 0.2555,
+   "LB": 0.393,
+   "DB": 0.3514
+  },
+  "run_long": {
+   "DL": 0.1096,
+   "LB": 0.2671,
+   "DB": 0.6233
+  },
+  "catch_short": {
+   "DL": 0.1259,
+   "LB": 0.3333,
+   "DB": 0.5407
+  },
+  "catch_mid": {
+   "DL": 0.0905,
+   "LB": 0.3159,
+   "DB": 0.5936
+  },
+  "catch_long": {
+   "DL": 0.0625,
+   "LB": 0.2332,
+   "DB": 0.7043
+  }
+ },
+ "sample_sizes": {
+  "sack": 8827,
+  "interception": 1822,
+  "forced_fumble": 211,
+  "incompletion": 803,
+  "run_short": 1196,
+  "run_mid": 1178,
+  "run_long": 292,
+  "catch_short": 135,
+  "catch_mid": 497,
+  "catch_long": 416
+ }
+}

@@ -13,9 +13,14 @@ from pathlib import Path
 from fantasy_sports.sports.football.shared.attribution import (
     YacEpaLookup,
     split_passing_epa_incomplete,
-    attribute_defense,
     FieldGoalEpLookup,
     attribute_kicker,
+)
+from fantasy_sports.sports.football.shared.defense import (
+    DefenseShares,
+    PositionResolver,
+    TeamDefenseProfile,
+    attribute_defense,
 )
 
 RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
@@ -175,12 +180,21 @@ def process_plays(
     plays,
     lookup: YacEpaLookup | None = None,
     fg_lookup: FieldGoalEpLookup | None = None,
+    resolver: PositionResolver | None = None,
+    defense_shares: DefenseShares | None = None,
+    team_profile: TeamDefenseProfile | None = None,
 ) -> PipelineResult:
     """Runs the full attribution chain (offense split, defense split,
     kicker marginal-EP) over a list of CFBD Play objects, which may span
-    one or many games."""
+    one or many games. `resolver` (season roster -> DL/LB/DB) lets sacks,
+    interceptions, forced fumbles and breakups go to the named defender's real
+    group; without it those plays fall back to the measured shares. `team_profile`
+    (TeamDefenseProfile.for_season) tilts those shares by each team's own season
+    stats; omit it for league-wide shares."""
     lookup = lookup or YacEpaLookup()
     fg_lookup = fg_lookup or FieldGoalEpLookup()
+    resolver = resolver or PositionResolver()
+    defense_shares = defense_shares or DefenseShares()
     result = PipelineResult()
 
     for play in plays:
@@ -201,15 +215,11 @@ def process_plays(
         result.scrimmage_ppa_by_team[play.offense] += play.ppa
         _attribute_offense(play, lookup, result)
 
-        d_split = attribute_defense(play.play_type, play.yards_gained, play.ppa)
-        if d_split is not None:
-            for group in ("dl", "lb", "db"):
-                value = getattr(d_split, group)
-                if value:
-                    result.defense_credits[(play.defense, group.upper())] += value
-                    result.play_level_credits.append(PlayLevelCredit(
-                        play=play, role=group, points=value,
-                        team=play.defense, position_group=group.upper(),
-                    ))
+        for credit in attribute_defense(play, resolver, defense_shares, team_profile) or ():
+            result.defense_credits[(play.defense, credit.group)] += credit.points
+            result.play_level_credits.append(PlayLevelCredit(
+                play=play, role=credit.group.lower(), points=credit.points,
+                team=play.defense, position_group=credit.group,
+            ))
 
     return result
