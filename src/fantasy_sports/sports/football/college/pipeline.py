@@ -23,7 +23,27 @@ from fantasy_sports.sports.football.shared.defense import (
     attribute_defense,
 )
 
+# CFBD's 2026 play text is a different format from 2022-2024: a clock prefix, a
+# formation word and a jersey number before the name, e.g.
+#   "(07:41) No Huddle-Shotgun #9 D.Gardner rush middle for 5 yards gain to the MEM30 (#96 R.Duncan)"
+#   "(03:22) Shotgun #1 D.Williams Jr. pass complete short right to #2 D.Roebuck caught at EWU30, for 8 yards ..."
+#   "(07:20) #15 W.Stone field goal attempt from 34 yards GOOD (H: ...)"
+# The *_S26 patterns below are those forms; the older patterns stay for the cached
+# seasons. Names come out as "D.Gardner" (see clean_player_name).
+_CLOCK_PREFIX_RE = re.compile(r"^\(\d+:\d+\)\s*")
+_FORMATION_PREFIX_RE = re.compile(r"^.*?#\d+\s+")
+
+
+def clean_player_name(name: str | None) -> str | None:
+    """"(07:41) No Huddle-Shotgun #9 D.Gardner" or "#83 K.Feagin" -> "D.Gardner" / "K.Feagin". Names in
+    the older full-name style ("Cade Klubnik") pass through unchanged."""
+    if name is None:
+        return None
+    return _FORMATION_PREFIX_RE.sub("", _CLOCK_PREFIX_RE.sub("", name.strip())).strip()
+
+
 RUSH_RE = re.compile(r"^(?P<runner>.+?) run (?:for|to)\b")
+RUSH_S26_RE = re.compile(r"^(?P<runner>.+?) rush (?:left|right|middle|for)\b")
 # CFBD sometimes uses a "recap" text style for touchdowns instead of the
 # standard play-by-play phrasing, e.g. "Savion Red 1 Yd Run (Kicker Kick)"
 # rather than "Savion Red run for 1 yd ... for a TD (Kicker KICK)".
@@ -38,6 +58,8 @@ RUSH_ALT2_RE = re.compile(r"^(?P<runner>.+?) rushed for -?\d+ yards?\b")
 KNEEL_RE = re.compile(r"[Kk]neel down|takes a knee")
 
 PASS_COMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+?) for\b")
+PASS_COMPLETE_S26_RE = re.compile(
+    r"^(?P<passer>.+?) pass complete (?:(?:short|deep|middle|left|right)\s+)*to (?P<receiver>.+?)(?: caught\b|,| for\b)")
 PASS_COMPLETE_FALLBACK_RE = re.compile(r"^(?P<passer>.+?) pass complete to (?P<receiver>.+)$")
 # Recap style for passing TDs: "Receiver N Yd pass from Passer (Kicker Kick)"
 PASS_TD_ALT_RE = re.compile(r"^(?P<receiver>.+?) \d+ Yd pass from (?P<passer>.+?)\b")
@@ -46,7 +68,9 @@ PASS_COMPLETE_ALT2_RE = re.compile(r"^(?P<passer>.+?) pass complete\. Catch made
 
 # Dropped the trailing '$' so suffixes like ", broken up by X" don't block a
 # match - we only need the passer's name, not the rest of the sentence.
-PASS_INCOMPLETE_RE = re.compile(r"^(?P<passer>.+?) pass incomplete\b(?: to (?P<receiver>[^,.]+))?")
+PASS_INCOMPLETE_RE = re.compile(
+    r"^(?P<passer>.+?) pass incomplete\b(?:\s+(?:short|deep|middle|left|right))*"
+    r"(?: to (?P<receiver>[^,(]+?)(?=\s+thrown\b|\s*[,(]|\s*$))?")
 
 SACK_RE = re.compile(r"^(?P<passer>.+?) sacked by\b")
 SACK_ALT_RE = re.compile(r"^(?P<passer>.+?) sacked for\b")  # no defender named
@@ -58,6 +82,7 @@ SACK_ALT2_RE = re.compile(r"^(?P<passer>.+?) steps back to pass\. Sacked\b")
 INTERCEPTION_RE = re.compile(r"^(?P<passer>.+?) pass intercepted\b", re.IGNORECASE)
 
 FIELD_GOAL_RE = re.compile(r"^(?P<kicker>.+?)\s+(?P<distance>\d+)\s*[Yy]d\.?\s*(?:Field Goal|FG)\b")
+FIELD_GOAL_S26_RE = re.compile(r"^(?P<kicker>.+?) field goal attempt from (?P<distance>\d+) yards")
 
 # Play types that carry a real ppa but involve turnover-return yardage or
 # fumble mechanics this pipeline doesn't attribute yet (who forced/returned
@@ -105,6 +130,7 @@ class PipelineResult:
         return self.scrimmage_ppa_by_team.get(team, 0.0) + self.fg_credit_by_team.get(team, 0.0)
 
     def _credit(self, play, role: str, points: float, player_name: str, team: str):
+        player_name = clean_player_name(player_name)
         self.credits[(player_name, team)] += points
         self.play_level_credits.append(PlayLevelCredit(
             play=play, role=role, points=points, player_name=player_name, team=team,
@@ -124,7 +150,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
         if KNEEL_RE.search(text):
             result.skipped.append(play)
             return
-        m = RUSH_RE.match(text) or RUSH_TD_ALT_RE.match(text) or RUSH_ALT2_RE.match(text)
+        m = RUSH_RE.match(text) or RUSH_TD_ALT_RE.match(text) or RUSH_ALT2_RE.match(text) or RUSH_S26_RE.match(text)
         if not m:
             result.unattributed.append(play)
             return
@@ -135,6 +161,7 @@ def _attribute_offense(play, lookup: YacEpaLookup, result: PipelineResult):
             PASS_COMPLETE_RE.match(text)
             or PASS_TD_ALT_RE.match(text)
             or PASS_COMPLETE_ALT2_RE.match(text)
+            or PASS_COMPLETE_S26_RE.match(text)
             or PASS_COMPLETE_FALLBACK_RE.match(text)
         )
         if not m:
@@ -199,7 +226,7 @@ def process_plays(
 
     for play in plays:
         if play.play_type in ("Field Goal Good", "Field Goal Missed"):
-            m = FIELD_GOAL_RE.match(play.play_text or "")
+            m = FIELD_GOAL_RE.match(play.play_text or "") or FIELD_GOAL_S26_RE.match(play.play_text or "")
             if not m:
                 result.unattributed_fg.append(play)
                 continue

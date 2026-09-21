@@ -71,10 +71,19 @@ INTERCEPTED_BY_RE = re.compile(r"Intercepted by (?P<n>[A-Za-z.' -]+?) at")
 FORCED_BY_RE = re.compile(r"forced by (?P<n>[^,.;]+?)(?:,| recovered|\.|$)")
 BROKEN_UP_RE = re.compile(r"broken up by (?P<n>[^,.;]+)")
 SAFETY_RE = re.compile(r"^(?P<n>.+?) Safety$")
+# CFBD's 2026 text names defenders as "#7 C.Kennedy" (jersey number + first initial + last name):
+#   "... sacked for loss of 15 yards to the NAU10 (#7 C.Kennedy)"
+#   "... pass intercepted by #35 Q.Olson at NAU32"     "... broken up by #7 A.Jackson"
+SACK_PAREN_RE = re.compile(r"sacked for (?:a )?loss of \d+ yards? to the \S+ \((?P<n>#\d+ [^);]+)")
+INTERCEPTED_BY_S26_RE = re.compile(r"pass intercepted by (?P<n>#\d+ \S+)", re.IGNORECASE)
+FORCED_BY_S26_RE = re.compile(r"forced by (?P<n>#\d+ \S+)")
+BROKEN_UP_S26_RE = re.compile(r"broken up by (?P<n>#\d+ \S+)")
+_JERSEY_PREFIX_RE = re.compile(r"^#\d+\s+")
 _SUFFIX_RE = re.compile(r"\s+(jr|sr|ii|iii|iv)$")
 
 
 def _norm(name: str) -> str:
+    name = _JERSEY_PREFIX_RE.sub("", name.strip())
     return _SUFFIX_RE.sub("", name.lower().replace(".", " ").replace("'", "").replace("-", " ").strip()).strip()
 
 
@@ -225,13 +234,13 @@ def _named_group(play, resolver: PositionResolver) -> str | None:
     t = play.play_type
     patterns = ()
     if t == "Sack":
-        patterns = (SACK_BY_RE,)
+        patterns = (SACK_BY_RE, SACK_PAREN_RE)
     elif t in ("Pass Interception Return", "Interception", "Interception Return Touchdown"):
-        patterns = (INTERCEPTED_RE, INTERCEPTED_BY_RE)
+        patterns = (INTERCEPTED_RE, INTERCEPTED_BY_RE, INTERCEPTED_BY_S26_RE)
     elif t in FUMBLE_TYPES:
-        patterns = (FORCED_BY_RE,)
+        patterns = (FORCED_BY_RE, FORCED_BY_S26_RE)
     elif t == "Pass Incompletion":
-        patterns = (BROKEN_UP_RE,)
+        patterns = (BROKEN_UP_RE, BROKEN_UP_S26_RE)
     elif t in SAFETY_TYPES:
         patterns = (SAFETY_RE,)
     for rx in patterns:
