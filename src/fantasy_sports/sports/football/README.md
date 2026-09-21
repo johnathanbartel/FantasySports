@@ -49,8 +49,18 @@ construction.
 | DB (group) | 1 |
 
 Defense is drafted as position **groups** (DL/LB/DB), not individual players
-and not a monolithic team D/ST. Open question: same draft pool as offense, or
-reserved rounds (IDP-style)? Leaning same pool - not yet decided.
+and not a monolithic team D/ST.
+
+Two decisions here are settled and recorded in
+[docs/data_contract.md](../../../../docs/data_contract.md):
+
+- **Same draft pool as offense**, not reserved rounds - a defense group can go
+  in round 4 alongside a WR2 ("Decision: DL/LB/DB draft pool").
+- **In the Timed Auction Draft, each group is bid on individually**, never
+  bundled by real team - Georgia DL, Georgia LB and Georgia DB are three
+  independent auction lines ("Decision: Timed Auction Draft defensive position
+  bidding granularity"). Implemented as described in
+  [docs/timed_auction_draft.md](../../../../docs/timed_auction_draft.md).
 
 ## League
 
@@ -60,7 +70,18 @@ personalities fill out incomplete leagues (design TBD).
 
 ## Draft
 
-Snake, 20 rounds. No salary cap/auction in v1 (flagged as a future feature).
+Two draft styles run off the same league/roster tables:
+
+- **Snake**, 20 rounds - the original v1 path, still supported.
+- **Timed Auction Draft** - the platform's headline mechanic. A Recruiting
+  Period split into per-slot rounds, one blind bid per owner per round,
+  budgets tiered by program size (Large 300 / Moderate 225 / Small 150 for
+  NCAAF), ties broken by random "player choice". The engine is sport-agnostic;
+  NCAAF's values live in `college/auction.py`. See
+  [docs/timed_auction_draft.md](../../../../docs/timed_auction_draft.md).
+
+There is still no salary cap (`leagues.salary_cap_enabled` exists and is
+unused) - the auction spends `auction_budgets`, which is a separate mechanic.
 
 ## Data pipeline
 

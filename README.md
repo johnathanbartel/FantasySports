@@ -26,8 +26,10 @@ docs/                      architecture and data contracts
 ```
 
 See [docs/architecture.md](docs/architecture.md) for placement and branch rules,
-and [the football spec](src/fantasy_sports/sports/football/README.md) for EPA
-scoring details.
+[the football spec](src/fantasy_sports/sports/football/README.md) for EPA
+scoring details, and
+[docs/timed_auction_draft.md](docs/timed_auction_draft.md) for the Timed
+Auction Draft's round resolution flow.
 
 ## Branch model
 
@@ -50,8 +52,9 @@ uvicorn fantasy_sports.api.main:app --reload
 ```
 
 The API and web UI run in the same process. Open the API documentation at
-`http://127.0.0.1:8000/docs` or the current draft board at
-`http://127.0.0.1:8000/static/draft-board.html`.
+`http://127.0.0.1:8000/docs`, the snake draft board at
+`http://127.0.0.1:8000/static/draft-board.html`, or the Timed Auction Draft
+board at `http://127.0.0.1:8000/static/auction-board.html`.
 
 Football ingestion currently needs its separate legacy-compatible environment
 because `cfbd` pins Pydantic below version 2:
@@ -68,10 +71,19 @@ ingestion. Lookup data and Python packages are included by `pyproject.toml`.
 
 ## Local verification and demo data
 
-Run the isolated API/database smoke test:
+Run the automated test suite (unit plus API tests, against a throwaway
+in-memory database):
 
 ```powershell
-.venv-api\Scripts\python.exe scripts/seed_smoke_test.py
+pip install -e ".[dev]"
+.venv-api\Scripts\python.exe -m pytest
+```
+
+Run the isolated API/database smoke tests:
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_smoke_test.py       # core + snake draft
+.venv-api\Scripts\python.exe scripts/auction_smoke_test.py    # full Recruiting Period
 ```
 
 To reset and seed the local demo league with real CFBD roster and game data:
