@@ -28,11 +28,15 @@
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-6)">
       <div>
         <div class="card-kicker" id="clock-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
-        <h1 style="margin:0">Auction draft</h1>
+        <h1 style="margin:0">Recruiting period</h1>
       </div>
       <div style="text-align:right">
-        <div class="card-kicker" style="margin-bottom:2px">Acting as</div>
-        <select id="acting-as-select" style="font-family:var(--font-heading);font-size:15px;padding:6px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text)"></select>
+        <div class="card-kicker" style="margin-bottom:2px" id="acting-as-label">Signed in as</div>
+        <div id="acting-as-name" style="font-family:var(--font-heading);font-size:15px"></div>
+        <div id="signin-box" style="display:none;gap:6px;align-items:center;justify-content:flex-end">
+          <select id="signin-select" style="padding:6px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text)"></select>
+          <button class="btn btn-primary" id="signin-btn">Sign in</button>
+        </div>
         <div class="text-muted" id="acting-as-budget" style="font-size:12px;margin-top:4px"></div>
       </div>
     </div>
@@ -46,6 +50,13 @@
         <div id="round-panel" style="margin-bottom:var(--space-5)"></div>
 
         <h4 style="margin-bottom:var(--space-3)">Board</h4>
+        <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+          <input id="board-filter" type="text" placeholder="Search players..." style="flex:1;padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text)">
+          <select id="board-pos" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text)">
+            <option value="">All positions</option>
+            <option>QB</option><option>RB</option><option>WR</option><option>TE</option><option>PK</option><option>DL</option><option>LB</option><option>DB</option>
+          </select>
+        </div>
         <div id="board-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
       </div>
 
@@ -64,6 +75,7 @@
   </div>
 </div>
 
+<script src="/static/session.js"></script>
 <script>
 // Real data only - every value below comes from the live API documented in
 // docs/data_contract.md (the "Decision: auction draft budget & round
@@ -80,6 +92,7 @@ let board = [];          // DraftBoardAsset[]
 let currentRound = null; // AuctionRoundOut | null
 let bids = [];           // AuctionBidOut[] - empty while the round is sealed
 let actingAsTeamId = null;
+let lastRevealed = [];
 let lastResult = null;   // the last round this client personally resolved
 
 // Countdown is anchored to (server seconds_remaining, client fetch time) so
@@ -88,14 +101,10 @@ let roundAnchorMs = null;
 let roundAnchorRemaining = 0;
 let tickHandle = null;
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `${res.status} ${res.statusText}`);
-  }
-  return res.status === 204 ? null : res.json();
-}
+const api = FSC.api;
+let myUserId = null;
+let renderKeys = {};    // per-panel change keys, so polling doesn't clobber inputs
+let busy = false;
 
 function showError(msg) {
   const el = document.getElementById('error-banner');
@@ -134,24 +143,20 @@ async function loadAll() {
   board = boardData;
   currentRound = roundData;
 
-  if (actingAsTeamId === null) actingAsTeamId = onClockTeamId() || teams[0]?.id || null;
+  actingAsTeamId = (teams.find(t => !t.is_ai_owned && t.owner_user_id === myUserId) || {}).id || null;
 
   roundAnchorMs = Date.now();
   roundAnchorRemaining = currentRound ? currentRound.seconds_remaining : 0;
 
   bids = currentRound ? await api(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/bids`) : [];
 
-  if (!currentRound) lastResult = null; // clears once a fresh round opens
   render();
 }
 
 async function nominate(assetId) {
   showError('');
   try {
-    await api(`/auctions/${AUCTION_ID}/nominate`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({draftable_asset_id: assetId, nominated_by_team_id: actingAsTeamId}),
-    });
+    await FSC.post(`/auctions/${AUCTION_ID}/nominate`, {draftable_asset_id: assetId, nominated_by_team_id: actingAsTeamId});
     await loadAll();
   } catch (e) {
     showError(e.message);
@@ -161,11 +166,9 @@ async function nominate(assetId) {
 async function placeBid(amount) {
   showError('');
   try {
-    await api(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/bids`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({team_id: actingAsTeamId, amount}),
-    });
+    await FSC.post(`/auctions/${AUCTION_ID}/rounds/${currentRound.id}/bids`, {team_id: actingAsTeamId, amount});
     showResult(`You bid $${amount} as ${teamsById[actingAsTeamId]?.name || actingAsTeamId} (sealed until the round resolves).`);
+    await loadAll();
   } catch (e) {
     showError(e.message);
   }
@@ -189,15 +192,12 @@ async function resolveRound(force) {
 }
 
 function renderActingAs() {
-  const select = document.getElementById('acting-as-select');
+  const nameEl = document.getElementById('acting-as-name');
   const budgetEl = document.getElementById('acting-as-budget');
-  select.innerHTML = Object.values(teamsById).map(t =>
-    `<option value="${t.id}" ${t.id === actingAsTeamId ? 'selected' : ''}>${t.name}</option>`
-  ).join('');
-  select.onchange = () => { actingAsTeamId = Number(select.value); render(); };
-
+  const team = teamsById[actingAsTeamId];
+  nameEl.textContent = team ? `${team.name} (${team.program_size})` : (myUserId ? 'no team in this league' : '');
   const b = budgets.find(b => b.team_id === actingAsTeamId);
-  budgetEl.textContent = b ? `$${b.remaining_budget} of $${b.starting_budget} left` : '';
+  budgetEl.textContent = b ? `$${b.remaining_budget} of $${b.starting_budget} left · ${b.assets_won} recruited` : '';
 }
 
 function renderClock() {
@@ -217,6 +217,9 @@ function renderClock() {
 
 function renderRoundPanel() {
   const el = document.getElementById('round-panel');
+  const key = JSON.stringify([auction && auction.status, currentRound && [currentRound.id, currentRound.status], bids]);
+  if (renderKeys.round === key) return;   // unchanged - keep the bid input intact
+  renderKeys.round = key;
   if (!auction || auction.status === 'complete') {
     el.innerHTML = auction ? '<p class="text-muted">Auction complete - no more rounds.</p>' : '';
     return;
@@ -243,10 +246,10 @@ function renderRoundPanel() {
         <input id="bid-amount" type="number" min="1" placeholder="Bid amount" style="width:140px;padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text)">
         <button class="btn btn-primary" id="bid-btn" ${expired ? 'disabled' : ''}>Place bid</button>
         <button class="btn btn-secondary" id="resolve-btn" ${expired ? '' : 'disabled'}>Resolve round</button>
-        <button class="btn btn-ghost" id="force-resolve-btn">Force resolve now</button>
+        <button class="btn btn-ghost" id="force-resolve-btn">Force resolve (commissioner)</button>
       </div>
       <p class="text-muted" style="margin:var(--space-2) 0 0;font-size:12px">
-        ${bidsSealed ? 'Bids are sealed until the round resolves.' : `Revealed: ${bids.map(b => `${teamsById[b.team_id]?.name || b.team_id} $${b.amount}`).join(', ') || 'no bids'}`}
+        ${bidsSealed ? (bids.length ? `Your sealed bid: $${bids[0].amount} (you can raise or lower it until time is up).` : 'Bids are sealed until the round resolves.') : `Revealed: ${bids.map(b => `${teamsById[b.team_id]?.name || b.team_id} $${b.amount}`).join(', ') || 'no bids'}`}
       </p>
     </div>
   `;
@@ -260,15 +263,21 @@ function renderRoundPanel() {
 
 function renderBoard() {
   const el = document.getElementById('board-list');
+  const canNominate = auction && auction.status === 'in_progress' && !currentRound && actingAsTeamId !== null && actingAsTeamId === onClockTeamId();
+  const q = document.getElementById('board-filter').value.trim().toLowerCase();
+  const pos = document.getElementById('board-pos').value;
+  const key = JSON.stringify([board.length, canNominate, q, pos]);
+  if (renderKeys.board === key) return;
+  renderKeys.board = key;
   el.innerHTML = '';
-  const canNominate = auction && auction.status === 'in_progress' && !currentRound && actingAsTeamId === onClockTeamId();
 
   if (board.length === 0) {
     el.innerHTML = '<p class="text-muted">No draftable assets left.</p>';
     return;
   }
 
-  board.forEach(a => {
+  const shown = board.filter(a => (!pos || a.position === pos) && (!q || a.display_name.toLowerCase().includes(q)));
+  shown.slice(0, 60).forEach(a => {
     const row = document.createElement('div');
     row.className = 'card elev-sm';
     row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
@@ -280,6 +289,12 @@ function renderBoard() {
     row.querySelector('button').onclick = () => nominate(a.draftable_asset_id);
     el.appendChild(row);
   });
+  if (shown.length > 60) {
+    const more = document.createElement('p');
+    more.className = 'text-muted';
+    more.textContent = `Showing 60 of ${shown.length} - use search / position to narrow.`;
+    el.appendChild(more);
+  }
 }
 
 function renderBudgets() {
@@ -301,19 +316,17 @@ function renderBudgets() {
 
 function renderBids() {
   const el = document.getElementById('bids-panel');
-  if (!currentRound) {
-    el.innerHTML = '<p class="text-muted">No open round.</p>';
+  if (lastResult && lastResult.status === 'resolved') {
+    el.innerHTML = `<p class="text-muted" style="margin-top:0">Last round: ${lastResult.display_name}</p>` +
+      (lastRevealed.length
+        ? `<table class="table"><thead><tr><th>Team</th><th>Bid</th></tr></thead><tbody>${
+            lastRevealed.map(b => `<tr><td>${teamsById[b.team_id]?.name || b.team_id}</td><td>$${b.amount}</td></tr>`).join('')
+          }</tbody></table>` : '');
     return;
   }
-  if (currentRound.status === 'open') {
-    el.innerHTML = `<p class="text-muted">Sealed until the round resolves.</p>`;
-    return;
-  }
-  el.innerHTML = bids.length
-    ? `<table class="table"><thead><tr><th>Team</th><th>Bid</th></tr></thead><tbody>${
-        bids.map(b => `<tr><td>${teamsById[b.team_id]?.name || b.team_id}</td><td>$${b.amount}</td></tr>`).join('')
-      }</tbody></table>`
-    : '<p class="text-muted">No bids were placed.</p>';
+  el.innerHTML = currentRound
+    ? '<p class="text-muted">Sealed until the round resolves.</p>'
+    : '<p class="text-muted">No open round.</p>';
 }
 
 function render() {
@@ -340,7 +353,59 @@ function tick() {
 }
 tickHandle = setInterval(tick, 500);
 
-loadAll().catch(e => showError(`Failed to load auction: ${e.message}`));
+// Poll: let the server-side AI move (nominate / bid / resolve expired rounds),
+// then refresh. When a round finishes, fetch its revealed bids so the
+// "last round" panel can show them.
+async function poll() {
+  if (busy || !myUserId) return;
+  busy = true;
+  try {
+    const before = currentRound;
+    if (!auction || auction.status !== 'complete') {
+      await FSC.post(`/auctions/${AUCTION_ID}/ai/tick`);
+    }
+    await loadAll();
+    if (before && (!currentRound || currentRound.id !== before.id)) {
+      const done = await api(`/auctions/${AUCTION_ID}/rounds/${before.id}`);
+      lastRevealed = await api(`/auctions/${AUCTION_ID}/rounds/${before.id}/bids`);
+      lastResult = done;
+      if (done.status === 'resolved') {
+        showResult(`${teamsById[done.winning_team_id]?.name || 'Team ' + done.winning_team_id} won ${done.display_name} for $${done.winning_bid_amount}` +
+          (done.was_tie_broken_randomly ? ' (tie broken randomly).' : '.'));
+      } else {
+        showResult(`${done.display_name} got no bids and returns to the board, unsold.`);
+      }
+      renderKeys = {};
+      render();
+    }
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    busy = false;
+  }
+}
+
+async function start() {
+  const session = await FSC.current();
+  if (!session) {
+    document.getElementById('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json());
+    document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${u.display_name}</option>`).join('');
+    document.getElementById('signin-btn').onclick = async () => {
+      await FSC.signIn(Number(document.getElementById('signin-select').value));
+      location.reload();
+    };
+    showError('Sign in to take part in the recruiting period.');
+    return;
+  }
+  myUserId = session.user_id;
+  await loadAll();
+  setInterval(poll, 1500);
+}
+document.getElementById('board-filter').oninput = () => renderBoard();
+document.getElementById('board-pos').onchange = () => renderBoard();
+
+start().catch(e => showError(`Failed to load auction: ${e.message}`));
 </script>
 </body>
 </html>

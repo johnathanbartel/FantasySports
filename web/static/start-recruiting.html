@@ -28,85 +28,108 @@
     <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
     <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
 
+    <div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-5)">
+      <p id="summary" style="margin-top:0">Loading...</p>
+      <div id="conference-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-4);margin-bottom:var(--space-4)"></div>
+      <button class="btn btn-secondary btn-block" id="fill-ai-btn">Fill league with AI teams</button>
+      <p class="text-muted" style="font-size:12px;margin:var(--space-2) 0 0" id="fill-hint"></p>
+    </div>
+
     <div class="card elev-sm" style="padding:var(--space-5)">
-      <p id="summary">Loading...</p>
-
-      <p class="text-muted" style="font-size:13px">
-        This league drafts by recruiting period: a timed, sealed-bid auction where every team nominates
-        and bids on players instead of taking turns. Your recruiting budget is set from your program size
-        the moment the period opens.
+      <p class="text-muted" style="font-size:13px;margin-top:0">
+        The recruiting draft runs week by week, one week per roster spot, each as long as the commissioner set.
+        In any week, any team can bid on any player - search the whole pool (with last season's points and school),
+        place a bid, and raise or retract it whenever you like. Every player has a hidden price for the whole
+        recruitment (the average player costs $10 a week, so $200 over 20 weeks). When a week ends, each player whose
+        bids add up to his price goes to the highest bidder, and every team that bid on him pays its bid - even the
+        teams that didn't win him. The rest carry into the next week, uncharged. After the final week, the highest
+        bidder gets any player still standing. Each week ends with a 20-second pause - no bids can be placed - and a results
+        screen showing how each of your bids came out and how close each player's recruitment is to completing. Your budget is weekly and accumulates (Large $300, Moderate $200,
+        Small $100 a week - skip week 1 as a Large program and you have $600 in week 2). You can't bid more than the money
+        you have - your standing bids all count against it. AI-owned teams bid on their own.
       </p>
-
-      <div class="field" style="margin-bottom:var(--space-4)">
-        <label for="round-seconds" style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:14px;display:block;margin-bottom:6px">Seconds per bidding round</label>
-        <input type="number" id="round-seconds" min="5" value="30" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);width:120px">
-      </div>
-
-      <button class="btn btn-primary btn-block" id="start-btn">Start recruiting period</button>
-      <p class="text-muted" style="font-size:12px;margin-top:var(--space-2);margin-bottom:0" id="wait-hint">
-        Waiting on other teams to be created? You can leave this page and come back - the recruiting period
-        starts whenever a commissioner clicks the button above.
-      </p>
+      <p id="schedule-line" style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);margin:var(--space-3) 0"></p>
+      <a class="btn btn-primary btn-block" id="board-link" href="#" style="text-align:center;display:block;box-sizing:border-box;text-decoration:none">Go to the recruiting board</a>
+      <button class="btn btn-secondary btn-block" id="start-btn" style="margin-top:var(--space-2)">Start the recruiting draft now (commissioner)</button>
     </div>
 
   </div>
 </div>
 
+<script src="/static/session.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
 const TEAM_ID = params.get('team_id');
-
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `${res.status} ${res.statusText}`);
-  }
-  return res.status === 204 ? null : res.json();
-}
+const api = FSC.api;
 
 function showError(msg) {
   const el = document.getElementById('error-banner');
   el.textContent = msg;
   el.style.display = msg ? 'block' : 'none';
 }
-
 function showResult(msg) {
   const el = document.getElementById('result-banner');
   el.textContent = msg;
   el.style.display = msg ? 'block' : 'none';
 }
 
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
 async function loadSummary() {
-  if (!LEAGUE_ID || !TEAM_ID) {
-    showError('Missing league_id/team_id - start from the create-league wizard.');
+  if (!LEAGUE_ID) {
+    showError('Missing league_id - start from the create-league wizard.');
     return;
   }
   try {
-    const [league, team] = await Promise.all([
+    const [league, teams, conferences] = await Promise.all([
       api(`/leagues/${LEAGUE_ID}`),
-      api(`/teams/${TEAM_ID}`),
+      api(`/leagues/${LEAGUE_ID}/teams`).catch(() => []),
+      api(`/leagues/${LEAGUE_ID}/conferences`),
     ]);
+    const mine = teams.find(t => String(t.id) === TEAM_ID);
+    document.getElementById('board-link').href = `/static/recruiting-board.html?league_id=${LEAGUE_ID}`;
+    const st = await api(`/recruiting/league/${LEAGUE_ID}`);
+    const len = st.period_seconds % 86400 === 0 ? `${st.period_seconds / 86400} day(s)` : st.period_seconds % 3600 === 0 ? `${st.period_seconds / 3600} hour(s)` : st.period_seconds % 60 === 0 ? `${st.period_seconds / 60} minute(s)` : `${st.period_seconds} second(s)`;
+    document.getElementById('schedule-line').textContent = (league.draft_scheduled_at
+      ? `Starts ${new Date(league.draft_scheduled_at + 'Z').toLocaleString()}`
+      : 'No start time was set - the commissioner starts it manually') + ` - ${st.total_periods} weeks of ${len} each.`;
     document.getElementById('summary').textContent =
-      `"${team.name}" is set up in "${league.name}". Once every team is ready, start the recruiting period below.`;
+      `${mine ? `"${mine.name}" is set up in ` : ''}"${league.name}" - ${teams.length} of ${league.size} teams.`;
+    document.getElementById('conference-grid').innerHTML = conferences.map(c => `
+      <div>
+        <div class="card-kicker">${esc(c.name)}</div>
+        <ul style="margin:6px 0 0;padding-left:18px;font-size:13px">
+          ${teams.filter(t => t.conference_id === c.id).map(t =>
+            `<li>${esc(t.name)}${t.is_ai_owned ? ' <span class="text-muted">(AI)</span>' : ' <strong>(you)</strong>'}</li>`).join('') || '<li class="text-muted">empty</li>'}
+        </ul>
+      </div>`).join('');
+    const full = teams.length >= league.size;
+    document.getElementById('fill-ai-btn').disabled = full;
+    document.getElementById('fill-hint').textContent = full
+      ? 'League is full.'
+      : `Adds ${league.size - teams.length} AI teams, spread evenly across the three program sizes.`;
   } catch (e) {
     showError(`Failed to load: ${e.message}`);
   }
 }
 
+document.getElementById('fill-ai-btn').onclick = async () => {
+  showError('');
+  try {
+    const created = await FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`);
+    showResult(`Added ${created.length} AI teams.`);
+    await loadSummary();
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
 document.getElementById('start-btn').onclick = async () => {
   showError('');
-  const roundSeconds = Number(document.getElementById('round-seconds').value) || 30;
   try {
-    const auction = await api('/auctions/start', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({league_id: Number(LEAGUE_ID), round_seconds: roundSeconds}),
-    });
-    showResult('Recruiting period started - taking you to the board...');
-    setTimeout(() => {
-      location.href = `/static/auction-board.html?league_id=${LEAGUE_ID}&auction_id=${auction.id}`;
-    }, 800);
+    await FSC.post('/recruiting/start', {league_id: Number(LEAGUE_ID)});
+    location.href = `/static/recruiting-board.html?league_id=${LEAGUE_ID}`;
   } catch (e) {
     showError(e.message);
   }

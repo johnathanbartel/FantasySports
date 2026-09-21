@@ -52,7 +52,7 @@
       <div class="field">
         <label for="commissioner-id">Your user ID (commissioner)</label>
         <input type="number" id="commissioner-id" min="1" value="1">
-        <span class="hint">No sign-in yet on this platform - enter the numeric user id you're testing as.</span>
+        <span class="hint">Dev sign-in (no password yet): enter the numeric user id you're testing as. You'll be signed in as this user.</span>
       </div>
 
       <div style="display:flex;gap:var(--space-4)">
@@ -79,17 +79,28 @@
           <label class="choice-card" id="choice-recruit">
             <input type="radio" name="draft-type" value="recruit">
             <span>
-              <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);display:block">Recruiting period</span>
-              <span class="text-muted" style="font-size:13px">A timed, sealed-bid auction that opens whenever the commissioner is ready - teams nominate and bid instead of taking turns.</span>
+              <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight);display:block">Recruiting draft</span>
+              <span class="text-muted" style="font-size:13px">A series of bidding weeks (one per roster spot): in any week, any team can bid on any player, and bids are processed when each week ends.</span>
             </span>
           </label>
         </div>
       </div>
 
+      <div class="field" id="period-length-field" style="display:none">
+        <label for="period-length">How long is each week of recruiting?</label>
+        <div style="display:flex;gap:var(--space-2)">
+          <input type="number" id="period-length" min="1" value="1" style="width:120px;padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <select id="period-unit" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+            <option value="1">seconds</option><option value="60">minutes</option><option value="3600" selected>hours</option><option value="86400">days</option>
+          </select>
+        </div>
+        <span class="hint">The recruiting draft runs one week per roster spot (the "Draft rounds" number above - 20 weeks for a 20-man roster). Any team can bid on any player in any week; bids are processed when each week ends. Your program's budget is weekly and accumulates.</span>
+      </div>
+
       <div class="field" id="draft-schedule-field">
-        <label for="draft-scheduled-at">When is your snake draft scheduled?</label>
+        <label for="draft-scheduled-at" id="draft-scheduled-label">When is your snake draft scheduled?</label>
         <input type="datetime-local" id="draft-scheduled-at">
-        <span class="hint">Optional - you can set this later, but teams will see "not yet scheduled" until you do.</span>
+        <span class="hint" id="draft-scheduled-hint">Optional - you can set this later, but teams will see "not yet scheduled" until you do.</span>
       </div>
 
       <button class="btn btn-primary btn-block" id="create-league-btn">Continue to team setup</button>
@@ -106,9 +117,9 @@
       <div class="field">
         <label for="program-size">Program size</label>
         <select id="program-size">
-          <option value="large">Large - Win the championship</option>
+          <option value="large" selected>Large - Win the championship</option>
           <option value="moderate">Moderate - Make the playoffs</option>
-          <option value="small" selected>Small - Win the conference</option>
+          <option value="small">Small - Win the conference</option>
         </select>
         <span class="hint">Sets your recruiting/auction budget, conference, and season goal.</span>
       </div>
@@ -141,15 +152,9 @@
   </div>
 </div>
 
+<script src="/static/session.js"></script>
 <script>
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `${res.status} ${res.statusText}`);
-  }
-  return res.status === 204 ? null : res.json();
-}
+const api = FSC.api;
 
 function showError(msg) {
   const el = document.getElementById('error-banner');
@@ -166,7 +171,13 @@ function selectedDraftType() {
 function updateDraftTypeCards() {
   document.getElementById('choice-snake').classList.toggle('selected', selectedDraftType() === 'snake');
   document.getElementById('choice-recruit').classList.toggle('selected', selectedDraftType() === 'recruit');
-  document.getElementById('draft-schedule-field').style.display = selectedDraftType() === 'snake' ? 'flex' : 'none';
+  const isRecruit = selectedDraftType() === 'recruit';
+  document.getElementById('period-length-field').style.display = isRecruit ? 'flex' : 'none';
+  document.getElementById('draft-scheduled-label').textContent = isRecruit
+    ? 'When does the recruiting draft start?' : 'When is your snake draft scheduled?';
+  document.getElementById('draft-scheduled-hint').textContent = isRecruit
+    ? 'Week 1 opens at this time. Leave blank to start it manually.'
+    : 'Optional - you can set this later, but teams will see "not yet scheduled" until you do.';
 }
 document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = updateDraftTypeCards);
 updateDraftTypeCards();
@@ -189,17 +200,21 @@ document.getElementById('create-league-btn').onclick = async () => {
   const scheduledRaw = document.getElementById('draft-scheduled-at').value;
 
   try {
+    const commissionerId = Number(document.getElementById('commissioner-id').value);
+    await FSC.signIn(commissionerId);
+    document.getElementById('owner-id').value = commissionerId;
     league = await api('/leagues', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         name,
-        commissioner_user_id: Number(document.getElementById('commissioner-id').value),
+        commissioner_user_id: commissionerId,
         universe_codes: ['ncaaf'], // NCAAF is the only live universe today - see index.html
         size: Number(document.getElementById('league-size').value),
         draft_rounds: Number(document.getElementById('draft-rounds').value),
         program_size_mode: 'team_choice',
         draft_type: draftType,
-        draft_scheduled_at: draftType === 'snake' && scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
+        draft_scheduled_at: scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
+        recruiting_period_seconds: Math.max(1, Math.round(Number(document.getElementById('period-length').value) * Number(document.getElementById('period-unit').value))),
       }),
     });
     document.getElementById('team-league-summary').textContent =

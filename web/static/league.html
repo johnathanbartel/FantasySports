@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>League Home</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);max-width:100%}
+  .tabs{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--color-divider);margin-bottom:var(--space-5)}
+  .tab{padding:10px 16px;cursor:pointer;font-family:var(--font-heading);font-size:15px;border:0;background:none;color:color-mix(in srgb, var(--color-text) 65%, transparent);border-bottom:3px solid transparent;margin-bottom:-1px}
+  .tab:hover{color:var(--color-text)}
+  .tab.on{color:var(--color-text);border-bottom-color:var(--color-accent)}
+  .grid2{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:var(--space-5);align-items:start}
+  .stat{padding:var(--space-3) var(--space-4);gap:2px}
+  .stat .v{font-family:var(--font-heading);font-size:22px}
+  .stat .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 55%, transparent)}
+  .stat .s{font-size:12px;color:color-mix(in srgb, var(--color-text) 60%, transparent)}
+  .chip{padding:5px 12px;border-radius:999px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-size:13px;cursor:pointer;font-family:var(--font-body)}
+  .chip.on{background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)}
+  .chip .n{opacity:.65;margin-left:4px}
+  .row{display:flex;align-items:center;gap:var(--space-3);padding:7px 0;border-top:1px solid var(--color-divider);font-size:14px}
+  .row:first-child{border-top:0}
+  .pts{font-variant-numeric:tabular-nums;text-align:right;min-width:52px}
+  .muted{color:color-mix(in srgb, var(--color-text) 60%, transparent)}
+  th.sort{cursor:pointer;user-select:none}
+  th.sort:hover{color:var(--color-accent)}
+  .note{background:color-mix(in srgb, var(--color-accent) 9%, transparent);border:1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);padding:var(--space-3);border-radius:var(--radius-md);font-size:13px}
+  .rk{font-size:12px;font-weight:700;color:var(--color-accent);margin-right:5px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;border:1px solid var(--color-divider)}
+  .pill.ai{border-color:var(--color-accent);color:var(--color-accent)}
+  @media (max-width: 860px){ .grid2{grid-template-columns:minmax(0,1fr)} }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand" id="nav-brand">League</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/commissioner.html" id="nav-cm">Commissioner mode</a>
+    </div>
+  </div>
+
+  <div style="max-width:1160px;margin:0 auto;padding:var(--space-6) var(--space-5) var(--space-8)">
+
+    <div style="margin-bottom:var(--space-4)">
+      <div class="card-kicker" id="kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
+      <h1 style="margin:0" id="league-name">&nbsp;</h1>
+    </div>
+
+    <div class="tabs" id="tabs"></div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div id="signin-box" style="display:none;gap:6px;align-items:center;margin-bottom:var(--space-4)">
+      <select id="signin-select" class="inp"></select>
+      <button class="btn btn-primary" id="signin-btn">Sign in</button>
+    </div>
+
+    <div id="content"></div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id');
+const api = FSC.api;
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const POS_LABEL = {PK: 'K'};
+let LAST = 'last season';   // the year the fantasy points are from (set from /config)
+const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'PK', 'DL', 'LB', 'DB'];
+const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
+const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
+const TABS = [['home', 'Home'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
+              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
+
+let me = null, ov = null, canActForAi = false, isCommissioner = false;
+let tab = 'home';
+let teamsById = {};
+let activeTeamId = null;              // the team the Roster / Transactions tabs are looking at
+let cache = {};                       // per-tab data
+const view = {                        // per-tab UI state that survives re-renders
+  fa: {pos: '', q: '', sort: 'points'}, log: {kind: '', team: ''}, stats: {pos: '', q: '', who: 'all', sort: 'last_season_points', dir: -1},
+};
+
+function showError(m) { const el = document.getElementById('error-banner'); el.textContent = m; el.style.display = m ? 'block' : 'none'; }
+function showResult(m) { const el = document.getElementById('result-banner'); el.textContent = m; el.style.display = m ? 'block' : 'none'; }
+const $ = (id) => document.getElementById(id);
+
+// ---- who can do what -----------------------------------------------------------------
+const myTeam = () => ov.teams.find(t => !t.is_ai_owned && t.owner_user_id === me);
+const canManage = (t) => t && ((!t.is_ai_owned && t.owner_user_id === me) || (t.is_ai_owned && canActForAi));
+const activeTeam = () => teamsById[activeTeamId];
+const posTag = (p) => `<span class="tag tag-neutral" style="min-width:34px;justify-content:center">${POS_LABEL[p] || p || '-'}</span>`;
+
+function renderTabs() {
+  $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab${tab === id ? ' on' : ''}" data-tab="${id}">${label}</button>`).join('');
+  $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => go(b.dataset.tab));
+}
+
+async function go(id, extra = {}) {
+  tab = id;
+  if (extra.team_id) activeTeamId = extra.team_id;
+  showError(''); showResult('');
+  const u = new URL(location.href); u.searchParams.set('tab', id);
+  if (activeTeamId && (id === 'roster' || id === 'transactions')) u.searchParams.set('team_id', activeTeamId); else u.searchParams.delete('team_id');
+  history.replaceState(null, '', u);
+  renderTabs();
+  $('content').innerHTML = '<p class="muted">Loading...</p>';
+  try { await ({home: renderHome, roster: renderRoster, transactions: renderTransactions, schedule: renderSchedule,
+                standings: renderStandings, stats: renderStats, teams: renderTeams, rankings: renderRankings})[id](); }
+  catch (e) { showError(e.message); $('content').innerHTML = ''; }
+}
+
+async function refreshOverview() {
+  ov = await api(`/leagues/${LEAGUE_ID}/overview`);
+  teamsById = Object.fromEntries(ov.teams.map(t => [t.id, t]));
+}
+
+function draftLine() {
+  const d = ov.draft;
+  if (d.status === 'closed') return 'Recruiting complete';
+  if (d.status === 'open') return d.phase === 'buffer' ? `Recruiting - between weeks (week ${d.current_period} next)` : `Recruiting - week ${d.current_period} of ${d.total_periods}`;
+  return 'Recruiting not started';
+}
+
+function statCard(label, value, sub) { return `<div class="card elev-sm stat"><div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`; }
+
+// ---- HOME ----------------------------------------------------------------------------------
+async function renderHome() {
+  await refreshOverview();
+  const [log, standings] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`), api(`/leagues/${LEAGUE_ID}/standings`)]);
+  const played = standings.some(s => s.wins + s.losses + s.ties > 0);
+  const mine = myTeam();
+  const openSpots = ov.teams.reduce((n, t) => n + t.open_spots, 0);
+  const fillNeeded = ov.free_agency_open && ov.ai_teams_with_open_spots > 0;
+  $('content').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
+      ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`)}
+      ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`)}
+      ${statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine())}
+      ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? 'Fill open roster spots' : 'Opens when recruiting ends')}
+      ${statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`)}
+    </div>
+    ${fillNeeded && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+      <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.</span>
+      <button class="btn btn-primary" id="run-fill">Run AI free agency now</button></div>` : ''}
+    <div class="grid2">
+      <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Recent transactions</h3><a href="#" id="all-txns">See all</a></div>
+        <div style="margin-top:var(--space-2)">${log.length ? log.map(txnRow).join('') : '<p class="muted" style="margin:var(--space-2) 0 0">No transactions yet.</p>'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:var(--space-4)">
+        ${mine ? `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
+          <div class="card-kicker">Your team</div><h3 style="margin:2px 0 4px">${tn(mine.id)}</h3>
+          <div class="muted" style="font-size:13px">${esc(mine.program_size)} · ${esc(mine.conference_name || '')} · ${esc(mine.season_goal)}</div>
+          <div style="margin:var(--space-2) 0">${mine.roster_count} / ${ov.roster_size} players${mine.open_spots ? ` · <strong>${mine.open_spots} open</strong>` : ''}</div>
+          <div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn btn-secondary" data-go="roster" data-team="${mine.id}">Roster</button>
+            <a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${mine.id}">Set lineup</a>
+            ${mine.open_spots && ov.free_agency_open ? `<button class="btn btn-primary" data-go="transactions" data-team="${mine.id}">Fill through free agency</button>` : ''}</div></div>`
+          : `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)"><div class="card-kicker">Commissioner</div><h3 style="margin:2px 0 4px">${esc(ov.commissioner_name || 'Commissioner')}</h3>
+             <div class="muted" style="font-size:13px">${isCommissioner ? 'You run this league' + (canActForAi ? ' and can act for its AI teams (commissioner mode).' : '.') : 'You have no team in this league.'}</div></div>`}
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Standings</h3><a href="#" id="all-standings">Full standings</a></div>
+          ${played ? standings.slice(0, 5).map((s, i) => `<div class="row"><span class="muted" style="width:18px">${i + 1}</span><span style="flex:1">${tn(s.team_id, s.team_name)}</span><strong>${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</strong></div>`).join('')
+            : '<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">No games played yet. Standings fill in once weekly matchups are scored.</p>'}
+        </div>
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
+          <h3 style="margin:0 0 var(--space-2)">Quick links</h3>
+          <div style="display:flex;flex-direction:column;gap:6px;font-size:14px">
+            <a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>
+            <a href="/static/lineup.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Lineup</a>
+            ${isCommissioner ? `<a href="/static/commissioner.html?league_id=${LEAGUE_ID}">Commissioner mode</a>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  bindNav();
+  if ($('all-txns')) $('all-txns').onclick = (e) => { e.preventDefault(); go('transactions'); };
+  if ($('all-standings')) $('all-standings').onclick = (e) => { e.preventDefault(); go('standings'); };
+  if ($('run-fill')) $('run-fill').onclick = runAiFill;
+}
+
+function bindNav() {
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go, b.dataset.team ? {team_id: Number(b.dataset.team)} : {}));
+}
+
+async function runAiFill() {
+  try {
+    const r = await FSC.post(`/leagues/${LEAGUE_ID}/free-agency/ai-fill`);
+    await go(tab);
+    showResult(`AI free agency ran: ${r.total} free agent${r.total === 1 ? '' : 's'} signed.`);
+  } catch (e) { showError(e.message); }
+}
+
+// ---- transaction rows (Home + Transactions) ---------------------------------------------------
+function txnText(x) {
+  const t = teamsById[x.team_id]?.name || 'Team ' + x.team_id;
+  const who = `<strong>${esc(x.display_name)}</strong> <span class="muted">${POS_LABEL[x.position] || x.position || ''} · ${esc(x.real_team || '')}</span>`;
+  if (x.kind === 'recruited') return `<strong>${esc(t)}</strong> recruited ${who} <span class="muted">(week ${x.week})</span>`;
+  if (x.kind === 'added') return `<strong>${esc(t)}</strong> signed free agent ${who} <span class="muted">for ${money(x.price)}</span>`;
+  return `<strong>${esc(t)}</strong> dropped ${who}`;
+}
+function txnBadge(x) {
+  if (x.kind === 'recruited') return '<span class="pill">Recruiting</span>';
+  const why = {ai_fill: 'AI required fill', user: 'Owner', commissioner: 'Commissioner'}[x.reason] || '';
+  return `<span class="pill ${x.reason === 'ai_fill' ? 'ai' : ''}">${x.kind === 'added' ? 'Signed' : 'Dropped'}${why ? ' · ' + why : ''}</span>`;
+}
+function txnRow(x) { return `<div class="row"><span style="flex:1;font-size:13px">${txnText(x)}</span>${txnBadge(x)}</div>`; }
+
+// ---- ROSTER ----------------------------------------------------------------------------------------
+function teamPicker(id) {
+  const mineFirst = ov.teams.slice().sort((a, b) => (canManage(b) ? 1 : 0) - (canManage(a) ? 1 : 0) || a.id - b.id);
+  return `<select id="${id}" class="inp">${mineFirst.map(t => `<option value="${t.id}"${t.id === activeTeamId ? ' selected' : ''}>${esc(t.name)}${t.is_ai_owned ? ' (AI)' : ''}</option>`).join('')}</select>`;
+}
+function ensureActiveTeam() {
+  if (!activeTeamId || !teamsById[activeTeamId]) {
+    const q = Number(params.get('team_id'));
+    activeTeamId = (teamsById[q] && q) || myTeam()?.id || (canActForAi ? ov.teams.find(t => t.is_ai_owned)?.id : null) || ov.teams[0]?.id;
+  }
+}
+
+async function renderRoster() {
+  await refreshOverview(); ensureActiveTeam();
+  const t = activeTeam();
+  const roster = await api(`/teams/${t.id}/roster`);
+  const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
+  roster.sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
+  const counts = {}; roster.forEach(r => counts[r.position] = (counts[r.position] || 0) + 1);
+  const open = ov.roster_size - roster.length;
+  $('content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.conference_name || '')} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
+      <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">${teamPicker('team-pick')}
+        ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Set lineup</a>` : ''}</div>
+    </div>
+    <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      ${statCard('Roster', `${roster.length} / ${ov.roster_size}`, open > 0 ? `${open} open spot${open === 1 ? '' : 's'}` : 'Full')}
+      ${POSITIONS.map(p => statCard(POS_LABEL[p] || p, counts[p] || 0, '')).join('')}
+    </div>
+    ${open > 0 ? `<div class="note" style="margin-bottom:var(--space-4)">${ov.free_agency_open
+        ? `${open} open spot${open === 1 ? '' : 's'}. Open spots are filled through <a href="#" data-go="transactions">free agency on the Transactions tab</a>${t.is_ai_owned ? ' - AI teams are required to fill theirs, and do so automatically.' : '.'}`
+        : 'Teams may recruit fewer players than the roster size. Free agency opens when recruiting ends, and open spots are filled there.'}</div>` : ''}
+    <div class="card elev-sm" style="padding:var(--space-3) var(--space-5)">
+      ${roster.length ? roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
+        <span class="pill">${r.acquired_via === 'free_agency' ? 'Free agency' : r.acquired_via === 'recruiting' ? 'Recruited' : esc(r.acquired_via || '')}</span>
+        <span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span></div>`).join('')
+        : '<p class="muted" style="margin:var(--space-3) 0">No players yet.</p>'}
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:var(--space-2)">Points are last season's (${LAST}) fantasy points, ESPN standard scoring. Defense groups have none.</p>`;
+  $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('roster'); };
+  bindNav();
+  document.querySelectorAll('a[data-go]').forEach(a => a.onclick = (e) => { e.preventDefault(); go(a.dataset.go); });
+}
+
+// ---- TRANSACTIONS ------------------------------------------------------------------------------------
+async function renderTransactions() {
+  await refreshOverview(); ensureActiveTeam();
+  const t = activeTeam();
+  const [fa, log, sum, roster] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/free-agents`), api(`/leagues/${LEAGUE_ID}/transactions`),
+    api(`/teams/${t.id}/free-agency/summary`), api(`/teams/${t.id}/roster`),
+  ]);
+  cache.tx = {fa, log, sum, roster, team: t};
+  $('content').innerHTML = `
+    <div class="note" style="margin-bottom:var(--space-4)">
+      Teams may recruit fewer players than the roster size. <strong>Open roster spots are filled through free agency</strong>, which opens when recruiting ends.
+      AI teams are required to use it to fill their rosters, and do so automatically the moment recruiting closes.
+      ${fa.open ? `<span class="muted"> ${esc(fa.price_note)}</span>` : ''}
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div><div class="card-kicker">Acting for</div>${teamPicker('team-pick')}</div>
+      <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap">
+        <span style="font-size:14px"><strong>${sum.roster_count} / ${sum.roster_size}</strong> players${sum.open_spots ? ` · <strong>${sum.open_spots} open</strong>` : ''}</span>
+        ${sum.fa_money != null ? `<span style="font-size:14px" title="Season Budget (Total) less Roster Cost">Free-agency money: <strong>${money(sum.fa_money)}</strong></span>` : ''}
+        ${isCommissioner && fa.open && ov.ai_teams_with_open_spots > 0 ? '<button class="btn btn-secondary" id="run-fill">Run AI free agency now</button>' : ''}
+      </div>
+    </div>
+    ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">
+      <div>
+        <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
+        <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)"><input id="fa-q" class="inp" placeholder="Search players or schools..." style="flex:1" value="${esc(view.fa.q)}">
+          <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option><option value="price">Sort: asking price (low)</option><option value="name">Sort: name</option></select></div>
+        <div id="fa-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-2)"></div>
+        <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="fa-list"></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 var(--space-2)">${tn(t.id)} roster</h3>
+        <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="tx-roster"></div>
+      </div>
+    </div>` : `<div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)"><div class="card-title">Free agency is closed</div><p class="muted" style="margin:var(--space-2) 0 0">It opens when the recruiting draft ends (${esc(draftLine())}).</p></div>`}
+    <h3 style="margin:0 0 var(--space-2)">Transaction log</h3>
+    <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2);flex-wrap:wrap">
+      <select id="log-kind" class="inp"><option value="">All activity</option><option value="recruited">Recruited</option><option value="added">Signed</option><option value="dropped">Dropped</option></select>
+      <select id="log-team" class="inp"><option value="">All teams</option>${ov.teams.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select>
+    </div>
+    <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="log-list"></div>`;
+  $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('transactions'); };
+  if ($('run-fill')) $('run-fill').onclick = runAiFill;
+  $('log-kind').value = view.log.kind; $('log-team').value = view.log.team;
+  $('log-kind').onchange = () => { view.log.kind = $('log-kind').value; drawLog(); };
+  $('log-team').onchange = () => { view.log.team = $('log-team').value; drawLog(); };
+  if (fa.open) {
+    $('fa-sort').value = view.fa.sort;
+    $('fa-q').oninput = () => { view.fa.q = $('fa-q').value; drawFa(); };
+    $('fa-sort').onchange = () => { view.fa.sort = $('fa-sort').value; drawFa(); };
+    drawFa(); drawTxRoster();
+  }
+  drawLog();
+}
+
+function drawFa() {
+  const {fa, sum, team} = cache.tx;
+  const f = view.fa, q = f.q.trim().toLowerCase();
+  const rows = fa.players.filter(p => (!f.pos || p.position === f.pos) && (!q || p.display_name.toLowerCase().includes(q) || (p.real_team || '').toLowerCase().includes(q)));
+  rows.sort((a, b) => f.sort === 'price' ? a.asking_price - b.asking_price || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)
+    : f.sort === 'name' ? a.display_name.localeCompare(b.display_name) : (b.last_season_points ?? -1) - (a.last_season_points ?? -1) || a.display_name.localeCompare(b.display_name));
+  const chips = $('fa-chips');
+  chips.innerHTML = [['', 'All', fa.players.length]].concat(POSITIONS.map(p => [p, POS_LABEL[p] || p, fa.players.filter(x => x.position === p).length])).map(([v, l, n]) =>
+    `<button class="chip${f.pos === v ? ' on' : ''}" data-pos="${v}">${l}<span class="n">${n}</span></button>`).join('');
+  chips.querySelectorAll('.chip').forEach(b => b.onclick = () => { f.pos = b.dataset.pos; drawFa(); });
+  const can = canManage(team) && sum.open_spots > 0;
+  $('fa-list').innerHTML = rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
+      <span style="flex:1;min-width:0"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+      <span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>
+      <button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button></div>`).join('')
+    + (rows.length > 50 ? `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing 50 of ${rows.length} - search or pick a position to narrow.</p>` : '')
+    || '<p class="muted" style="margin:var(--space-2) 0">No free agents match.</p>';
+  $('fa-list').querySelectorAll('[data-add]').forEach(b => b.onclick = () => faAct('add', Number(b.dataset.add)));
+}
+
+function drawTxRoster() {
+  const {roster, team} = cache.tx;
+  const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
+  const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
+  $('tx-roster').innerHTML = sorted.length ? sorted.map(r => `<div class="row">${posTag(r.position)}
+    <span style="flex:1;min-width:0"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
+    <span class="pts muted">${pts(r.last_season_points)}</span>
+    <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
+    : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
+  $('tx-roster').querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
+    const r = roster.find(x => x.draftable_asset_id === Number(b.dataset.drop));
+    if (confirm(`Drop ${r.display_name}? He goes back to the free-agent pool and you are not refunded what he cost.`)) faAct('drop', r.draftable_asset_id);
+  });
+}
+
+function drawLog() {
+  const {log} = cache.tx;
+  const rows = log.filter(x => (!view.log.kind || x.kind === view.log.kind) && (!view.log.team || String(x.team_id) === view.log.team));
+  $('log-list').innerHTML = rows.slice(0, 120).map(txnRow).join('') || '<p class="muted" style="margin:var(--space-2) 0">Nothing to show.</p>';
+  if (rows.length > 120) $('log-list').insertAdjacentHTML('beforeend', `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing the 120 most recent of ${rows.length}.</p>`);
+}
+
+async function faAct(kind, assetId) {
+  showError(''); showResult('');
+  const t = cache.tx.team;
+  try {
+    const r = await FSC.post(`/teams/${t.id}/free-agency/${kind}`, {draftable_asset_id: assetId});
+    await go('transactions');
+    showResult(kind === 'add' ? `Signed ${r.display_name} for ${money(r.price)}.` : `Dropped ${r.display_name}.`);
+  } catch (e) { showError(e.message); }
+}
+
+// ---- SCHEDULE: preseason stage + scoreboard ------------------------------------------------------------
+// Team scores are fantasy points (platform/scoring_scale.py); per-player numbers are raw EPA credit.
+const fmt = (x) => (x === null || x === undefined) ? '-' : (x > 0 ? '+' : '') + x.toFixed(2);
+const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
+const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
+
+async function renderSchedule() {
+  await refreshOverview();
+  const [state, matchups, champ] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/schedule/state`), api(`/leagues/${LEAGUE_ID}/matchups`), api(`/leagues/${LEAGUE_ID}/championships`)]);
+  const managed = ov.teams.filter(canManage);
+  if (view.schedTeam === undefined || !managed.some(t => t.id === view.schedTeam)) view.schedTeam = (managed.find(t => !t.is_ai_owned) || managed[0])?.id ?? null;
+  const mySchedule = view.schedTeam ? await api(`/teams/${view.schedTeam}/schedule`) : null;
+
+  const banner = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
+    <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center">
+      <div><div class="card-kicker">Preseason schedule stage</div>
+        <strong>${!state.has_schedule ? 'No schedule yet' : state.status === 'open' ? 'Open - teams can still arrange different opponents' : 'Closed - the schedule is set'}</strong>
+        <div class="muted" style="font-size:13px;margin-top:2px">Every team starts with a premade schedule for weeks 1-${state.regular_weeks}. A team can ask another team to play it instead (attaching in-game cash if it wants);
+          cash only moves if the request is accepted. AI teams answer when the commissioner closes the stage. Week ${state.championship_week} is conference championship week.</div></div>
+      <div style="display:flex;gap:var(--space-2)">
+        ${isCommissioner && !state.has_schedule ? '<button class="btn btn-primary" id="mk-sched">Create premade schedule</button>' : ''}
+        ${isCommissioner && state.has_schedule && state.status === 'open' ? '<button class="btn btn-secondary" id="close-stage">Close schedule stage</button>' : ''}</div></div></div>`;
+
+  const nameCell = (id) => tn(id);
+  let mine = '';
+  if (mySchedule && state.has_schedule) {
+    const t = teamsById[view.schedTeam];
+    mine = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4);overflow-x:auto">
+      <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:baseline">
+        <h3 style="margin:0">${managed.length > 1 ? `<select id="sched-team" class="inp">${managed.map(x => `<option value="${x.id}"${x.id === view.schedTeam ? ' selected' : ''}>${esc(x.name)}${x.is_ai_owned ? ' (AI)' : ''}</option>`).join('')}</select>` : esc(t.name)} - schedule</h3>
+        <span class="muted" style="font-size:13px">Cash you can still offer: <strong>${money(mySchedule.cash_available)}</strong> (free-agency money less your open offers)</span></div>
+      <table class="table" style="margin-top:var(--space-2)"><thead><tr><th>Week</th><th>Starts</th><th>Opponent</th><th>Change opponent</th><th>Cash offer</th><th></th></tr></thead><tbody>
+      ${mySchedule.weeks.map(w => {
+        const out = w.outgoing, inc = w.incoming || [];
+        const status = w.agreement ? '<span class="pill ai">Agreed</span>' : '<span class="pill">Premade</span>';
+        const change = w.editable
+          ? `<select class="inp" data-pick="${w.week_id}"><option value="">- keep ${esc(w.opponent_name || 'bye')} -</option>${w.available.filter(a => a.id !== w.opponent_id).map(a => `<option value="${a.id}"${out && out.to_team_id === a.id ? ' selected' : ''}>${teamsById[a.id]?.poll_rank ? '#' + teamsById[a.id].poll_rank + ' ' : ''}${esc(a.name)}</option>`).join('')}</select>`
+          : (w.agreement ? '<span class="muted">Agreement in place</span>' : '<span class="muted">Locked</span>');
+        const cash = w.editable ? `<input class="inp" type="number" min="0" step="1" style="width:90px" data-offer="${w.week_id}" value="${out ? out.offer_amount : 0}">` : '';
+        const action = w.editable ? `<button class="btn btn-secondary" data-send="${w.week_id}">Send request</button>` : '';
+        const pending = out ? `<div class="muted" style="font-size:12px">Asked ${esc(out.to_team_name)}${out.offer_amount ? ' with ' + money(out.offer_amount) : ''} - waiting <a href="#" data-withdraw="${out.id}">Withdraw</a></div>` : '';
+        const incoming = inc.map(r => `<div style="font-size:13px;margin-top:4px"><strong>${esc(r.from_team_name)}</strong> asks you to play${r.offer_amount ? ' and offers <strong>' + money(r.offer_amount) + '</strong>' : ''}
+            <button class="btn btn-primary" data-accept="${r.id}">Accept</button> <button class="btn btn-ghost" data-decline="${r.id}">Decline</button></div>`).join('');
+        return `<tr><td>${w.week_number}</td><td class="muted">${esc(w.start_date || '')}</td><td>${w.opponent_id ? nameCell(w.opponent_id) : '<span class="muted">Bye</span>'} ${status}${pending}${incoming}</td><td>${change}</td><td>${cash}</td><td>${action}</td></tr>`;
+      }).join('')}
+      </tbody></table></div>`;
+  }
+
+  // ---- scoreboard
+  const weeks = await api(`/leagues/${LEAGUE_ID}/weeks`);
+  const withGames = weeks.filter(w => matchups.some(m => m.week_id === w.id));
+  let board = '';
+  if (withGames.length) {
+    if (view.schedWeek === undefined || !withGames.some(w => w.id === view.schedWeek))
+      view.schedWeek = (withGames.filter(w => w.scored).pop() || withGames[0]).id;
+    const wk = withGames.find(w => w.id === view.schedWeek);
+    const list = matchups.filter(m => m.week_id === wk.id);
+    const card = (m, i) => {
+      const win = (id) => m.winner_team_id === id ? 'font-weight:700' : '';
+      return `<div class="card elev-sm" data-m="${i}" style="padding:var(--space-3) var(--space-4);cursor:pointer">
+        ${m.championship ? '<div class="card-kicker">Conference championship</div>' : ''}
+        <div class="row"><span style="flex:1;${win(m.team_a_id)}">${tn(m.team_a_id, m.team_a_name)}</span><span class="pts" style="${win(m.team_a_id)}">${m.scored ? m.team_a_score.toFixed(1) : ''}</span></div>
+        <div class="row"><span style="flex:1;${win(m.team_b_id)}">${tn(m.team_b_id, m.team_b_name)}</span><span class="pts" style="${win(m.team_b_id)}">${m.scored ? m.team_b_score.toFixed(1) : ''}</span></div>
+        ${m.scored && m.winner_team_id === null ? '<div class="muted" style="font-size:12px">Tie</div>' : ''}</div>`;
+    };
+    board = `
+      <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-3)">
+        <select id="sched-week" class="inp">${withGames.map(w => `<option value="${w.id}"${w.id === wk.id ? ' selected' : ''}>Week ${w.week_number}${w.week_number === state.championship_week ? ' - conference championships' : ''} - ${w.start_date || ''}${w.scored ? '' : ' (not played)'}</option>`).join('')}</select>
+        <span class="muted" style="font-size:13px">Team scores are fantasy points (starters only), scaled so a league's season average matches the NCAA's. Player numbers are raw EPA credit. ${wk.locked ? 'This week has started: lineups are locked' + (canActForAi ? ' - as a commissioner-mode commissioner you can still change them.' : '.') : 'Lineups are open until this week starts.'}</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-3)">${list.map(card).join('')}</div>
+      <div id="m-detail" style="margin-top:var(--space-5)"></div>`;
+    view._list = list; view._wk = wk;
+  } else if (state.has_schedule) {
+    board = '<p class="muted">No games to show yet.</p>';
+  }
+
+  const champBox = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin:var(--space-4) 0">
+    <h3 style="margin:0 0 var(--space-2)">Week ${state.championship_week}: conference championships</h3>
+    ${champ.ready ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--space-2)">${champ.games.map(g => `<div><span class="muted" style="font-size:12px">${esc(ov.teams.find(t => t.conference_id === g.conference_id)?.conference_name || '')}</span><br>${tn(g.team_a_id, g.team_a_name)} vs ${tn(g.team_b_id, g.team_b_name)}</div>`).join('')}</div>
+        ${champ.byes.length ? `<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">Bye - season over: ${champ.byes.map(b => tn(b.team_id, b.team_name)).join(', ')}</p>` : ''}`
+      : '<p class="muted" style="margin:0;font-size:14px">Set once weeks 1-9 are scored: within each conference the #1 team plays #2, #3 plays #4, and so on. In a conference with an odd number of teams the worst team gets a bye and its season is over.</p>'}</div>`;
+
+  $('content').innerHTML = banner + mine + board + champBox;
+  wireSchedule(state);
+}
+
+function wireSchedule(state) {
+  const act = async (fn) => { try { await fn(); await renderSchedule(); } catch (e) { showError(e.message); } };
+  if ($('mk-sched')) $('mk-sched').onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/schedule/auto`, {weeks: state.regular_weeks}));
+  if ($('close-stage')) $('close-stage').onclick = () => { if (confirm('Close the schedule stage? AI teams answer the requests made to them, all other open requests are declined, and nothing can change afterwards.')) act(async () => {
+    const r = await FSC.post(`/leagues/${LEAGUE_ID}/schedule/close`); showResult(`Stage closed: ${r.accepted} request${r.accepted === 1 ? '' : 's'} accepted by AI teams, ${r.declined} declined.`); }); };
+  if ($('sched-team')) $('sched-team').onchange = (e) => { view.schedTeam = Number(e.target.value); renderSchedule(); };
+  document.querySelectorAll('[data-send]').forEach(b => b.onclick = () => {
+    const wid = b.dataset.send, pick = document.querySelector(`[data-pick="${wid}"]`).value;
+    if (!pick) { showError('Choose a different team to ask first.'); return; }
+    act(() => FSC.post(`/teams/${view.schedTeam}/schedule/requests`, {week_id: Number(wid), to_team_id: Number(pick), offer_amount: Number(document.querySelector(`[data-offer="${wid}"]`).value || 0)}));
+  });
+  document.querySelectorAll('[data-withdraw]').forEach(a => a.onclick = (e) => { e.preventDefault(); act(() => FSC.api(`/schedule/requests/${a.dataset.withdraw}`, {method: 'DELETE'})); });
+  document.querySelectorAll('[data-accept]').forEach(b => b.onclick = () => act(() => FSC.post(`/schedule/requests/${b.dataset.accept}/respond`, {accept: true})));
+  document.querySelectorAll('[data-decline]').forEach(b => b.onclick = () => act(() => FSC.post(`/schedule/requests/${b.dataset.decline}/respond`, {accept: false})));
+  if ($('sched-week')) {
+    $('sched-week').onchange = (e) => { view.schedWeek = Number(e.target.value); view.schedMatchup = null; renderSchedule(); };
+    document.querySelectorAll('[data-m]').forEach(c => c.onclick = () => showMatchup(view._list[Number(c.dataset.m)], Number(c.dataset.m), view._wk));
+    if (view.schedMatchup !== undefined && view.schedMatchup !== null && view._list[view.schedMatchup]) showMatchup(view._list[view.schedMatchup], view.schedMatchup, view._wk);
+  }
+}
+
+async function showMatchup(m, index, wk) {
+  view.schedMatchup = index;
+  const [a, b] = await Promise.all([m.team_a_id, m.team_b_id].map(id => api(`/teams/${id}/week-breakdown?week_id=${m.week_id}`)));
+  const canEdit = (id) => teamsById[id] && ((!teamsById[id].is_ai_owned && teamsById[id].owner_user_id === me) || (teamsById[id].is_ai_owned && canActForAi));
+  const side = (t) => `<div class="card elev-sm" style="padding:var(--space-4);overflow-x:auto">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">${tn(t.team_id, t.team_name)}</h3><strong>${m.scored ? t.total_points.toFixed(1) + ' pts' : ''}</strong></div>
+      ${m.scored ? `<div class="muted" style="font-size:12px">starters' summed credit ${fmt(t.raw_credit)}</div>` : ''}
+      <table class="table"><thead><tr><th>Slot</th><th>Player</th><th>Team</th><th style="text-align:right">Credit</th></tr></thead><tbody>
+      ${t.starters.map(s => `<tr><td>${esc(s.slot_code)}</td><td><a href="#" data-play="${s.draftable_asset_id}" data-wk="${m.week_id}">${esc(s.display_name)}</a> <span class="muted">${esc(s.position || '')}</span></td>
+        <td class="muted">${esc(s.real_team || '')}${s.played ? '' : ' (no game)'}</td><td class="pts">${m.scored ? fmt(s.points) : ''}</td></tr>`).join('')}
+      </tbody></table>
+      ${canEdit(t.team_id) && (!wk.locked || canActForAi) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.team_id}&week_id=${m.week_id}">${wk.locked ? 'Change lineup retroactively' : 'Edit lineup'}</a>` : ''}
+    </div>`;
+  $('m-detail').innerHTML = `<div class="grid2">${side(a)}${side(b)}</div><div id="play-detail" style="margin-top:var(--space-4)"></div>`;
+  document.querySelectorAll('[data-play]').forEach(l => l.onclick = async (e) => {
+    e.preventDefault();
+    const d = await api(`/players/${l.dataset.play}/weekly-score?week_id=${l.dataset.wk}`);
+    $('play-detail').innerHTML = `<div class="card elev-sm" style="padding:var(--space-4)"><h3 style="margin:0 0 var(--space-2)">${esc(d.display_name)} - ${fmt(d.total_points)}</h3>
+      ${d.play_credits.length ? d.play_credits.map(c => `<div class="row" style="font-size:13px"><span class="pts" style="text-align:left;min-width:60px">${fmt(c.credit_points)}</span><span class="muted" style="min-width:90px">${esc(c.role)}</span><span style="flex:1">${esc(c.play_text || '')}</span></div>`).join('') : '<p class="muted" style="margin:0">No credited plays this week.</p>'}</div>`;
+  });
+}
+
+// ---- RANKINGS ---------------------------------------------------------------------------------------------
+async function renderRankings() {
+  await refreshOverview();
+  const p = await api(`/leagues/${LEAGUE_ID}/rankings`);
+  const wkHead = p.remaining_weeks.map(n => `<th style="text-align:right">Wk ${n}</th>`).join('');
+  $('content').innerHTML = `
+    <div class="note" style="margin-bottom:var(--space-4)">Rankings project each rostered player's EPA credit for the rest of the season (his season so far, shrunk toward his position's average and last season's rank) and rank teams by the credit of their best lineup over the remaining weeks.
+      The poll is built from that by ${p.voters} AI voters, each ranking his top ${p.size}. ${p.size} of ${p.epa_ranking.length} teams are ranked - the poll size is 40% of the league (at least 4, at most 25, never everyone).
+      ${p.as_of_week ? `As of week ${p.as_of_week}.` : 'Preseason - no games scored yet.'} Bye weeks and injuries aren't modelled yet.</div>
+    <div class="grid2">
+      <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);overflow-x:auto"><h3 style="margin:0 0 var(--space-2)">The poll</h3>
+        <table class="table"><thead><tr><th>#</th><th>Team</th><th style="text-align:right">Points</th><th style="text-align:right">1st</th><th style="text-align:right">EPA rank</th></tr></thead><tbody>
+        ${p.ranked.map(r => `<tr><td>${r.rank}</td><td>${esc(r.team_name)}</td><td class="pts">${r.points}</td><td class="pts">${r.first_place_votes || ''}</td><td class="pts">${r.epa_rank}</td></tr>`).join('')}</tbody></table>
+        <p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">${p.others.length ? 'Others receiving votes: ' + p.others.map(o => `${esc(o.team_name)} ${o.points}`).join(', ') : 'No other teams received votes.'}</p></div>
+      <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);overflow-x:auto"><h3 style="margin:0 0 var(--space-2)">Projected EPA, rest of season</h3>
+        <table class="table"><thead><tr><th>#</th><th>Team</th>${wkHead}<th style="text-align:right">Total</th></tr></thead><tbody>
+        ${p.epa_ranking.map(t => `<tr><td>${t.epa_rank}</td><td>${tn(t.team_id, t.team_name)}</td>${t.weekly.map(w => `<td class="pts">${w.credit.toFixed(1)}</td>`).join('')}<td class="pts"><strong>${t.remaining_credit.toFixed(1)}</strong></td></tr>`).join('')}</tbody></table></div>
+    </div>`;
+}
+
+// ---- STANDINGS -------------------------------------------------------------------------------------------
+async function renderStandings() {
+  await refreshOverview();
+  const rows = await api(`/leagues/${LEAGUE_ID}/standings`);
+  const played = rows.some(r => r.wins + r.losses + r.ties > 0);
+  const byConf = {};
+  rows.forEach(r => { const t = teamsById[r.team_id]; (byConf[t?.conference_name || 'Other'] = byConf[t?.conference_name || 'Other'] || []).push({...r, t}); });
+  $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in once weekly matchups are scored - every team is 0-0 until then.</div>')
+    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
+      list.sort((a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_name.localeCompare(b.team_name));
+      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td></tr>`).join('')}
+        </tbody></table></div>`; }).join('') + '</div>';
+}
+
+// ---- STATS -------------------------------------------------------------------------------------------------
+async function renderStats() {
+  await refreshOverview();
+  cache.stats = await api(`/leagues/${LEAGUE_ID}/stats`);
+  cache.weeks = [...new Set(cache.stats.flatMap(r => Object.keys(r.weekly).map(Number)))].sort((a, b) => a - b);
+  $('content').innerHTML = `
+    <p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Every player in the league's pool. <strong>${LAST} pts</strong> is last season under ESPN standard scoring; <strong>W1, W2, ...</strong> are this platform's own weekly fantasy points for the weeks it has scored. Click a column to sort.${cache.weeks.length ? '' : ' No weekly scores exist for the current season yet, so there are no W columns.'}</p>
+    <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-2)"><input id="st-q" class="inp" placeholder="Search players, schools or teams..." style="flex:1;min-width:200px" value="${esc(view.stats.q)}">
+      <select id="st-who" class="inp"><option value="all">All players</option><option value="rostered">On a roster</option><option value="fa">Free agents</option></select></div>
+    <div id="st-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-3)"></div>
+    <div class="card elev-sm" style="padding:var(--space-2) var(--space-4);overflow-x:auto"><table class="table" style="min-width:640px"><thead id="st-head"></thead><tbody id="st-body"></tbody></table></div>
+    <p class="muted" id="st-count" style="font-size:12px;margin-top:var(--space-2)"></p>`;
+  $('st-who').value = view.stats.who;
+  $('st-q').oninput = () => { view.stats.q = $('st-q').value; drawStats(); };
+  $('st-who').onchange = () => { view.stats.who = $('st-who').value; drawStats(); };
+  drawStats();
+}
+
+function drawStats() {
+  const v = view.stats, q = v.q.trim().toLowerCase(), rows = cache.stats;
+  const chips = $('st-chips');
+  chips.innerHTML = [['', 'All', rows.length]].concat(POSITIONS.map(p => [p, POS_LABEL[p] || p, rows.filter(x => x.position === p).length])).map(([val, l, n]) =>
+    `<button class="chip${v.pos === val ? ' on' : ''}" data-pos="${val}">${l}<span class="n">${n}</span></button>`).join('');
+  chips.querySelectorAll('.chip').forEach(b => b.onclick = () => { v.pos = b.dataset.pos; drawStats(); });
+  const teamName = (r) => r.fantasy_team_id ? (teamsById[r.fantasy_team_id]?.name || '') : 'Free agent';
+  const val = (r, k) => k === 'display_name' ? r.display_name.toLowerCase() : k === 'position' ? r.position || '' : k === 'real_team' ? r.real_team || '' : k === 'team' ? teamName(r).toLowerCase()
+    : k.startsWith('w') ? (r.weekly[k.slice(1)] ?? null) : (r[k] ?? null);
+  let list = rows.filter(r => (!v.pos || r.position === v.pos) && (v.who === 'all' || (v.who === 'fa') === (r.fantasy_team_id == null))
+    && (!q || r.display_name.toLowerCase().includes(q) || (r.real_team || '').toLowerCase().includes(q) || teamName(r).toLowerCase().includes(q)));
+  list.sort((a, b) => {
+    const x = val(a, v.sort), y = val(b, v.sort);
+    if (x == null && y == null) return a.display_name.localeCompare(b.display_name);
+    if (x == null) return 1; if (y == null) return -1;     // blanks always last
+    return (x < y ? -1 : x > y ? 1 : 0) * v.dir || a.display_name.localeCompare(b.display_name);
+  });
+  const cols = [['display_name', 'Player'], ['position', 'Pos'], ['real_team', 'School'], ['team', 'Team'], ['last_season_points', LAST + ' pts']].concat(cache.weeks.map(w => ['w' + w, 'W' + w]));
+  $('st-head').innerHTML = '<tr>' + cols.map(([k, l]) => `<th class="sort" data-k="${k}">${l}${v.sort === k ? (v.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
+  $('st-head').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = ['display_name', 'position', 'real_team', 'team'].includes(k) ? 1 : -1; } drawStats(); });
+  $('st-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${esc(r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
+    <td>${r.fantasy_team_id ? esc(teamName(r)) : '<span class="muted">Free agent</span>'}</td><td>${pts(r.last_season_points)}</td>${cache.weeks.map(w => `<td>${r.weekly[w] != null ? pts(r.weekly[w]) : '-'}</td>`).join('')}</tr>`).join('');
+  $('st-count').textContent = `Showing ${Math.min(100, list.length)} of ${list.length} players.`;
+}
+
+// ---- TEAMS ---------------------------------------------------------------------------------------------------
+async function renderTeams() {
+  await refreshOverview();
+  const byConf = {};
+  ov.teams.forEach(t => (byConf[t.conference_name || 'Other'] = byConf[t.conference_name || 'Other'] || []).push(t));
+  $('content').innerHTML = Object.entries(byConf).map(([name, list]) => `
+    <h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
+      ${list.map(t => `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);gap:6px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px"><strong style="font-family:var(--font-heading);font-size:16px">${tn(t.id)}</strong>${t.is_ai_owned ? '<span class="pill ai">AI</span>' : '<span class="pill">' + esc(t.owner_name || 'Manager') + '</span>'}</div>
+        <div class="muted" style="font-size:12px">${esc(t.program_size)} program · ${esc(t.season_goal)}</div>
+        <div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''} · ${money(t.weekly_budget)}/wk</div>
+        <div style="display:flex;gap:var(--space-2);margin-top:4px"><button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
+          ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}</div></div>`).join('')}
+    </div>`).join('');
+  bindNav();
+}
+
+// ---- start ------------------------------------------------------------------------------------------------------
+async function start() {
+  if (!LEAGUE_ID) { showError('Missing league_id.'); return; }
+  const session = await FSC.current();
+  if (!session) {
+    $('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json());
+    $('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
+    $('signin-btn').onclick = async () => { await FSC.signIn(Number($('signin-select').value)); location.reload(); };
+    showError('Sign in to view the league.');
+    return;
+  }
+  me = session.user_id;
+  try { const cfg = await fetch('/config').then(r => r.json()); if (cfg.last_season) LAST = String(cfg.last_season); } catch (e) {}
+  await refreshOverview();
+  const ent = await api('/entitlements/me');
+  isCommissioner = ov.commissioner_user_id === me;
+  canActForAi = isCommissioner && ent.commissioner_mode;
+  $('nav-brand').textContent = ov.name;
+  $('league-name').textContent = ov.name;
+  $('kicker').textContent = `College football · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
+  $('nav-cm').style.display = isCommissioner ? '' : 'none';
+  document.title = ov.name;
+  const want = params.get('tab');
+  await go(TABS.some(([id]) => id === want) ? want : 'home');
+}
+start().catch(e => showError(`Failed to load: ${e.message}`));
+</script>
+</body>
+</html>

@@ -30,14 +30,20 @@ class LeagueCreateRequest(BaseModel):
     # "team_choice" (default) or "dynamic". "dynamic" is rejected at
     # creation for now - see League.program_size_mode.
     program_size_mode: str = "team_choice"
-    # "recruit" (timed sealed-bid auction, shown to teams as a "recruiting
-    # period") or "snake" (default - a traditional snake draft run at a
+    # "recruit" (a series of recruiting periods where any team can bid on any
+    # player - shown to teams as the "recruiting draft") or "snake" (default - a traditional snake draft run at a
     # scheduled time). Drives which screen the create-league wizard sends a
     # newly created team to next.
     draft_type: str = "snake"
-    # Only used when draft_type="snake" - when the commissioner plans to run
-    # the live draft, so the roster page can tell teams when to expect it.
+    # When the draft starts: the snake draft's scheduled time, or when the
+    # first recruiting period opens.
     draft_scheduled_at: datetime.datetime | None = None
+    # Only used when draft_type="recruit": how long each recruiting period
+    # lasts, in seconds (the draft runs one period per roster spot).
+    recruiting_period_seconds: int = 86400
+    # The pause between periods (results screen, no bidding). 20 seconds by
+    # design; only settable so tests don't have to wait it out.
+    recruiting_buffer_seconds: int = 20
 
 
 class LeagueOut(ORMModel):
@@ -64,6 +70,7 @@ class StandingsRow(BaseModel):
     team_name: str
     wins: int
     losses: int
+    ties: int = 0
     points_for: float
     points_against: float
 
@@ -93,12 +100,78 @@ class RosterEntryOut(BaseModel):
     draftable_asset_id: int
     asset_type: str
     display_name: str  # player full_name, or "<Real Team> <Group>" for defense groups
+    position: str | None = None      # QB/RB/WR/TE/PK, or DL/LB/DB for a defense group
+    real_team: str | None = None     # the school
+    last_season_points: float | None = None  # last season, ESPN standard scoring (None for defense groups / no stat line)
+    acquired_via: str | None = None
+
+
+class RosterSlotOut(BaseModel):
+    slot_code: str
+    eligible_positions: list[str]
+    slot_count: int
+    is_starter: bool
+
+
+class WeekOut(BaseModel):
+    id: int
+    season_year: int
+    week_number: int
+    start_date: datetime.date | None = None
+    locked: bool = False       # the week has started, so only a commissioner-mode commissioner can change lineups
+    scored: bool = False       # the week's real games are in
+
+
+class StarterScoreOut(BaseModel):
+    slot_code: str
+    draftable_asset_id: int
+    display_name: str
+    position: str | None
+    real_team: str | None
+    played: bool
+    points: float
+
+
+class TeamWeekBreakdownOut(BaseModel):
+    team_id: int
+    team_name: str
+    week_id: int
+    total_points: float        # fantasy points (the fitted scale applied to raw_credit)
+    raw_credit: float          # the starters' summed EPA credit
+    starters: list[StarterScoreOut]
+
+
+class MatchupResultOut(BaseModel):
+    matchup_id: int | None      # None for a conference-championship game (derived from the standings)
+    championship: bool = False
+    week_id: int
+    team_a_id: int
+    team_a_name: str
+    team_b_id: int
+    team_b_name: str
+    scored: bool
+    team_a_score: float | None
+    team_b_score: float | None
+    winner_team_id: int | None
+
+
+class ScheduleRequest(BaseModel):
+    weeks: int = 9         # the premade regular season is weeks 1-9
+    replace: bool = False
+
+
+class SandboxLeagueRequest(BaseModel):
+    name: str = "Commissioner Mode League"
+    size: int = 12
+    draft_rounds: int = 20
+    recruiting_period_seconds: int = 86400
 
 
 class LineupSetRequest(BaseModel):
     week_id: int
-    # slot_code -> draftable_asset_id, e.g. {"QB": 501, "RB": 502, ...}
-    assignments: dict[str, int]
+    # slot_code -> draftable_asset_id, or a list of ids for a slot that holds several
+    # players, e.g. {"QB": 501, "RB": [502, 503], "BENCH": [504, 505]}
+    assignments: dict[str, int | list[int]]
 
 
 class LineupEntryOut(BaseModel):

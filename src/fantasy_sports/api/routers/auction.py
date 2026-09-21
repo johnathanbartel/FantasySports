@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import (
     AuctionBidOut,
@@ -13,7 +14,10 @@ from fantasy_sports.api.schemas import (
     PlaceBidRequest,
 )
 from fantasy_sports.platform.auction import engine
-from fantasy_sports.platform.db.models.core import AuctionBid, AuctionDraft, AuctionRound, AuctionTeamBudget
+from fantasy_sports.platform.ai import auction_ai
+from fantasy_sports.platform.db.models.core import (
+    AuctionBid, AuctionDraft, AuctionRound, AuctionTeamBudget, Team, User,
+)
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(prefix="/auctions", tags=["auction"])
@@ -37,7 +41,10 @@ def _round_out(round_: AuctionRound) -> AuctionRoundOut:
 
 
 @router.post("/start", response_model=AuctionDraftOut)
-def start_auction(payload: AuctionStartRequest, db: Session = Depends(get_db)):
+def start_auction(
+    payload: AuctionStartRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    assert_commissioner(db, user, payload.league_id)
     try:
         auction = engine.start_auction(db, payload.league_id, payload.round_seconds)
     except ValueError as e:
@@ -91,14 +98,13 @@ def get_board(auction_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{auction_id}/nominate", response_model=AuctionRoundOut)
-def nominate(auction_id: int, payload: NominateRequest, db: Session = Depends(get_db)):
-    """Opens a new timed sealed-bid round for the given asset.
-
-    TODO (matches the same gap in drafts/{id}/pick): doesn't verify the
-    request actually came from the team whose turn it is - it only checks
-    that the team_id in the body matches whoever's on the clock. This
-    endpoint currently trusts the caller.
-    """
+def nominate(
+    auction_id: int, payload: NominateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Opens a new timed sealed-bid round for the given asset. The caller
+    must own the nominating team (and that team must be the one on the
+    clock - the engine checks the latter)."""
+    assert_owns_team(db, user, payload.nominated_by_team_id)
     try:
         round_ = engine.open_round(db, auction_id, payload.draftable_asset_id, payload.nominated_by_team_id)
     except ValueError as e:
@@ -131,13 +137,13 @@ def get_round(auction_id: int, round_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{auction_id}/rounds/{round_id}/bids", response_model=AuctionBidOut)
-def place_bid(auction_id: int, round_id: int, payload: PlaceBidRequest, db: Session = Depends(get_db)):
+def place_bid(
+    auction_id: int, round_id: int, payload: PlaceBidRequest,
+    db: Session = Depends(get_db), user: User = Depends(current_user),
+):
     """Sealed bid - one per team per round, overwritable while the round
-    stays open.
-
-    TODO: same trust gap as nominate() - team_id comes from the request
-    body, not an authenticated caller.
-    """
+    stays open. The caller must own the bidding team."""
+    assert_owns_team(db, user, payload.team_id)
     round_ = db.get(AuctionRound, round_id)
     if round_ is None or round_.auction_draft_id != auction_id:
         raise HTTPException(404, "Auction round not found")
@@ -150,27 +156,30 @@ def place_bid(auction_id: int, round_id: int, payload: PlaceBidRequest, db: Sess
 
 
 @router.get("/{auction_id}/rounds/{round_id}/bids", response_model=list[AuctionBidOut])
-def get_round_bids(auction_id: int, round_id: int, db: Session = Depends(get_db)):
-    """Bids stay sealed while the round is open, and are all revealed
-    together once it resolves. Can't do "your own bid only" without an
-    authenticated caller (see place_bid's TODO), so hiding every bid until
-    reveal is the honest thing this layer can do."""
+def get_round_bids(
+    auction_id: int, round_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)
+):
+    """Bids stay sealed while the round is open (a signed-in caller sees
+    only their own teams' bids), and are all revealed together once it
+    resolves."""
     round_ = db.get(AuctionRound, round_id)
     if round_ is None or round_.auction_draft_id != auction_id:
         raise HTTPException(404, "Auction round not found")
+    query = db.query(AuctionBid).filter(AuctionBid.auction_round_id == round_id)
     if round_.status == "open":
-        return []
-    bids = (
-        db.query(AuctionBid)
-        .filter(AuctionBid.auction_round_id == round_id)
-        .order_by(AuctionBid.amount.desc())
-        .all()
-    )
+        if user is None:
+            return []
+        own_team_ids = [t.id for t in db.query(Team).filter(Team.owner_user_id == user.id)]
+        query = query.filter(AuctionBid.team_id.in_(own_team_ids))
+    bids = query.order_by(AuctionBid.amount.desc()).all()
     return [AuctionBidOut(team_id=b.team_id, amount=b.amount, submitted_at=b.submitted_at) for b in bids]
 
 
 @router.post("/{auction_id}/rounds/{round_id}/resolve", response_model=AuctionRoundOut)
-def resolve_round(auction_id: int, round_id: int, force: bool = False, db: Session = Depends(get_db)):
+def resolve_round(
+    auction_id: int, round_id: int, force: bool = False,
+    db: Session = Depends(get_db), authorization: str | None = Header(default=None),
+):
     """Reveals bids, picks the winner (ties broken by random choice among
     the tied teams), debits their budget, and advances nomination order.
     force=True is a commissioner override to resolve before the window
@@ -178,6 +187,11 @@ def resolve_round(auction_id: int, round_id: int, force: bool = False, db: Sessi
     round_ = db.get(AuctionRound, round_id)
     if round_ is None or round_.auction_draft_id != auction_id:
         raise HTTPException(404, "Auction round not found")
+    if force:
+        # Only the override needs identity: resolving a round whose window
+        # has closed is harmless for anyone to trigger.
+        user = current_user(authorization, db)
+        assert_commissioner(db, user, db.get(AuctionDraft, auction_id).league_id)
     try:
         round_ = engine.resolve_round(db, round_id, force=force)
     except ValueError as e:
@@ -185,3 +199,18 @@ def resolve_round(auction_id: int, round_id: int, force: bool = False, db: Sessi
     db.commit()
     db.refresh(round_)
     return _round_out(round_)
+
+
+@router.post("/{auction_id}/ai/tick")
+def ai_tick(auction_id: int, db: Session = Depends(get_db)):
+    """Advances every AI-owned team's side of the auction: resolves an
+    expired round, has AI teams place their sealed bids on an open round,
+    or - when an AI team is on the clock - nominates for it. Takes no team
+    argument and never acts for a human-owned team, so there is nothing to
+    spoof; a caller can only make the AI move sooner. The board polls this
+    on a short interval (a background worker would make the same call)."""
+    if db.get(AuctionDraft, auction_id) is None:
+        raise HTTPException(404, "Auction draft not found")
+    actions = auction_ai.tick(db, auction_id)
+    db.commit()
+    return {"actions": actions}

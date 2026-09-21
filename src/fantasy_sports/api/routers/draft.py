@@ -3,6 +3,7 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from fantasy_sports.api.auth import assert_owns_team, current_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import (
     DraftBoardAsset,
@@ -19,6 +20,7 @@ from fantasy_sports.platform.db.models.core import (
     LeagueUniverse,
     RosterEntry,
     Team,
+    User,
 )
 from fantasy_sports.platform.db.session import get_db
 
@@ -133,17 +135,18 @@ def _next_open_pick(db: Session, draft_id: int) -> DraftPick | None:
 
 
 @router.post("/{draft_id}/pick", response_model=DraftPickOut)
-def make_pick(draft_id: int, payload: MakePickRequest, db: Session = Depends(get_db)):
+def make_pick(
+    draft_id: int, payload: MakePickRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
     """Fills the next open pick slot with the given asset.
 
-    TODO (out of scope for this pass): enforce that the request is coming
-    from the team actually on the clock, and validate the pick isn't
-    already rostered elsewhere in the league. This endpoint currently
-    trusts the caller on both counts.
+    The caller must own the team on the clock. TODO (out of scope): validate
+    the pick isn't already rostered elsewhere in the league.
     """
     pick = _next_open_pick(db, draft_id)
     if pick is None:
         raise HTTPException(400, "Draft has no open picks left")
+    assert_owns_team(db, user, pick.team_id)
 
     asset = db.get(DraftableAsset, payload.draftable_asset_id)
     if asset is None:

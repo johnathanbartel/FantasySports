@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Commissioner Mode</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);max-width:100%}
+  .lab{font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:13px;display:block;margin-bottom:4px}
+  .lg{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);cursor:pointer;background:var(--color-surface)}
+  .lg.on{border-color:var(--color-accent)}
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/commissioner.html" aria-current="page">Commissioner mode</a>
+    </div>
+  </div>
+
+  <div style="max-width:1100px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="margin-bottom:var(--space-5)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)">Premium feature <span id="dev-note"></span></div>
+      <h1 style="margin:0 0 var(--space-2)">Commissioner mode</h1>
+      <p class="text-muted" style="max-width:720px;margin:0">
+        Run a league without playing in it. Create a league where every team is AI-owned, play its whole recruiting draft
+        instantly through the real engine, set the AI teams' lineups, and act for any team as its commissioner.
+      </p>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div id="signin-box" style="display:none;gap:6px;align-items:center;margin-bottom:var(--space-4)">
+      <select id="signin-select" class="inp"></select>
+      <button class="btn btn-primary" id="signin-btn">Sign in</button>
+    </div>
+
+    <div id="locked" class="card elev-sm" style="display:none;padding:var(--space-5)">
+      <div class="card-title">Commissioner mode is a premium feature</div>
+      <p class="text-muted" style="margin:var(--space-2) 0 0">It isn't switched on for your account.</p>
+    </div>
+
+    <div id="main" style="display:none;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:var(--space-6);align-items:start">
+
+      <div>
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);gap:var(--space-3);margin-bottom:var(--space-5)">
+          <h3 style="margin:0">New all-AI league</h3>
+          <div><label class="lab" for="new-name">League name</label><input class="inp" id="new-name" type="text" value="My Sandbox League" style="width:100%;box-sizing:border-box"></div>
+          <div style="display:flex;gap:var(--space-3)">
+            <div style="flex:1"><label class="lab" for="new-size">Teams</label><input class="inp" id="new-size" type="number" min="3" value="12" style="width:100%;box-sizing:border-box"></div>
+            <div style="flex:1"><label class="lab" for="new-rounds">Roster spots</label><input class="inp" id="new-rounds" type="number" min="1" value="20" style="width:100%;box-sizing:border-box"></div>
+          </div>
+          <p class="text-muted" style="font-size:12px;margin:0">12 teams are split 4 Large / 4 Moderate / 4 Small. You're the commissioner and own no team.</p>
+          <button class="btn btn-primary" id="create-btn">Create league</button>
+        </div>
+
+        <h4 style="margin:0 0 var(--space-2)">Leagues you commission</h4>
+        <div id="league-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+      </div>
+
+      <div id="league-panel" style="display:none">
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);gap:var(--space-3);margin-bottom:var(--space-5)">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);flex-wrap:wrap">
+            <h3 style="margin:0" id="lg-name"></h3>
+            <span style="display:flex;gap:var(--space-2);align-items:center">
+              <span class="tag tag-neutral" id="lg-status"></span>
+              <a class="btn btn-primary" id="home-link" href="#">Open league home &rsaquo;</a>
+            </span>
+          </div>
+          <div class="text-muted" id="lg-detail" style="font-size:13px"></div>
+          <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center">
+            <button class="btn btn-primary" id="sim-btn">Simulate the recruiting draft</button>
+            <span style="flex:1"></span>
+            <select id="week-select" class="inp"></select>
+            <button class="btn btn-secondary" id="auto-btn">Auto-set all AI lineups</button>
+          </div>
+          <p class="text-muted" style="font-size:12px;margin:0">
+            Simulating plays every week of the draft with real AI bids and real charges - only the waiting is skipped
+            (it takes about 15 seconds). Auto-set gives each AI team its best lineup for the chosen week.
+          </p>
+        </div>
+
+        <table class="table">
+          <thead><tr><th>Team</th><th>Size</th><th>Conference</th><th>Roster</th><th></th></tr></thead>
+          <tbody id="teams-body"></tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const api = FSC.api;
+const params = new URLSearchParams(location.search);
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let me = null, leagues = [], current = null, weeks = [], rosterSizes = {}, conferences = {};
+
+function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+function showResult(msg) { const el = document.getElementById('result-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+
+async function loadLeagues() {
+  const all = await api('/leagues/mine');
+  leagues = all.filter(l => l.commissioner_user_id === me);
+  const box = document.getElementById('league-list');
+  box.innerHTML = leagues.length ? leagues.map(l =>
+    `<div class="lg${current && current.id === l.id ? ' on' : ''}" data-id="${l.id}"><span><strong>${esc(l.name)}</strong><br><span class="text-muted" style="font-size:12px">league ${l.id} · ${l.size} teams</span></span><span class="text-muted">&rsaquo;</span></div>`).join('')
+    : '<p class="text-muted" style="margin:0;font-size:13px">None yet - create one.</p>';
+  box.querySelectorAll('.lg').forEach(el => el.onclick = () => selectLeague(Number(el.dataset.id)));
+}
+
+async function selectLeague(id) {
+  current = leagues.find(l => l.id === id);
+  showError(''); showResult('');
+  document.querySelectorAll('#league-list .lg').forEach(el => el.classList.toggle('on', Number(el.dataset.id) === id));
+  document.getElementById('league-panel').style.display = 'block';
+  document.getElementById('lg-name').textContent = current.name;
+  document.getElementById('home-link').href = `/static/league.html?league_id=${id}`;
+  history.replaceState(null, '', `?league_id=${id}`);
+  await refreshLeague();
+}
+
+async function refreshLeague() {
+  const [status, teams, confs, wk] = await Promise.all([
+    api(`/recruiting/league/${current.id}`), api(`/leagues/${current.id}/teams`),
+    api(`/leagues/${current.id}/conferences`), api(`/leagues/${current.id}/weeks`),
+  ]);
+  weeks = wk;
+  conferences = Object.fromEntries(confs.map(c => [c.id, c.name]));
+  rosterSizes = {};
+  await Promise.all(teams.map(async t => { rosterSizes[t.id] = (await api(`/teams/${t.id}/roster`)).length; }));
+  const st = {scheduled: 'Draft not started', open: 'Draft in progress', closed: 'Draft complete'}[status.status] || status.status;
+  document.getElementById('lg-status').textContent = st;
+  document.getElementById('lg-detail').textContent =
+    `${teams.length} AI teams · ${status.total_periods} recruiting weeks` +
+    (status.status === 'open' ? ` · now in week ${status.current_period}` : '') +
+    (status.status === 'closed' ? ` · ${Object.values(rosterSizes).reduce((a, b) => a + b, 0)} players recruited` : '');
+  document.getElementById('sim-btn').disabled = status.status === 'closed';
+  document.getElementById('sim-btn').textContent = status.status === 'closed' ? 'Draft complete' : (status.status === 'open' ? 'Finish the draft instantly' : 'Simulate the recruiting draft');
+  document.getElementById('auto-btn').disabled = status.status !== 'closed';
+  document.getElementById('week-select').innerHTML = weeks.map(w => `<option value="${w.id}">Week ${w.week_number} (${w.season_year})</option>`).join('');
+  document.getElementById('teams-body').innerHTML = teams.map(t => `<tr>
+    <td>${esc(t.name)} <span class="text-muted">(AI)</span></td>
+    <td><span class="tag tag-neutral">${t.program_size}</span></td>
+    <td>${esc(conferences[t.conference_id] || '')}</td>
+    <td>${rosterSizes[t.id]} players</td>
+    <td><a class="btn btn-secondary" href="/static/lineup.html?league_id=${current.id}&team_id=${t.id}${weeks[0] ? '&week_id=' + weeks[0].id : ''}">Lineup</a></td></tr>`).join('');
+}
+
+document.getElementById('create-btn').onclick = async () => {
+  showError(''); showResult('');
+  const btn = document.getElementById('create-btn'); btn.disabled = true;
+  try {
+    const lg = await FSC.post('/leagues/sandbox', {
+      name: document.getElementById('new-name').value.trim() || 'Sandbox League',
+      size: Number(document.getElementById('new-size').value), draft_rounds: Number(document.getElementById('new-rounds').value),
+    });
+    await loadLeagues();
+    await selectLeague(lg.id);
+    showResult(`Created "${lg.name}" with ${lg.size} AI teams. Simulate its recruiting draft next.`);
+  } catch (e) { showError(e.message); } finally { btn.disabled = false; }
+};
+
+document.getElementById('sim-btn').onclick = async () => {
+  showError(''); showResult('');
+  const btn = document.getElementById('sim-btn'); const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Simulating... (about 15 seconds)';
+  try {
+    await FSC.post(`/recruiting/league/${current.id}/simulate`);
+    await refreshLeague();
+    showResult('The recruiting draft was played out. Every team now has a roster - set lineups next.');
+  } catch (e) { showError(e.message); btn.textContent = label; btn.disabled = false; }
+};
+
+document.getElementById('auto-btn').onclick = async () => {
+  showError(''); showResult('');
+  const w = document.getElementById('week-select').value;
+  try {
+    const r = await FSC.post(`/leagues/${current.id}/lineups/auto?week_id=${w}`);
+    showResult(`Set the best lineup for ${r.teams.length} AI teams (week ${weeks.find(x => x.id === Number(w)).week_number}). Open any team's lineup to look at it or change it.`);
+  } catch (e) { showError(e.message); }
+};
+
+async function start() {
+  const session = await FSC.current();
+  if (!session) {
+    document.getElementById('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json());
+    document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
+    document.getElementById('signin-btn').onclick = async () => { await FSC.signIn(Number(document.getElementById('signin-select').value)); location.reload(); };
+    showError('Sign in to use commissioner mode.');
+    return;
+  }
+  me = session.user_id;
+  const ent = await api('/entitlements/me');
+  if (ent.granted_to_everyone_in_dev) document.getElementById('dev-note').textContent = '· switched on for everyone while testing';
+  if (!ent.commissioner_mode) { document.getElementById('locked').style.display = 'block'; return; }
+  document.getElementById('main').style.display = 'grid';
+  await loadLeagues();
+  const want = Number(params.get('league_id'));
+  if (want && leagues.some(l => l.id === want)) await selectLeague(want);
+}
+start().catch(e => showError(`Failed to load: ${e.message}`));
+</script>
+</body>
+</html>

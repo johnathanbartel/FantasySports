@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recruiting Draft</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px}
+  .player-row{flex-direction:row;align-items:center;padding:var(--space-2) var(--space-3);gap:var(--space-3);min-width:0}
+  .chip{padding:6px 12px;border-radius:999px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-size:13px;cursor:pointer;font-family:var(--font-body)}
+  .chip.on{background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)}
+  .chip .n{opacity:.65;margin-left:4px}
+  details.team{border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)}
+  details.team.mine{border-color:var(--color-accent)}
+  details.team summary{cursor:pointer;padding:var(--space-2) var(--space-3);list-style:none}
+  details.team summary::-webkit-details-marker{display:none}
+  details.team summary::before{content:'\25B8';display:inline-block;width:14px;color:var(--color-accent)}
+  details.team[open] summary::before{content:'\25BE'}
+  .team-players{padding:0 var(--space-3) var(--space-3);font-size:13px}
+  .team-players div{display:flex;gap:var(--space-2);align-items:baseline;padding:3px 0;border-top:1px solid var(--color-divider)}
+  .pts{font-variant-numeric:tabular-nums;text-align:right;min-width:52px}
+  .brow{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-4);padding:4px 0}
+  .brow .l{font-size:12px;color:color-mix(in srgb, var(--color-text) 65%, transparent)}
+  .brow .v{font-family:var(--font-heading);font-size:15px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .brow.key .v{font-size:17px;color:var(--color-accent)}
+  .bsep{border-top:1px solid var(--color-divider);margin:6px 0}
+  .rrow{padding:var(--space-3) 0;border-top:1px solid var(--color-divider)}
+  .rrow:first-child{border-top:0}
+  .bar{height:8px;border-radius:4px;background:var(--color-divider);overflow:hidden;margin-top:6px}
+  .bar>div{height:100%;background:var(--color-accent)}
+  .over{color:var(--color-accent-2-800);font-weight:600}
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand" id="nav-brand">Recruiting draft</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/create-league.html">Create league</a>
+      <a href="#" id="nav-league">League home</a>
+      <a href="#" id="nav-lineup">Lineup</a>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-5)">
+      <div style="padding-top:var(--space-4)">
+        <div class="card-kicker" id="status-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
+        <h1 style="margin:0">Recruiting draft</h1>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:var(--space-3)">
+        <div style="text-align:right">
+          <div class="card-kicker" id="timer-label" style="margin-bottom:2px">&nbsp;</div>
+          <div id="timer" style="font-family:var(--font-heading);font-size:32px;font-variant-numeric:tabular-nums">--:--:--</div>
+        </div>
+        <div id="budget-panel" class="card elev-sm" style="min-width:340px;padding:var(--space-3) var(--space-4);gap:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:var(--space-2)">
+            <span class="card-kicker">Signed in as</span>
+            <span id="me-name" style="font-family:var(--font-heading);font-size:14px"></span>
+          </div>
+          <div id="budget-rows"></div>
+          <div id="signin-box" style="display:none;gap:6px;align-items:center;justify-content:flex-end">
+            <select id="signin-select" class="inp"></select>
+            <button class="btn btn-primary" id="signin-btn">Sign in</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+
+    <div id="scheduled-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
+      <div class="card-title">The recruiting draft hasn't started yet</div>
+      <p class="text-muted" id="scheduled-text" style="margin:var(--space-2) 0 0"></p>
+    </div>
+
+    <div id="commissioner-bar" style="display:none;gap:var(--space-2);margin-bottom:var(--space-4)">
+      <button class="btn btn-secondary" id="start-now-btn" style="display:none">Start the recruiting draft now</button>
+      <button class="btn btn-secondary" id="process-btn" style="display:none">Process this week now</button>
+      <button class="btn btn-secondary" id="end-btn" style="display:none">End the recruiting draft</button>
+    </div>
+
+    <div id="board-area" style="display:none;grid-template-columns:minmax(0,1.6fr) minmax(280px,1fr);gap:var(--space-5);align-items:start">
+
+      <div>
+        <p class="text-muted" style="margin-top:0;font-size:13px">
+          Bid on any player, any time. Every player has a hidden price for the whole recruitment. When a week ends,
+          each player whose bids add up to his price goes to the highest bidder - and every team that bid on him pays
+          its bid, even if it didn't win him. Bids on players who aren't awarded carry into the next week, uncharged.
+          Your budget is weekly and accumulates, and you can't bid more than you have: your standing bids all count against
+          your money, so lower or retract one to free it up. Points are last season's (<span class="ly">last season</span>) fantasy points, ESPN standard scoring.
+        </p>
+        <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)">
+          <input id="filter" class="inp" type="text" placeholder="Search players or schools..." style="flex:1">
+          <select id="sort" class="inp" title="Sort players">
+            <option value="points" id="sort-points-opt">Sort: last-season points (high to low)</option>
+            <option value="name">Sort: name (A-Z)</option>
+            <option value="school">Sort: school (A-Z)</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap"><input type="checkbox" id="only-mine"> My bids</label>
+        </div>
+        <div id="pos-chips" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)"></div>
+        <div id="player-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+      </div>
+
+      <div>
+        <h4 style="margin-top:0;margin-bottom:var(--space-3)">My roster</h4>
+        <div id="my-roster" style="margin-bottom:var(--space-5)"></div>
+
+        <h4 style="margin-bottom:var(--space-3)">Teams <span class="text-muted" style="font-size:12px;font-weight:normal">- open a team to see its players</span></h4>
+        <div id="teams-drawers" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- End-of-week results. Modal on purpose: no backdrop/Esc dismissal - the user has to close it. -->
+<div id="results-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(20,18,15,.62);align-items:center;justify-content:center;padding:var(--space-4)" role="dialog" aria-modal="true" aria-labelledby="results-title">
+  <div class="card elev-lg" style="background:var(--color-bg);max-width:720px;width:100%;max-height:calc(100vh - 48px);display:flex;flex-direction:column;padding:0;gap:0">
+    <div style="padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--color-divider)">
+      <div class="card-kicker" id="results-kicker"></div>
+      <h2 id="results-title" style="margin:2px 0 0"></h2>
+      <div class="text-muted" id="results-buffer" style="font-size:13px;margin-top:4px"></div>
+    </div>
+    <div id="results-body" style="padding:var(--space-3) var(--space-5);overflow-y:auto;flex:1"></div>
+    <div style="padding:var(--space-3) var(--space-5);border-top:1px solid var(--color-divider);display:flex;justify-content:space-between;align-items:center;gap:var(--space-4)">
+      <div id="results-summary" style="font-size:13px"></div>
+      <button class="btn btn-primary" id="results-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id');
+const api = FSC.api;
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let league = null, teamsById = {}, myTeamId = null, myUserId = null, isCommissioner = false;
+let periodStatus = null;   // PeriodStatus
+let pool = [], poolById = {};
+let state = null;          // StateOut
+let draft = {};            // asset_id -> text typed into a bid box (survives re-render)
+let renderKey = '';
+const openTeams = new Set();   // team drawers the user has open - kept across refreshes
+let sortBy = 'points';
+let renderKeyChips = '';
+let posFilter = '';        // '' = all positions
+const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'PK', 'DL', 'LB', 'DB'];
+const POS_LABEL = {PK: 'K'};
+let LAST = 'last season';   // the year the fantasy points are from (set from /config)
+let busy = false;
+
+function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+function showResult(msg) { const el = document.getElementById('result-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+
+async function setBid(assetId, amount) {
+  showError('');
+  try {
+    const res = await FSC.api(`/recruiting/${periodStatus.draft_id}/bids`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({team_id: myTeamId, draftable_asset_id: assetId, amount}),
+    });
+    const name = poolById[assetId]?.display_name || 'Player';
+    showResult(amount === 0
+      ? `Retracted your bid on ${name}.`
+      : `Bid of $${amount} on ${name} is standing. It's processed when week ${res.current_period} ends. If he's awarded you pay your bid even if another team wins him; if his price isn't met it carries over, uncharged.`);
+    delete draft[assetId];
+    await refresh();
+  } catch (e) { showError(e.message); }
+}
+
+// The live budget panel (refreshed on every poll and after every bid):
+//   Recruiting Budget (Total)      weekly budget x the weeks of recruiting
+//   Recruiting Budget (This Week)  weekly x weeks so far - money already spent (unspent money carries over)
+//   Budget Remaining (This Week)   that, less all your standing bids
+//   Season Budget (Total)          weekly x 10 season weeks + the recruiting total
+//   Roster Cost (Total)            what you paid for the players on your roster
+//   Weekly Budget                  (season budget - roster cost) / 10 season weeks
+function renderBudgetPanel(f) {
+  const el = document.getElementById('budget-rows');
+  if (!f) { el.innerHTML = '<div class="text-muted" style="font-size:13px">No team in this league.</div>'; return; }
+  const $ = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
+  const weeks = state.total_periods;
+  const rows = [
+    ['Recruiting Budget (Total)', f.recruiting_budget_total, `$${f.weekly_budget} a week × ${weeks} weeks`],
+    ['Recruiting Budget (This Week)', f.remaining, `$${f.weekly_budget} × ${f.weeks_funded} week${f.weeks_funded === 1 ? '' : 's'} so far, minus $${f.spent} already spent. Unspent money carries over.`],
+    ['Budget Remaining (This Week)', f.spendable, `This week's budget minus $${f.committed ?? 0} tied up in your standing bids. Retract a bid to free it.`, true],
+    null,
+    ['Season Budget (Total)', f.season_budget_total, `$${f.weekly_budget} × ${state.season_weeks} season weeks + the recruiting total`],
+    ['Roster Cost (Total)', f.roster_cost, 'What you paid for the players on your roster'],
+    ['Weekly Budget', f.season_weekly_budget, `(Season Budget - Roster Cost) / ${state.season_weeks} weeks of the regular season`],
+  ];
+  el.innerHTML = rows.map(r => r === null ? '<div class="bsep"></div>'
+    : `<div class="brow${r[3] ? ' key' : ''}" title="${esc(r[2])}"><span class="l">${r[0]}</span><span class="v">${$(r[1])}</span></div>`).join('');
+}
+
+function render() {
+  if (!state) return;
+  const myBids = Object.fromEntries(state.my_bids.filter(b => b.team_id === myTeamId).map(b => [b.draftable_asset_id, b.amount]));
+  const awards = Object.fromEntries(state.awards.map(a => [a.draftable_asset_id, a]));
+  const q = document.getElementById('filter').value.trim().toLowerCase();
+  const pos = posFilter;
+  const onlyMine = document.getElementById('only-mine').checked;
+  const open = state.status === 'open' && state.phase === 'bidding' && myTeamId !== null;
+
+  // -- teams as drawers, my roster, budget line (cheap to redraw)
+  const fin = Object.fromEntries(state.teams.map(t => [t.team_id, t]));
+  const byTeam = {};
+  state.awards.forEach(a => (byTeam[a.team_id] = byTeam[a.team_id] || []).push(a));
+  const posRank = Object.fromEntries(POSITIONS.map((x, i) => [x, i]));
+  const playerLine = (id, extra = '') => {
+    const p = poolById[id] || {};
+    return `<div><span class="tag tag-neutral" style="min-width:34px;justify-content:center">${POS_LABEL[p.position] || p.position || '-'}</span>
+      <span style="flex:1">${esc(p.display_name || id)} <span class="text-muted">${esc(p.real_team || '')}</span></span>
+      <span class="pts text-muted">${p.last_season_points != null ? p.last_season_points.toFixed(1) : '-'}</span>${extra}</div>`;
+  };
+  const drawers = document.getElementById('teams-drawers');
+  drawers.innerHTML = Object.values(teamsById).map(t => {
+    const f = fin[t.id] || {spent: 0, available: 0, roster_count: 0, lost_on_bids: 0};
+    const players = (byTeam[t.id] || []).slice().sort((x, y) =>
+      (posRank[poolById[x.draftable_asset_id]?.position] ?? 99) - (posRank[poolById[y.draftable_asset_id]?.position] ?? 99)
+      || (poolById[y.draftable_asset_id]?.last_season_points ?? -1) - (poolById[x.draftable_asset_id]?.last_season_points ?? -1));
+    return `<details class="team${t.id === myTeamId ? ' mine' : ''}" data-team="${t.id}"${openTeams.has(t.id) ? ' open' : ''}>
+      <summary><strong>${esc(t.name)}</strong> <span class="tag tag-neutral">${t.program_size}</span>
+        <span class="text-muted" style="font-size:12px;display:block;margin:2px 0 0 14px">${f.roster_count} players · $${f.spent} of $${f.available} so far</span></summary>
+      <div class="team-players">${players.length ? players.map(a => playerLine(a.draftable_asset_id)).join('') : '<span class="text-muted">No players yet.</span>'}</div>
+    </details>`;
+  }).join('');
+  drawers.querySelectorAll('details').forEach(d => d.addEventListener('toggle', () => {
+    const id = Number(d.dataset.team);
+    if (d.open) openTeams.add(id); else openTeams.delete(id);
+  }));
+
+  const mine = byTeam[myTeamId] || [];
+  document.getElementById('my-roster').innerHTML = mine.length
+    ? `<div class="team-players" style="padding:0">${mine.map(a => playerLine(a.draftable_asset_id,
+        `<span class="pts" title="What you bid for him">$${a.price}</span>`)).join('')}</div>`
+    : '<p class="text-muted" style="margin:0">No players yet.</p>';
+  renderBudgetPanel(fin[myTeamId]);
+
+  // -- position chips (counts are players still available)
+  const avail = pool.filter(p => !awards[p.draftable_asset_id]);
+  const chipKey = JSON.stringify([posFilter, avail.length]);
+  if (chipKey !== renderKeyChips) {
+    renderKeyChips = chipKey;
+    const chips = document.getElementById('pos-chips');
+    chips.innerHTML = '';
+    [['', 'All']].concat(POSITIONS.map(x => [x, POS_LABEL[x] || x])).forEach(([val, label]) => {
+      const n = val ? avail.filter(p => p.position === val).length : avail.length;
+      const btn = document.createElement('button');
+      btn.className = 'chip' + (posFilter === val ? ' on' : '');
+      btn.innerHTML = `${label}<span class="n">${n}</span>`;
+      btn.onclick = () => { posFilter = val; renderKey = ''; render(); };
+      chips.appendChild(btn);
+    });
+  }
+
+  // -- player list: only redraw when something it shows changed, so typing isn't clobbered
+  const key = JSON.stringify([state.status, state.phase, state.awards.length, state.my_bids, q, pos, onlyMine, open, sortBy]);
+  if (key === renderKey) return;
+  renderKey = key;
+  const list = document.getElementById('player-list');
+  const shown = pool.filter(p => !awards[p.draftable_asset_id]
+    && (!pos || p.position === pos)
+    && (!q || p.display_name.toLowerCase().includes(q) || (p.real_team || '').toLowerCase().includes(q))
+    && (!onlyMine || myBids[p.draftable_asset_id]));
+  shown.sort((x, y) => sortBy === 'points'
+      ? (y.last_season_points ?? -1) - (x.last_season_points ?? -1) || x.display_name.localeCompare(y.display_name)
+    : sortBy === 'school'
+      ? (x.real_team || '').localeCompare(y.real_team || '') || x.display_name.localeCompare(y.display_name)
+    : x.display_name.localeCompare(y.display_name));
+  list.innerHTML = '';
+  shown.slice(0, 60).forEach(p => {
+    const id = p.draftable_asset_id;
+    const row = document.createElement('div');
+    row.className = 'card elev-sm player-row';
+    const bid = myBids[id];
+    row.innerHTML = `
+      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${p.position || '-'}</span>
+      <span style="flex:1;line-height:1.25">
+        <span style="font-family:var(--font-heading);font-size:16px">${esc(p.display_name)}</span>
+        ${bid ? `<span class="tag tag-accent" style="margin-left:8px">your bid $${bid}</span>` : ''}
+        <span class="text-muted" style="display:block;font-size:12px">${esc(p.real_team || '')}</span></span>
+      <span style="text-align:right;min-width:64px;line-height:1.1" title="${LAST} fantasy points, ESPN standard scoring">
+        <span style="font-family:var(--font-heading);font-size:16px;font-variant-numeric:tabular-nums">${p.last_season_points != null ? p.last_season_points.toFixed(1) : '-'}</span>
+        <span class="text-muted" style="display:block;font-size:10px;letter-spacing:.08em">${LAST} PTS</span></span>
+      <input class="inp" type="number" min="1" placeholder="$" style="width:78px;min-width:0" value="${draft[id] ?? (bid || '')}" ${open ? '' : 'disabled'}>
+      <button class="btn btn-primary" ${open ? '' : 'disabled'}>${bid ? 'Update' : 'Bid'}</button>
+      ${bid ? '<button class="btn btn-ghost" data-retract>Retract</button>' : ''}`;
+    const input = row.querySelector('input');
+    input.oninput = () => { draft[id] = input.value; };
+    const submit = () => { const n = Number(input.value); if (n > 0) setBid(id, n); };
+    input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+    row.querySelector('button.btn-primary').onclick = submit;
+    const r = row.querySelector('[data-retract]');
+    if (r) r.onclick = () => setBid(id, 0);
+    list.appendChild(row);
+  });
+  if (shown.length > 60) {
+    const more = document.createElement('p');
+    more.className = 'text-muted';
+    more.textContent = `Showing 60 of ${shown.length} - search or pick a position to narrow.`;
+    list.appendChild(more);
+  }
+  if (!shown.length) list.innerHTML = '<p class="text-muted">No players match.</p>';
+}
+
+function renderStatus() {
+  const kicker = document.getElementById('status-kicker');
+  const sched = document.getElementById('scheduled-panel');
+  const area = document.getElementById('board-area');
+  const bar = document.getElementById('commissioner-bar');
+  const s = periodStatus.status;
+  kicker.textContent = s === 'open' ? (periodStatus.phase === 'buffer' ? `BETWEEN WEEKS - BIDDING PAUSED` : `WEEK ${periodStatus.current_period} OF ${periodStatus.total_periods}`) : s === 'closed' ? 'ALL WEEKS PROCESSED' : 'NOT STARTED';
+  sched.style.display = s === 'scheduled' ? 'block' : 'none';
+  area.style.display = s === 'scheduled' ? 'none' : 'grid';
+  if (s === 'scheduled') {
+    document.getElementById('scheduled-text').textContent = periodStatus.scheduled_start
+      ? `Scheduled to open ${new Date(periodStatus.scheduled_start + 'Z').toLocaleString()}. This page opens it automatically at that time.`
+      : 'No start time was set - the commissioner starts it manually.';
+  }
+  bar.style.display = isCommissioner && s !== 'closed' ? 'flex' : 'none';
+  document.getElementById('start-now-btn').style.display = isCommissioner && s === 'scheduled' ? 'inline-flex' : 'none';
+  document.getElementById('process-btn').style.display = isCommissioner && s === 'open' ? 'inline-flex' : 'none';
+  document.getElementById('process-btn').disabled = periodStatus.phase === 'buffer';
+  document.getElementById('end-btn').style.display = isCommissioner && s === 'open' ? 'inline-flex' : 'none';
+}
+
+// Timer: counts down to the scheduled start, then to the end of the current week
+// (when its bids are processed); once the draft is complete it shows how long it ran.
+function fmt(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const p = n => String(n).padStart(2, '0');
+  return `${p(Math.floor(t / 3600))}:${p(Math.floor((t % 3600) / 60))}:${p(t % 60)}`;
+}
+function renderTimer() {
+  if (!periodStatus) return;
+  const label = document.getElementById('timer-label'), el = document.getElementById('timer');
+  const utc = (iso) => new Date(iso + 'Z').getTime();
+  const st = periodStatus.status;
+  if (st === 'scheduled') {
+    if (periodStatus.scheduled_start) {
+      label.textContent = 'WEEK 1 OPENS IN';
+      el.textContent = fmt(utc(periodStatus.scheduled_start) - Date.now());
+    } else { label.textContent = 'NOT STARTED'; el.textContent = '--:--:--'; }
+  } else if (st === 'open' && periodStatus.phase === 'buffer') {
+    label.textContent = `WEEK ${periodStatus.current_period} OPENS IN`;
+    el.textContent = fmt(utc(periodStatus.next_period_starts_at) - Date.now());
+  } else if (st === 'open') {
+    label.textContent = `WEEK ${periodStatus.current_period} OF ${periodStatus.total_periods} ENDS IN`;
+    el.textContent = fmt(utc(periodStatus.period_ends_at) - Date.now());
+  } else {
+    label.textContent = 'RECRUITING DRAFT COMPLETE';
+    el.textContent = fmt(utc(periodStatus.ended_at) - utc(periodStatus.started_at));
+  }
+}
+setInterval(renderTimer, 500);
+
+async function refresh() {
+  periodStatus = await api(`/recruiting/league/${LEAGUE_ID}`);
+  renderStatus();
+  renderTimer();
+  if (periodStatus.draft_id === null) return;
+  if (!pool.length) {
+    pool = await api(`/recruiting/${periodStatus.draft_id}/pool`);
+    pool.sort((a, b) => a.display_name.localeCompare(b.display_name));
+    poolById = Object.fromEntries(pool.map(p => [p.draftable_asset_id, p]));
+  }
+  state = await api(`/recruiting/${periodStatus.draft_id}/state`);
+  render();
+  await checkResults();
+}
+
+// ---- end-of-week results pop-up -------------------------------------------------------
+// After a week's bids are processed each team gets one screen listing how every one of its
+// bids came out, plus each player's completion % (all bids on him / his hidden price). That %
+// is served only by the results endpoint, only for your own bids, and is shown nowhere else.
+// The screen can't be dismissed except with Close, which tells the server (so it comes back
+// after a reload until it has been closed).
+let modalPeriod = null;      // period number currently shown, or null
+let modalClosing = false;
+
+async function checkResults() {
+  if (myTeamId === null || modalPeriod !== null || modalClosing || !periodStatus || periodStatus.draft_id === null) return;
+  const pending = await api(`/recruiting/${periodStatus.draft_id}/results/pending?team_id=${myTeamId}`);
+  if (pending.length) showResults(pending[0]);
+}
+
+function showResults(r) {
+  modalPeriod = r.period_number;
+  document.getElementById('results-kicker').textContent = r.is_final ? 'FINAL WEEK' : `WEEK ${r.period_number} OF ${state.total_periods}`;
+  document.getElementById('results-title').textContent = `Week ${r.period_number} results`;
+  const body = document.getElementById('results-body');
+  const tag = {won: ['tag-accent', 'RECRUITED'], lost: ['tag-accent-2', 'LOST TO ANOTHER TEAM'], pending: ['tag-neutral', 'NOT RECRUITED YET']};
+  const note = {
+    won: (b) => `You recruited him. You paid your bid of $${b.charged}.`,
+    lost: (b) => `Another team recruited him. Your bid of $${b.charged} is still charged - the money went to the player.`,
+    pending: () => `His price wasn't reached this week. Your bid carries over and nothing was charged.`,
+  };
+  body.innerHTML = r.bids.length ? r.bids.map(b => {
+    const p = poolById[b.draftable_asset_id] || {};
+    const pct = b.completion_pct;
+    return `<div class="rrow">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3)">
+        <div><span class="tag tag-neutral" style="min-width:34px;justify-content:center;margin-right:8px">${POS_LABEL[p.position] || p.position || '-'}</span>
+          <strong style="font-family:var(--font-heading);font-size:16px">${esc(p.display_name || b.draftable_asset_id)}</strong>
+          <span class="text-muted" style="font-size:12px;margin-left:6px">${esc(p.real_team || '')}</span></div>
+        <span class="tag ${tag[b.outcome][0]}">${tag[b.outcome][1]}</span>
+      </div>
+      <div class="text-muted" style="font-size:13px;margin-top:4px">Your bid: <strong style="color:var(--color-text)">$${b.bid_amount}</strong> · ${note[b.outcome](b)}</div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:6px"><span class="text-muted">Recruitment complete</span><strong style="font-variant-numeric:tabular-nums">${pct.toFixed(0)}%</strong></div>
+      <div class="bar"><div style="width:${Math.min(100, pct)}%"></div></div>
+    </div>`;
+  }).join('') : `<p class="text-muted" style="margin:var(--space-3) 0">You had no bids in play this week.</p>`;
+  document.getElementById('results-summary').innerHTML = r.bids.length
+    ? `<strong>${r.players_won}</strong> recruited · charged <strong>$${r.charged_total}</strong>${r.lost_total ? ` (<strong>$${r.lost_total}</strong> on players another team won)` : ''}`
+    : '';
+  document.getElementById('results-modal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  renderResultsBuffer();
+}
+
+function renderResultsBuffer() {
+  const el = document.getElementById('results-buffer');
+  if (modalPeriod === null || !periodStatus) return;
+  el.textContent = periodStatus.phase === 'buffer'
+    ? `Bidding is paused. Week ${periodStatus.current_period} opens in ${fmt(new Date(periodStatus.next_period_starts_at + 'Z').getTime() - Date.now()).slice(3)}.`
+    : periodStatus.status === 'closed' ? 'The recruiting draft is over.' : 'Bidding is open again.';
+}
+setInterval(renderResultsBuffer, 500);
+
+document.getElementById('results-close').onclick = async () => {
+  if (modalPeriod === null || modalClosing) return;
+  modalClosing = true;
+  try {
+    await FSC.post(`/recruiting/${periodStatus.draft_id}/results/ack`, {team_id: myTeamId, period_number: modalPeriod});
+    document.getElementById('results-modal').style.display = 'none';
+    document.body.style.overflow = '';
+    modalPeriod = null;
+  } catch (e) { showError(e.message); }
+  modalClosing = false;
+  renderKey = '';
+  await checkResults();   // any earlier week still waiting comes up next
+};
+
+async function poll() {
+  if (busy) return;
+  busy = true;
+  try {
+    if (periodStatus && periodStatus.status === 'open') {
+      // AI-owned teams bid through the server; a real deployment would run this on a worker.
+      await FSC.post(`/recruiting/${periodStatus.draft_id}/ai/tick?intensity=0.35`);
+    }
+    await refresh();
+  } catch (e) { showError(e.message); } finally { busy = false; }
+}
+
+document.getElementById('start-now-btn').onclick = async () => {
+  showError('');
+  try { await FSC.post('/recruiting/start', {league_id: Number(LEAGUE_ID)}); await refresh(); } catch (e) { showError(e.message); }
+};
+document.getElementById('process-btn').onclick = async () => {
+  showError('');
+  try { await FSC.post(`/recruiting/${periodStatus.draft_id}/process-period`); await refresh(); } catch (e) { showError(e.message); }
+};
+document.getElementById('end-btn').onclick = async () => {
+  if (!confirm('End the whole recruiting draft now? The current week is processed as the final one, so every player with bids goes to his highest bidder.')) return;
+  showError('');
+  try {
+    await FSC.post(`/recruiting/${periodStatus.draft_id}/end`);
+    await refresh();
+    showResult('Recruiting draft ended - remaining players went to their highest bidders.');
+  } catch (e) { showError(e.message); }
+};
+document.getElementById('filter').oninput = render;
+document.getElementById('only-mine').onchange = render;
+document.getElementById('sort').onchange = () => { sortBy = document.getElementById('sort').value; renderKey = ''; render(); };
+
+async function start() {
+  if (!LEAGUE_ID) { showError('Missing league_id - start from the create-league wizard.'); return; }
+  const session = await FSC.current();
+  if (!session) {
+    document.getElementById('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json());
+    document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
+    document.getElementById('signin-btn').onclick = async () => { await FSC.signIn(Number(document.getElementById('signin-select').value)); location.reload(); };
+    showError('Sign in to take part in the recruiting period.');
+    return;
+  }
+  myUserId = session.user_id;
+  try { const cfg = await fetch('/config').then(r => r.json()); if (cfg.last_season) LAST = String(cfg.last_season); } catch (e) {}
+  document.querySelectorAll('.ly').forEach(e => e.textContent = LAST);
+  document.getElementById('sort-points-opt').textContent = `Sort: ${LAST} points (high to low)`;
+  document.getElementById('nav-lineup').href = `/static/lineup.html?league_id=${LEAGUE_ID}`;
+  document.getElementById('nav-league').href = `/static/league.html?league_id=${LEAGUE_ID}`;
+  league = await api(`/leagues/${LEAGUE_ID}`);
+  document.getElementById('nav-brand').textContent = league.name;
+  isCommissioner = league.commissioner_user_id === myUserId;
+  const teams = await api(`/leagues/${LEAGUE_ID}/teams`);
+  teamsById = Object.fromEntries(teams.map(t => [t.id, t]));
+  const mine = teams.find(t => !t.is_ai_owned && t.owner_user_id === myUserId);
+  myTeamId = mine ? mine.id : null;
+  document.getElementById('me-name').textContent = mine ? `${mine.name} (${mine.program_size})` : 'no team in this league';
+  await refresh();
+  setInterval(poll, 2000);
+}
+start().catch(e => showError(`Failed to load: ${e.message}`));
+</script>
+</body>
+</html>

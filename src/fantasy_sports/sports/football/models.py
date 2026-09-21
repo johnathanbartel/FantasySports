@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fantasy_sports.platform.db.base import Base
@@ -99,3 +99,40 @@ class WeeklyRealTeamEpaTotal(Base):
     week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id"))
     model_total: Mapped[float] = mapped_column(Float)
     real_points_scored: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class PlayerSeasonPoints(Base):
+    """A player's full-season fantasy points under a named scoring system
+    (today only "espn_standard" - see sports/football/college/season_scoring.py),
+    ingested from CFBD season stats by scripts/ingest_season_points.py. Shown
+    on the recruiting board so managers can compare players; separate from
+    weekly_player_scores, which is the platform's own EPA scoring."""
+
+    __tablename__ = "player_season_points"
+    __table_args__ = (UniqueConstraint("player_id", "season", "scoring_system"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"))
+    season: Mapped[int] = mapped_column(Integer)
+    scoring_system: Mapped[str] = mapped_column(String(30))
+    points: Mapped[float] = mapped_column(Float)
+    # Per-stat point contributions, so a total can be traced line by line.
+    breakdown: Mapped[dict] = mapped_column(JSON)
+
+
+class PlayerRecruitRating(Base):
+    """A current player's high-school recruiting rating and class year, from
+    CFBD. Used only to value players who have no stat line for the last completed
+    season (freshmen, transfers from outside the FBS, backups): what a player of
+    that rating and position typically produces stands in for the missing
+    stats (see platform/recruiting/pricing.py). stars/rating are NULL for a
+    player CFBD has no recruiting record for (e.g. a walk-on)."""
+
+    __tablename__ = "player_recruit_ratings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), unique=True)
+    class_year: Mapped[int | None] = mapped_column(Integer, nullable=True)   # 1 = freshman ... 5
+    stars: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)       # 0-1, CFBD's composite
+

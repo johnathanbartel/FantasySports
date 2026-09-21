@@ -5,7 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from fantasy_sports.api.routers import auction, draft, leagues, rosters, scoring, teams
+from fantasy_sports.api.routers import (
+    auction, draft, entitlements, league_home, leagues, recruiting, rosters, schedule, scoring, sessions, teams,
+)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
 
@@ -18,8 +20,8 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Wide open for local dev only - this is a single-user internal tool with
-# no auth yet. Tighten to specific origins before any real deployment.
+# Wide open for local dev only - identity is a dev-grade session token (see
+# api/auth.py), not real authentication. Tighten to specific origins before any real deployment.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,12 +29,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(sessions.router)
+app.include_router(entitlements.router)
+app.include_router(league_home.router)
 app.include_router(leagues.router)
 app.include_router(teams.router)
 app.include_router(draft.router)
 app.include_router(auction.router)
+app.include_router(recruiting.router)
 app.include_router(rosters.router)
 app.include_router(scoring.router)
+app.include_router(schedule.router)
 
 
 @app.get("/health")

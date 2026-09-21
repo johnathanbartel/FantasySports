@@ -3,16 +3,27 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.schemas import ConferenceOut, LeagueCreateRequest, LeagueOut, StandingsRow, TeamOut
+from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
+from fantasy_sports.api.schemas import (
+    ConferenceOut, LeagueCreateRequest, LeagueOut, RosterSlotOut, SandboxLeagueRequest, StandingsRow, TeamOut, WeekOut,
+)
+from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
-from fantasy_sports.platform.db.models.core import Conference, League, LeagueUniverse, Team, Universe, WeeklyMatchup
+from fantasy_sports.platform.db.models.core import (
+    Conference, League, LeagueUniverse, RecruitingSettings, Team, Universe, User, Week, WeeklyMatchup,
+)
+from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(prefix="/leagues", tags=["leagues"])
 
 
 @router.post("", response_model=LeagueOut)
-def create_league(payload: LeagueCreateRequest, db: Session = Depends(get_db)):
+def create_league(
+    payload: LeagueCreateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    if payload.commissioner_user_id != user.id:
+        raise HTTPException(403, "You can only create a league with yourself as commissioner")
     universes = db.query(Universe).filter(Universe.code.in_(payload.universe_codes)).all()
     if len(universes) != len(payload.universe_codes):
         found = {u.code for u in universes}
@@ -61,9 +72,107 @@ def create_league(payload: LeagueCreateRequest, db: Session = Depends(get_db)):
 
     conferences.create_baseline_conferences(db, league.id)
 
+    if payload.draft_type == "recruit":
+        if payload.recruiting_period_seconds < 1:
+            raise HTTPException(400, "Recruiting period length must be at least 1 second")
+        if payload.recruiting_buffer_seconds < 0:
+            raise HTTPException(400, "Buffer between periods can't be negative")
+        db.add(RecruitingSettings(
+            league_id=league.id, period_seconds=payload.recruiting_period_seconds,
+            buffer_seconds=payload.recruiting_buffer_seconds))
+
     db.commit()
     db.refresh(league)
     return league
+
+
+@router.get("/mine", response_model=list[LeagueOut])
+def my_leagues(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Leagues the caller commissions or owns a team in, newest first."""
+    owned = {t.league_id for t in db.query(Team).filter(Team.owner_user_id == user.id)}
+    rows = db.query(League).filter(
+        (League.commissioner_user_id == user.id) | (League.id.in_(owned or {0}))
+    ).order_by(League.id.desc()).all()
+    return rows
+
+
+@router.post("/sandbox", response_model=LeagueOut)
+def create_sandbox_league(
+    payload: SandboxLeagueRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """COMMISSIONER MODE (premium): creates a recruiting-draft league in which
+    EVERY team is AI-owned and the caller is only its commissioner - for testing
+    and for running a league without playing in it. Teams are spread evenly over
+    the three program sizes (12 teams -> 4 Large / 4 Moderate / 4 Small), one
+    conference per size."""
+    require_commissioner_mode(db, user)
+    universe = db.query(Universe).filter(Universe.code == "ncaaf").first()
+    if universe is None:
+        raise HTTPException(400, "No college football universe is set up")
+    if payload.size < 3 or payload.draft_rounds < 1 or payload.recruiting_period_seconds < 1:
+        raise HTTPException(400, "League size must be at least 3, with at least 1 roster spot and a positive week length")
+    league = League(
+        name=payload.name, commissioner_user_id=user.id, size=payload.size, draft_rounds=payload.draft_rounds,
+        program_size_mode="team_choice", draft_type="recruit", draft_scheduled_at=None,
+    )
+    db.add(league)
+    db.flush()
+    db.add(LeagueUniverse(league_id=league.id, universe_id=universe.id, defense_mode="group"))
+    conferences.create_baseline_conferences(db, league.id)
+    db.add(RecruitingSettings(league_id=league.id, period_seconds=payload.recruiting_period_seconds, buffer_seconds=20))
+    db.flush()
+    fill_with_ai_teams(league.id, db, user)   # commits
+    db.refresh(league)
+    return league
+
+
+@router.get("/{league_id}/roster-slots", response_model=list[RosterSlotOut])
+def league_roster_slots(league_id: int, db: Session = Depends(get_db)):
+    """The lineup slots this league fields each week, starters first."""
+    if db.get(League, league_id) is None:
+        raise HTTPException(404, "League not found")
+    try:
+        slots = lineups.league_slots(db, league_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return [
+        RosterSlotOut(slot_code=s.slot_code, eligible_positions=s.eligible_positions,
+                      slot_count=s.slot_count, is_starter=s.is_starter)
+        for s in slots
+    ]
+
+
+@router.get("/{league_id}/weeks", response_model=list[WeekOut])
+def league_weeks(league_id: int, db: Session = Depends(get_db)):
+    """The real-calendar weeks a lineup can be set for: the newest season's."""
+    universe_ids = [lu.universe_id for lu in db.query(LeagueUniverse).filter_by(league_id=league_id)]
+    if not universe_ids:
+        raise HTTPException(404, "League not found or has no universe")
+    weeks = scoring.season_weeks(db, league_id)
+    scored = scoring.scored_week_ids(db, [w.id for w in weeks])
+    return [WeekOut(id=w.id, season_year=w.season_year, week_number=w.week_number, start_date=w.start_date,
+                    locked=scoring.is_locked(w), scored=w.id in scored) for w in weeks]
+
+
+@router.post("/{league_id}/lineups/auto")
+def auto_set_ai_lineups(
+    league_id: int, week_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: sets every AI-owned team's best lineup for the week
+    - what the AI teams do on their own, run on demand. Human-owned teams are
+    left alone."""
+    assert_commissioner(db, user, league_id)
+    week = db.get(Week, week_id)
+    universe_ids = {lu.universe_id for lu in db.query(LeagueUniverse).filter_by(league_id=league_id)}
+    if week is None or week.universe_id not in universe_ids:
+        raise HTTPException(400, "That week isn't part of this league's universe")
+    done = []
+    for team in db.query(Team).filter_by(league_id=league_id, is_ai_owned=True).order_by(Team.id):
+        pairs = lineups.build_lineup(db, team, lineups.best_lineup(db, team))
+        lineups.save_lineup(db, team, week_id, pairs)
+        done.append({"team_id": team.id, "players": len(pairs)})
+    db.commit()
+    return {"week_id": week_id, "teams": done}
 
 
 @router.get("/{league_id}", response_model=LeagueOut)
@@ -82,6 +191,46 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
     if not teams:
         raise HTTPException(404, "League not found or has no teams")
     return teams
+
+
+AI_TEAM_NAMES = [
+    "Ridgeline Rams", "Harbor City Hawks", "Prairie Thunder", "Summit State Stags",
+    "Iron Valley Bears", "Gulf Coast Gators", "Cascade Wolves", "Delta Ravens",
+    "Bluegrass Bandits", "Mesa Scorpions", "Lakeshore Lynx", "Timberline Tigers",
+    "Capitol Comets", "Sunbelt Stallions", "Northern Pines", "Redrock Raptors",
+]
+
+
+@router.post("/{league_id}/ai-teams", response_model=list[TeamOut])
+def fill_with_ai_teams(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner action: adds AI-owned teams until the league reaches its
+    size, spreading them across the program-size tiers as evenly as possible
+    given the teams already there (a 12-team league with the commissioner in
+    a Large slot ends up 4 large / 4 moderate / 4 small). Each AI team goes
+    into its tier's least-populated conference like any other team."""
+    league = assert_commissioner(db, user, league_id)
+    teams = db.query(Team).filter(Team.league_id == league_id).all()
+    tier_counts = {size: 0 for size in PROGRAM_SIZES}
+    for t in teams:
+        tier_counts[t.program_size] += 1
+    used_names = {t.name for t in teams}
+    spare_names = iter(n for n in AI_TEAM_NAMES if n not in used_names)
+
+    created = []
+    while len(teams) + len(created) < league.size:
+        size = min(PROGRAM_SIZES, key=lambda s: (tier_counts[s], PROGRAM_SIZES.index(s)))
+        conference = conferences.assign_team_to_conference(db, league_id, size)
+        name = next(spare_names, None) or f"AI Team {len(teams) + len(created) + 1}"
+        team = Team(
+            league_id=league_id, name=name, is_ai_owned=True, program_size=size,
+            conference_id=conference.id,
+        )
+        db.add(team)
+        db.flush()  # so the next assignment sees this team's conference
+        tier_counts[size] += 1
+        created.append(team)
+    db.commit()
+    return created
 
 
 @router.get("/{league_id}/conferences", response_model=list[ConferenceOut])
@@ -119,42 +268,8 @@ def expand_conferences(league_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{league_id}/standings", response_model=list[StandingsRow])
 def get_standings(league_id: int, db: Session = Depends(get_db)):
-    """Derived on read from weekly_matchups - not a stored table, so it
-    can't drift out of sync with the matchup results it's built from."""
-    teams = db.query(Team).filter(Team.league_id == league_id).all()
-    if not teams:
+    """Derived live from lineups and player scores (platform/scoring.py) - nothing stored, so a
+    retroactive lineup change is reflected immediately."""
+    if not db.query(Team).filter(Team.league_id == league_id).count():
         raise HTTPException(404, "League not found or has no teams")
-    team_names = {t.id: t.name for t in teams}
-
-    wins = defaultdict(int)
-    losses = defaultdict(int)
-    points_for = defaultdict(float)
-    points_against = defaultdict(float)
-
-    matchups = (
-        db.query(WeeklyMatchup)
-        .filter(WeeklyMatchup.league_id == league_id, WeeklyMatchup.winner_team_id.isnot(None))
-        .all()
-    )
-    for m in matchups:
-        points_for[m.team_a_id] += m.team_a_score or 0.0
-        points_for[m.team_b_id] += m.team_b_score or 0.0
-        points_against[m.team_a_id] += m.team_b_score or 0.0
-        points_against[m.team_b_id] += m.team_a_score or 0.0
-        loser_id = m.team_b_id if m.winner_team_id == m.team_a_id else m.team_a_id
-        wins[m.winner_team_id] += 1
-        losses[loser_id] += 1
-
-    rows = [
-        StandingsRow(
-            team_id=team_id,
-            team_name=team_names[team_id],
-            wins=wins[team_id],
-            losses=losses[team_id],
-            points_for=points_for[team_id],
-            points_against=points_against[team_id],
-        )
-        for team_id in team_names
-    ]
-    rows.sort(key=lambda r: (-r.wins, -r.points_for))
-    return rows
+    return [StandingsRow(**r) for r in scoring.standings(db, league_id)]

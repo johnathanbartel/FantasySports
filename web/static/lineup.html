@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set Lineup</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);max-width:100%}
+  .slot{display:grid;grid-template-columns:78px minmax(0,1fr) 64px;gap:var(--space-3);align-items:center;padding:6px 0;border-top:1px solid var(--color-divider)}
+  .slot:first-child{border-top:0}
+  .slot .lab{font-family:var(--font-heading);font-size:14px}
+  .slot .lab small{display:block;font-family:var(--font-body);font-size:10px;letter-spacing:.06em;color:color-mix(in srgb, var(--color-text) 55%, transparent)}
+  .slot select{width:100%}
+  .slot .pts{text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
+  .slot.empty select{border-style:dashed}
+  .rrow{display:grid;grid-template-columns:34px minmax(0,1fr) 54px 64px;gap:var(--space-2);align-items:baseline;padding:5px 0;border-top:1px solid var(--color-divider);font-size:13px}
+  .rrow:first-child{border-top:0}
+  .rrow .pts{text-align:right;font-variant-numeric:tabular-nums}
+  .badge{font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+  .badge.st{color:var(--color-accent)}
+  .badge.bn{color:color-mix(in srgb, var(--color-text) 55%, transparent)}
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand" id="nav-brand">Lineup</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/commissioner.html">Commissioner mode</a>
+      <a href="#" id="nav-league">League home</a>
+      <a href="#" id="nav-board">Recruiting board</a>
+    </div>
+  </div>
+
+  <div style="max-width:1100px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-5)">
+      <div>
+        <div class="card-kicker" id="kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
+        <h1 style="margin:0">Set your lineup</h1>
+      </div>
+      <div style="display:flex;gap:var(--space-3);align-items:flex-end;flex-wrap:wrap">
+        <div><div class="card-kicker" style="margin-bottom:2px">Team</div><select id="team-select" class="inp"></select></div>
+        <div><div class="card-kicker" style="margin-bottom:2px">Week</div><select id="week-select" class="inp"></select></div>
+      </div>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="result-banner" style="display:none;background:var(--color-accent-100);color:var(--color-accent-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
+    <div id="acting-banner" style="display:none;background:color-mix(in srgb, var(--color-accent) 10%, transparent);border:1px solid var(--color-accent);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4);font-size:13px"></div>
+
+    <div id="signin-box" style="display:none;gap:6px;align-items:center;margin-bottom:var(--space-4)">
+      <select id="signin-select" class="inp"></select>
+      <button class="btn btn-primary" id="signin-btn">Sign in</button>
+    </div>
+
+    <div id="main" style="display:none;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:var(--space-6);align-items:start">
+
+      <div>
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);gap:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:var(--space-2)">
+            <h3 style="margin:0">Starting lineup</h3>
+            <span class="text-muted" style="font-size:12px" id="starter-total"></span>
+          </div>
+          <div id="slots"></div>
+          <div style="display:flex;gap:var(--space-2);margin-top:var(--space-4);flex-wrap:wrap">
+            <button class="btn btn-primary" id="save-btn">Save lineup</button>
+            <button class="btn btn-secondary" id="auto-btn">Auto-fill best lineup</button>
+            <button class="btn btn-ghost" id="clear-btn">Clear</button>
+          </div>
+          <p class="text-muted" style="font-size:12px;margin:var(--space-3) 0 0">
+            Players not in a starting slot go to your bench when you save. Points shown are last season's (<span class="ly">last season</span>), ESPN standard scoring - defense groups have none.
+          </p>
+        </div>
+      </div>
+
+      <div>
+        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);gap:0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:var(--space-2)">
+            <h3 style="margin:0">Roster</h3>
+            <span class="text-muted" style="font-size:12px" id="roster-count"></span>
+          </div>
+          <div id="roster"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id');
+const api = FSC.api;
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const POS_LABEL = {PK: 'K'};
+let LAST = 'last season';   // the year the fantasy points are from (set from /config)
+const pts = (v) => v == null ? '-' : v.toFixed(1);
+
+let me = null, league = null, canActForAi = false;
+let teams = [], slots = [], weeks = [];
+let teamId = null, weekId = null;
+let roster = [], rosterById = {};
+let slotInstances = [];     // [{code, label, eligible, assetId|null}]
+let dirty = false;
+
+function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+function showResult(msg) { const el = document.getElementById('result-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
+
+function buildInstances() {
+  slotInstances = [];
+  slots.filter(s => s.is_starter).forEach(s => {
+    for (let i = 0; i < s.slot_count; i++) {
+      slotInstances.push({
+        code: s.slot_code, eligible: s.eligible_positions, assetId: null,
+        label: s.slot_count > 1 ? `${s.slot_code} ${i + 1}` : (s.slot_code === 'FLEX' ? 'FLEX' : (POS_LABEL[s.slot_code] || s.slot_code)),
+        sub: s.eligible_positions.length > 1 ? s.eligible_positions.map(p => POS_LABEL[p] || p).join('/') : (['DL', 'LB', 'DB'].includes(s.slot_code) ? 'group' : ''),
+      });
+    }
+  });
+}
+
+async function loadTeamWeek() {
+  showError(''); showResult('');
+  roster = await api(`/teams/${teamId}/roster`);
+  rosterById = Object.fromEntries(roster.map(r => [r.draftable_asset_id, r]));
+  const entries = await api(`/teams/${teamId}/lineup?week_id=${weekId}`);
+  buildInstances();
+  const used = {};
+  entries.filter(e => e.slot_code !== 'BENCH').forEach(e => {
+    const inst = slotInstances.find(x => x.code === e.slot_code && x.assetId === null);
+    if (inst && rosterById[e.draftable_asset_id]) inst.assetId = e.draftable_asset_id;
+  });
+  dirty = false;
+  render();
+}
+
+function chosenIds(exceptIdx) {
+  return new Set(slotInstances.filter((_, i) => i !== exceptIdx).map(x => x.assetId).filter(x => x !== null));
+}
+
+function render() {
+  const team = teams.find(t => t.id === teamId);
+  document.getElementById('nav-brand').textContent = league.name;
+  const week = weeks.find(w => w.id === weekId);
+  document.getElementById('kicker').textContent = `${team ? team.name.toUpperCase() : ''} · WEEK ${week ? week.week_number : ''} · ${week ? week.season_year : ''}`;
+  const acting = team && team.is_ai_owned;
+  const banner = document.getElementById('acting-banner');
+  banner.style.display = acting ? 'block' : 'none';
+  if (acting) banner.innerHTML = `<strong>Commissioner mode:</strong> you're acting as commissioner for <strong>${esc(team.name)}</strong>, an AI-owned team. Changes you save here are its lineup.`;
+
+  const box = document.getElementById('slots');
+  box.innerHTML = '';
+  slotInstances.forEach((inst, idx) => {
+    const taken = chosenIds(idx);
+    const options = roster
+      .filter(r => inst.eligible.includes(r.position) && !taken.has(r.draftable_asset_id))
+      .sort((a, b) => (b.last_season_points ?? -1) - (a.last_season_points ?? -1) || a.display_name.localeCompare(b.display_name));
+    const row = document.createElement('div');
+    row.className = 'slot' + (inst.assetId === null ? ' empty' : '');
+    row.innerHTML = `<div class="lab">${esc(inst.label)}<small>${esc(inst.sub || '')}</small></div>
+      <select class="inp"><option value="">${options.length ? '- empty -' : '- nobody eligible -'}</option>${options.map(r =>
+        `<option value="${r.draftable_asset_id}"${r.draftable_asset_id === inst.assetId ? ' selected' : ''}>${esc(r.display_name)} · ${esc(r.real_team || '')} · ${pts(r.last_season_points)}</option>`).join('')}</select>
+      <div class="pts">${inst.assetId !== null ? pts(rosterById[inst.assetId]?.last_season_points) : ''}</div>`;
+    row.querySelector('select').onchange = (e) => { inst.assetId = e.target.value ? Number(e.target.value) : null; dirty = true; render(); };
+    box.appendChild(row);
+  });
+  const total = slotInstances.reduce((t, x) => t + (x.assetId !== null ? (rosterById[x.assetId]?.last_season_points || 0) : 0), 0);
+  document.getElementById('starter-total').textContent = `Starters' ${LAST} points: ${total.toFixed(1)}`;
+
+  const starterIds = new Set(slotInstances.map(x => x.assetId).filter(x => x !== null));
+  document.getElementById('roster-count').textContent = `${roster.length} players`;
+  const posRank = {QB: 0, RB: 1, WR: 2, TE: 3, PK: 4, DL: 5, LB: 6, DB: 7};
+  document.getElementById('roster').innerHTML = roster.length
+    ? roster.slice().sort((a, b) => (posRank[a.position] ?? 9) - (posRank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)).map(r =>
+      `<div class="rrow"><span class="tag tag-neutral" style="justify-content:center">${POS_LABEL[r.position] || r.position}</span>
+        <span>${esc(r.display_name)} <span class="text-muted">${esc(r.real_team || '')}</span></span>
+        <span class="badge ${starterIds.has(r.draftable_asset_id) ? 'st' : 'bn'}">${starterIds.has(r.draftable_asset_id) ? 'starter' : 'bench'}</span>
+        <span class="pts text-muted">${pts(r.last_season_points)}</span></div>`).join('')
+    : '<p class="text-muted" style="margin:0">This team has no players yet - finish the recruiting draft first.</p>';
+  document.getElementById('save-btn').disabled = !roster.length;
+  document.getElementById('auto-btn').disabled = !roster.length;
+}
+
+function assignmentsFromForm() {
+  const a = {};
+  slotInstances.forEach(x => { if (x.assetId !== null) (a[x.code] = a[x.code] || []).push(x.assetId); });
+  const starters = new Set(slotInstances.map(x => x.assetId).filter(x => x !== null));
+  const benchSlot = slots.find(s => !s.is_starter);
+  if (benchSlot) {
+    const bench = roster.filter(r => !starters.has(r.draftable_asset_id)).slice(0, benchSlot.slot_count).map(r => r.draftable_asset_id);
+    if (bench.length) a[benchSlot.slot_code] = bench;
+  }
+  return a;
+}
+
+document.getElementById('save-btn').onclick = async () => {
+  showError(''); showResult('');
+  try {
+    const out = await FSC.api(`/teams/${teamId}/lineup`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({week_id: weekId, assignments: assignmentsFromForm()}),
+    });
+    dirty = false;
+    showResult(`Lineup saved for week ${weeks.find(w => w.id === weekId)?.week_number}: ${out.filter(e => e.slot_code !== 'BENCH').length} starters, ${out.filter(e => e.slot_code === 'BENCH').length} on the bench.`);
+  } catch (e) { showError(e.message); }
+};
+document.getElementById('auto-btn').onclick = async () => {
+  showError(''); showResult('');
+  try {
+    await FSC.post(`/teams/${teamId}/lineup/auto?week_id=${weekId}`);
+    await loadTeamWeek();
+    showResult(`Best lineup set and saved - the highest ${LAST} scorer at each position.`);
+  } catch (e) { showError(e.message); }
+};
+document.getElementById('clear-btn').onclick = () => { slotInstances.forEach(x => x.assetId = null); dirty = true; render(); };
+
+async function start() {
+  if (!LEAGUE_ID) { showError('Missing league_id.'); return; }
+  const session = await FSC.current();
+  if (!session) {
+    document.getElementById('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json());
+    document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
+    document.getElementById('signin-btn').onclick = async () => { await FSC.signIn(Number(document.getElementById('signin-select').value)); location.reload(); };
+    showError('Sign in to set a lineup.');
+    return;
+  }
+  me = session.user_id;
+  try { const cfg = await fetch('/config').then(r => r.json()); if (cfg.last_season) LAST = String(cfg.last_season); } catch (e) {}
+  document.querySelectorAll('.ly').forEach(e => e.textContent = LAST);
+  document.getElementById('nav-board').href = `/static/recruiting-board.html?league_id=${LEAGUE_ID}`;
+  document.getElementById('nav-league').href = `/static/league.html?league_id=${LEAGUE_ID}`;
+  const [lg, allTeams, sl, wk, ent] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}`), api(`/leagues/${LEAGUE_ID}/teams`), api(`/leagues/${LEAGUE_ID}/roster-slots`),
+    api(`/leagues/${LEAGUE_ID}/weeks`), api('/entitlements/me'),
+  ]);
+  league = lg; slots = sl; weeks = wk;
+  try {   // a ranked team shows its poll rank next to its name
+    const poll = await api(`/leagues/${LEAGUE_ID}/rankings`);
+    const rank = Object.fromEntries(poll.ranked.map(r => [r.team_id, r.rank]));
+    allTeams.forEach(t => { if (rank[t.id]) t.name = `#${rank[t.id]} ${t.name}`; });
+  } catch (e) {}
+  canActForAi = ent.commissioner_mode && league.commissioner_user_id === me;
+  // Teams you can set a lineup for: your own, plus (commissioner mode) the league's AI teams.
+  teams = allTeams.filter(t => (!t.is_ai_owned && t.owner_user_id === me) || (t.is_ai_owned && canActForAi));
+  if (!teams.length) { showError('You have no team in this league to set a lineup for.'); return; }
+  const wantTeam = Number(params.get('team_id'));
+  teamId = teams.find(t => t.id === wantTeam)?.id ?? teams[0].id;
+  weekId = weeks.find(w => w.id === Number(params.get('week_id')))?.id ?? weeks[0]?.id;
+  document.getElementById('team-select').innerHTML = teams.map(t => `<option value="${t.id}"${t.id === teamId ? ' selected' : ''}>${esc(t.name)}${t.is_ai_owned ? ' (AI)' : ''}</option>`).join('');
+  document.getElementById('week-select').innerHTML = weeks.map(w => `<option value="${w.id}"${w.id === weekId ? ' selected' : ''}>Week ${w.week_number} (${w.season_year})</option>`).join('');
+  const change = async () => {
+    if (dirty && !confirm('Discard your unsaved lineup changes?')) {
+      document.getElementById('team-select').value = teamId; document.getElementById('week-select').value = weekId; return;
+    }
+    teamId = Number(document.getElementById('team-select').value); weekId = Number(document.getElementById('week-select').value);
+    try { await loadTeamWeek(); } catch (e) { showError(e.message); }
+  };
+  document.getElementById('team-select').onchange = change;
+  document.getElementById('week-select').onchange = change;
+  document.getElementById('main').style.display = 'grid';
+  await loadTeamWeek();
+}
+start().catch(e => showError(`Failed to load: ${e.message}`));
+</script>
+</body>
+</html>

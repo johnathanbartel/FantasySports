@@ -46,6 +46,22 @@ class User(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class UserSession(Base):
+    """Dev-grade login session: an opaque bearer token that identifies a
+    user. There is no password check yet (users.password_hash is only a hook),
+    so anyone who can POST /sessions can become any user - this closes the
+    "team_id in the request body" trust gap (acting as a team you don't own),
+    not real authentication. Swap the login step for real credentials later
+    without touching the ownership checks in api/auth.py."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Universe(Base):
     __tablename__ = "universes"
 
@@ -513,3 +529,217 @@ class WeeklyTeamScore(Base):
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id"))
     total_points: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class RecruitingSettings(Base):
+    """Commissioner-chosen settings for a league's recruiting draft. Kept in
+    its own table (not columns on leagues) so they can be added to databases
+    that predate them without an ALTER."""
+
+    __tablename__ = "recruiting_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), unique=True)
+    # How long each recruiting period lasts. The draft has one period per
+    # roster spot (League.draft_rounds), so a 20-man roster means 20 periods.
+    period_seconds: Mapped[int] = mapped_column(Integer)
+    # The pause between periods: results are shown and no bids can be placed.
+    buffer_seconds: Mapped[int] = mapped_column(Integer, default=20)
+
+
+class RecruitingDraft(Base):
+    """A league's recruiting draft (draft_type="recruit"): a series of
+    fixed-length periods - the recruiting equivalent of rounds. During any
+    period every team can bid on any player at any time; bids are processed
+    only when a period ends (see platform/recruiting/engine.py). Separate from
+    AuctionDraft, the one-player-at-a-time timed auction."""
+
+    __tablename__ = "recruiting_drafts"
+    __table_args__ = (UniqueConstraint("league_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open / closed
+    started_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    ended_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    period_seconds: Mapped[int] = mapped_column(Integer)
+    buffer_seconds: Mapped[int] = mapped_column(Integer, default=20)
+    total_periods: Mapped[int] = mapped_column(Integer)
+    # Periods whose bids have already been processed (0..total_periods).
+    periods_processed: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RecruitingThreshold(Base):
+    """A player's hidden price for one recruiting draft. Never exposed by the
+    API before the player is awarded."""
+
+    __tablename__ = "recruiting_thresholds"
+    __table_args__ = (UniqueConstraint("draft_id", "draftable_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    threshold: Mapped[int] = mapped_column(Integer)
+    is_elite: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class RecruitingBid(Base):
+    """A team's standing bid on one player. Persists across periods (and can
+    be raised, lowered or retracted) until the player is awarded or the draft
+    ends."""
+
+    __tablename__ = "recruiting_bids"
+    __table_args__ = (UniqueConstraint("draft_id", "team_id", "draftable_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    amount: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class RecruitingAward(Base):
+    """A player awarded to a team when a period's bids were processed.
+    reason: "threshold" (the sum of bids met the hidden price) or "deadline"
+    (the final period ended; the highest bidder takes the player regardless
+    of price). price is what the winner bid, and is charged against budget."""
+
+    __tablename__ = "recruiting_awards"
+    __table_args__ = (UniqueConstraint("draft_id", "draftable_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    period_number: Mapped[int] = mapped_column(Integer)
+    price: Mapped[int] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(20))
+    was_tie_broken_randomly: Mapped[bool] = mapped_column(Boolean, default=False)
+    awarded_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
+class RecruitingCharge(Base):
+    """Money a team spends when a player is awarded. The money bid on a player
+    goes to the player: EVERY team with a standing bid on him is charged its
+    bid when he is awarded, whether or not it won him. So a team that bid $5
+    on a player who went to someone else loses that $5. is_winner marks the
+    team that got the player. A team's spend is the sum of its charges; bids
+    on players who are never awarded are never charged."""
+
+    __tablename__ = "recruiting_charges"
+    __table_args__ = (UniqueConstraint("draft_id", "team_id", "draftable_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    period_number: Mapped[int] = mapped_column(Integer)
+    amount: Mapped[int] = mapped_column(Integer)
+    is_winner: Mapped[bool] = mapped_column(Boolean)
+
+
+class RecruitingBidResult(Base):
+    """What happened to one team's bid on one player when a period was
+    processed - a snapshot taken at that moment, so it stays accurate after the
+    bid is changed. completion_pct is the total of all (eligible) bids on the
+    player divided by his hidden price, as a percent; it is shown to a team
+    only in its own end-of-period results screen, never elsewhere.
+    outcome: "won" / "lost" (someone else won him - the bid is still charged)
+    / "pending" (his price wasn't met; the bid carries into the next period)."""
+
+    __tablename__ = "recruiting_bid_results"
+    __table_args__ = (UniqueConstraint("draft_id", "period_number", "team_id", "draftable_asset_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    period_number: Mapped[int] = mapped_column(Integer)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    bid_amount: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(10))
+    completion_pct: Mapped[float] = mapped_column(Float)
+    charged: Mapped[int] = mapped_column(Integer)
+
+
+class RecruitingResultAck(Base):
+    """A team has closed the results screen for a period. Until it has, the
+    screen keeps coming back (even after a page reload)."""
+
+    __tablename__ = "recruiting_result_acks"
+    __table_args__ = (UniqueConstraint("draft_id", "team_id", "period_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    draft_id: Mapped[int] = mapped_column(ForeignKey("recruiting_drafts.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    period_number: Mapped[int] = mapped_column(Integer)
+
+
+class UserEntitlement(Base):
+    """A paid/premium feature switched on for a user (see platform/entitlements.py).
+    Today's only feature is "commissioner_mode"."""
+
+    __tablename__ = "user_entitlements"
+    __table_args__ = (UniqueConstraint("user_id", "feature"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    feature: Mapped[str] = mapped_column(String(40))
+    granted_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FreeAgencyTransaction(Base):
+    """A free-agency signing or release (see platform/free_agency.py). The
+    league-wide Transactions log is these rows plus the recruiting awards.
+    kind: "add" / "drop". reason: "user" (the owner did it), "commissioner"
+    (a commissioner-mode commissioner acted for an AI team) or "ai_fill" (the
+    AI's required fill of open roster spots). price is what the signing cost
+    (0 for a drop)."""
+
+    __tablename__ = "free_agency_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    kind: Mapped[str] = mapped_column(String(10))
+    price: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
+class ScheduleSettings(Base):
+    """The preseason schedule stage of a league (platform/schedule.py): "open" while teams
+    may still request different opponents, "closed" once the commissioner has closed it
+    (pending requests to AI teams are resolved then, everything else pending is declined).
+    A league without a row is "open"."""
+
+    __tablename__ = "schedule_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), unique=True)
+    status: Mapped[str] = mapped_column(String(10), default="open")
+    closed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MatchupRequest(Base):
+    """One team asking another to play it in a given week, optionally sweetened with in-game
+    cash. status: "pending" / "accepted" / "declined" / "withdrawn". The cash only moves if the
+    request is accepted (an accepted request's offer_amount is paid from the sender to the
+    receiver - see free_agency.team_money)."""
+
+    __tablename__ = "matchup_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id"))
+    from_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    to_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    offer_amount: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)

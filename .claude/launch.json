@@ -4,7 +4,20 @@
     {
       "name": "fantasy-sports-api",
       "runtimeExecutable": ".venv-api/Scripts/uvicorn.exe",
-      "runtimeArgs": ["fantasy_sports.api.main:app", "--reload", "--port", "8000"],
+      "runtimeArgs": [
+        "fantasy_sports.api.main:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "fantasy-sports-demo-run",
+      "runtimeExecutable": ".venv-api/Scripts/python.exe",
+      "runtimeArgs": [
+        "scripts/serve_demo.py"
+      ],
       "port": 8000
     }
   ]
