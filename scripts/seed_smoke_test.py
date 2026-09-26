@@ -106,6 +106,10 @@ def main():
     db = SessionLocal()
     ref = seed_reference_data(db)
 
+    resp = client.post("/sessions", json={"user_id": ref["commissioner"].id})
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
     # --- League + teams -----------------------------------------------
     resp = client.post("/leagues", json={
         "name": "Smoke Test League",
@@ -113,16 +117,16 @@ def main():
         "universe_codes": ["ncaaf"],
         "size": 2,
         "draft_rounds": 2,
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     league = resp.json()
     print(f"Created league {league['id']}: {league['name']}")
 
     team_a = Team(league_id=league["id"], name="Team A", owner_user_id=ref["commissioner"].id)
-    team_b = Team(league_id=league["id"], name="Team B", is_ai_owned=True)
+    team_b = Team(league_id=league["id"], name="Team B", owner_user_id=ref["commissioner"].id)
     db.add_all([team_a, team_b])
     db.commit()
-    print(f"Teams: {team_a.id} ({team_a.name}), {team_b.id} ({team_b.name}, AI-owned)")
+    print(f"Teams: {team_a.id} ({team_a.name}), {team_b.id} ({team_b.name})")
 
     # --- Draft: covers both a player and a defense group ---------------
     resp = client.post("/drafts/start", json={"league_id": league["id"]})
@@ -133,12 +137,18 @@ def main():
     board = client.get(f"/drafts/{draft['id']}/board").json()
     print(f"Draft board: {[b['display_name'] for b in board]}")
 
-    resp = client.post(f"/drafts/{draft['id']}/pick", json={"draftable_asset_id": ref["qb_asset"].id})
+    resp = client.post(
+        f"/drafts/{draft['id']}/pick",
+        json={"draftable_asset_id": ref["qb_asset"].id},
+        headers=headers,
+    )
     assert resp.status_code == 200, resp.text
     print(f"Pick 1: {resp.json()['display_name']} -> team {resp.json()['team_id']}")
 
     resp = client.post(
-        f"/drafts/{draft['id']}/pick", json={"draftable_asset_id": ref["db_group_asset"].id}
+        f"/drafts/{draft['id']}/pick",
+        json={"draftable_asset_id": ref["db_group_asset"].id},
+        headers=headers,
     )
     assert resp.status_code == 200, resp.text
     print(f"Pick 2: {resp.json()['display_name']} -> team {resp.json()['team_id']} "
@@ -158,7 +168,7 @@ def main():
     resp = client.put(f"/teams/{team_a.id}/lineup", json={
         "week_id": ref["week1"].id,
         "assignments": {"QB": ref["qb_asset"].id},
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     print(f"Set week-1 lineup for team {team_a.id}: {resp.json()}")
 
