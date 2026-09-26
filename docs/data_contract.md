@@ -1,6 +1,6 @@
 # Fantasy Sports Platform — Data Contract (Football: College + NFL)
 
-For handoff to design work on UI mockups. Describes what's actually built and running (schema in `db/models/`, API in `api/`), not aspirational — every entity and endpoint below has been verified end to end against a real database (`scripts/seed_smoke_test.py`).
+For handoff to design work on UI mockups. Describes what's actually built and running (schema in `src/fantasy_sports/platform/db/models/`, API in `src/fantasy_sports/api/`), not aspirational — every entity and endpoint below has been verified end to end against a real database (`scripts/seed_smoke_test.py`).
 
 ## How to read this
 
