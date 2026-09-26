@@ -66,6 +66,21 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - **Scoring and attribution**: Never modify scoring or attribution code (`src/fantasy_sports/sports/`, `src/fantasy_sports/platform/scoring.py`, `src/fantasy_sports/platform/scoring_scale.py`). All scoring and attribution work must be routed to Claude Code.
 - **Package management**: No package installs without asking the user.
 - **External requests**: No paid or external API calls; never run scripts that fetch live external data.
+- **Scope**: Work only inside this repo. Never touch `C:\Users\johna\BuildLab`, any other repo, or the home folder (`C:\Users\johna`). Start every agent from this repo's root, never from the home folder.
+- **Stop conditions**: If the working tree is not clean, or the task's premise is already done or wrong, stop and report instead of improvising.
+
+## Handoff routine
+
+Every task follows the same steps, whichever agent runs it:
+1. **Pick the agent by task size** (see Routing). Large or scoring work stays with Claude Code.
+2. **Write a self-contained prompt** with these sections: GOAL, WORKING DIRECTORY AND BRANCH, FILES IN SCOPE, FILES OFF-LIMITS, BACKGROUND, STEPS, HOW TO VERIFY (exact command and what passing looks like), BOUNDARIES, REPORT BACK. Check its claims against the repo first; stale background wastes a run.
+3. **Branch**: the agent creates `handoff/<provider>-<topic>` from the current feature branch, where provider is `codex`, `antigravity` or `claude`.
+4. **Run one agent at a time** in this checkout. Two agents switching branches in the same folder will clash.
+5. **Verify**: run the stated commands, and commit on the handoff branch only.
+6. **Review the diff** (`git diff --stat <base> <handoff-branch>`) and confirm only the files in scope changed. A human decides whether to merge. Agents never merge or push.
+7. **Record usage**: note the quota bars before and after (Codex Plan limits panel; Antigravity `/usage`) so the routing shares stay accurate. Full routing and limits are in `claude/model-routing-guide.md`.
+
+Sandbox note: Codex cannot read the global git ignore file, so a stray file that your terminal hides can show up as untracked for Codex and make it stop. Fix such files locally in `.git/info/exclude`.
 
 ## Routing
 
