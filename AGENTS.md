@@ -52,7 +52,6 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 
 There is no pytest test suite. Offline verification commands (PowerShell from repository root):
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_smoke_test.py`
-  - Known failure on branch feature/timed-auction-draft-mock-run: fails with HTTP 401 (`Sign in first (no session token supplied)`).
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_auction_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/run_mock_e2e.py`
@@ -91,5 +90,4 @@ Sandbox note: Codex cannot read the global git ignore file, so a stray file that
 ## Known doc drift
 
 - **Integration branch**: `docs/architecture.md` and `README.md` name master as the integration branch; the only active repository branches are main and feature/timed-auction-draft-mock-run (plus handoff branches). The master branch does not exist in git.
-- **Smoke test HTTP 401**: `scripts/seed_smoke_test.py` fails with HTTP 401 on this branch (pre-existing: it sends requests without auth headers). Listed as a known failing check on this branch.
 - **Starter slots vs roster count**: `src/fantasy_sports/sports/football/README.md` documents 10 starters, but `docs/data_contract.md` and schema add an 11th starter slot (kicker), requiring 21 roster slots (11 starters + 10 bench) while drafts remain 20 rounds until bench sizing is finalized.
