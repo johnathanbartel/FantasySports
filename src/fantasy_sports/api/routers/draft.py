@@ -140,17 +140,29 @@ def make_pick(
 ):
     """Fills the next open pick slot with the given asset.
 
-    The caller must own the team on the clock. TODO (out of scope): validate
-    the pick isn't already rostered elsewhere in the league.
+    The caller must own the team on the clock, and the asset must not already
+    be rostered by another team in the league.
     """
     pick = _next_open_pick(db, draft_id)
     if pick is None:
         raise HTTPException(400, "Draft has no open picks left")
-    assert_owns_team(db, user, pick.team_id)
+    team_on_clock = assert_owns_team(db, user, pick.team_id)
 
     asset = db.get(DraftableAsset, payload.draftable_asset_id)
     if asset is None:
         raise HTTPException(404, "Draftable asset not found")
+
+    already_rostered = (
+        db.query(RosterEntry.id)
+        .join(Team, Team.id == RosterEntry.team_id)
+        .filter(
+            RosterEntry.draftable_asset_id == asset.id,
+            Team.league_id == team_on_clock.league_id,
+        )
+        .first()
+    )
+    if already_rostered is not None:
+        raise HTTPException(409, "Draftable asset is already rostered in this league")
 
     pick.draftable_asset_id = asset.id
     pick.picked_at = datetime.datetime.utcnow()
