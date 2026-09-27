@@ -46,6 +46,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_conference_smoke_test.py` | Smoke test for conference tiers, team placement, and tier expansion | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_demo_league.py` | Seeds demo league with real CFBD rosters, 240-pick draft, and 3 scored weeks | `.venv` | Yes (calls CFBD API, requires `CFBD_API_KEY`; unverified in docstring) | Yes (resets `DATABASE_URL`) |
 | `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
+| `scripts/seed_hockey_universe.py` | Idempotently adds the "nhl" universe + roster slot definitions to whatever `DATABASE_URL` points at, so NHL leagues can be created from the same site already hosting CFB leagues | `.venv-api` | No | Yes (`DATABASE_URL`; additive-only, safe to re-run) |
 | `scripts/seed_smoke_test.py` | Smoke test round-tripping schema and API endpoints via TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/serve_demo.py` | Runs FastAPI server via Uvicorn against local demo dataset | `.venv-api` | No (unverified in docstring) | Yes (copies demo DB) |
 
