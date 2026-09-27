@@ -4,9 +4,11 @@ A single-site fantasy platform for major sports. Shared league mechanics live
 once in the platform layer; each sport supplies only its provider integrations,
 scoring rules, and sport-specific persistence.
 
-Football (NCAAF first, NFL next) is the current working implementation. The
-baseball, basketball, and hockey package boundaries are ready for MLB, NBA, and
-NHL modules without duplicating site infrastructure.
+Football (NCAAF first, NFL next) is the current working implementation.
+Hockey (NHL) has a written scoring/roster spec and its data model stood up
+(see below); the baseball, basketball, and hockey package boundaries are
+otherwise ready for MLB, NBA, and further NHL work without duplicating site
+infrastructure.
 
 ## Repository layout
 
@@ -26,8 +28,9 @@ docs/                      architecture and data contracts
 ```
 
 See [docs/architecture.md](docs/architecture.md) for placement and branch rules,
-and [the football spec](src/fantasy_sports/sports/football/README.md) for EPA
-scoring details.
+[the football spec](src/fantasy_sports/sports/football/README.md) for EPA
+scoring details, and [the hockey spec](src/fantasy_sports/sports/hockey/README.md)
+for xG-based scoring and roster rules.
 
 ## Branch model
 
@@ -84,6 +87,12 @@ Run the conference/program-size smoke test (baseline conferences, team placement
 
 ```powershell
 .venv-api\Scripts\python.exe scripts/seed_conference_smoke_test.py
+```
+
+Run the NHL stand-up smoke test (nhl universe, roster slot definitions, draft round-trip on the shared platform):
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_hockey_smoke_test.py
 ```
 
 To reset and seed the local demo league with real CFBD roster and game data:

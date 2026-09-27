@@ -45,6 +45,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_auction_smoke_test.py` | Smoke test for timed sealed-bid auction draft engine round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_conference_smoke_test.py` | Smoke test for conference tiers, team placement, and tier expansion | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_demo_league.py` | Seeds demo league with real CFBD rosters, 240-pick draft, and 3 scored weeks | `.venv` | Yes (calls CFBD API, requires `CFBD_API_KEY`; unverified in docstring) | Yes (resets `DATABASE_URL`) |
+| `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_smoke_test.py` | Smoke test round-tripping schema and API endpoints via TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/serve_demo.py` | Runs FastAPI server via Uvicorn against local demo dataset | `.venv-api` | No (unverified in docstring) | Yes (copies demo DB) |
 
@@ -54,6 +55,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_auction_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_hockey_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/run_mock_e2e.py`
 - Path verification: run `Test-Path` in PowerShell for referenced repository file paths.
 
@@ -91,3 +93,4 @@ Sandbox note: Codex cannot read the global git ignore file, so a stray file that
 
 - **Integration branch**: `docs/architecture.md` and `README.md` name master as the integration branch; the only active repository branches are main and feature/timed-auction-draft-mock-run (plus handoff branches). The master branch does not exist in git.
 - **Starter slots vs roster count**: `src/fantasy_sports/sports/football/README.md` documents 10 starters, but `docs/data_contract.md` and schema add an 11th starter slot (kicker), requiring 21 roster slots (11 starters + 10 bench) while drafts remain 20 rounds until bench sizing is finalized.
+- **Alembic has two migration heads** (`a3f7c1e9d2b4` and, as of the hockey stand-up, `c3d8e1a5f9b2`): `a3f7c1e9d2b4_league_draft_type_and_schedule.py` and `f6c4e0b8d2a3_recruiting_periods.py` both branch off `d4f2a8c1b6e9`, and nothing has merged them back. `alembic upgrade head` fails with "Multiple heads" until a human reconciles the branch (a merge migration, or rebasing one branch onto the other) - this predates the hockey work and isn't caused by it. Target a specific revision id (not the bare `head`) when testing migrations against a throwaway DB until it's fixed.
