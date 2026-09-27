@@ -105,11 +105,18 @@ const SPORTS = [
   {
     id: 'hockey',
     label: 'Hockey',
-    status: 'planned',
-    statusLabel: 'Coming soon',
-    summary: 'Module boundary is in place in the codebase. Scoring rules and provider integrations have not been built yet.',
-    features: [],
-    links: [],
+    status: 'progress',
+    statusLabel: 'In progress',
+    summary: "The NHL universe exists in the platform's shared schema, with an expected-goals (xG) scoring spec and a 20-man roster structure defined. No real player or team data is ingested yet, so there's no draft pool or live league for it.",
+    features: [
+      'xG-based scoring spec: a goal splits into chance-creation credit (shared with assists) and finishing credit for the shooter',
+      'Goalie scoring as Goals Saved Above Expected (GSAx), not raw save count',
+      '20-man roster (12 starters/8 bench across C/LW/RW/D/G) seeded as roster slot definitions',
+      'Shared platform mechanics - leagues, snake draft, timed sealed-bid auction draft - work unmodified for NHL once player data exists',
+    ],
+    links: [
+      { href: '/docs', label: 'API docs' },
+    ],
   },
 ];
 
