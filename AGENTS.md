@@ -31,6 +31,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 
 | Script | Purpose | Venv | External API / .env | Writes DB |
 |---|---|---|---|---|
+| `scripts/audit_scored_week.py` | Read-only realism audit of one scored week (team scores vs real games, credit-vs-real correlation, standings tie-out); pass a throwaway DB, `--league`, `--week` | `.venv-api` | No | No (read-only) |
 | `scripts/delete_all_leagues.py` | Deletes leagues and child records from SQLite DBs (dry run default; `--yes` executes) | `.venv-api` | No (unverified in docstring) | Yes (destructive with `--yes`) |
 | `scripts/ingest_current_season.py` | Ingests FBS rosters, season calendar weeks, and prior season ESPN points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_season_points.py` | Ingests full-season stat lines from CFBD and stores ESPN standard points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
