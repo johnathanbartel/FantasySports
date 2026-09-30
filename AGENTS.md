@@ -34,6 +34,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/audit_scored_week.py` | Read-only realism audit of one scored week (team scores vs real games, credit-vs-real correlation, standings tie-out); pass a throwaway DB, `--league`, `--week` | `.venv-api` | No | No (read-only) |
 | `scripts/delete_all_leagues.py` | Deletes leagues and child records from SQLite DBs (dry run default; `--yes` executes) | `.venv-api` | No (unverified in docstring) | Yes (destructive with `--yes`) |
 | `scripts/ingest_current_season.py` | Ingests FBS rosters, season calendar weeks, and prior season ESPN points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
+| `scripts/ingest_nfl_rosters_and_stats.py` | Idempotently ingests nflverse NFL rosters and one regular-season week of player stats | `.venv` | Yes (nflverse GitHub releases; no key) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_season_points.py` | Ingests full-season stat lines from CFBD and stores ESPN standard points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_week_scores.py` | Scores real games for season weeks (games, plays, credits, weekly scores) | `.venv` | Yes (CFBD API; `CFBD_API_KEY` unverified in docstring) | Yes (`DATABASE_URL`) |
 | `scripts/run_mock_auction_draft.py` | Runs timed auction draft end-to-end via FastAPI TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
