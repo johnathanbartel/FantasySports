@@ -88,6 +88,10 @@ A player's fantasy score for a play is never the full play value credited twice 
 
 **`draft_scheduled_at` is stored and returned as naive UTC**, same convention as every other timestamp on this platform (see the auction round timer note below) — `roster.html` has to explicitly treat the API's timestamp as UTC before formatting it for display, rather than handing it to `new Date(...)` as-is, or it renders in the wrong hour for any browser not in UTC.
 
+## Decision: Timed Auction Draft defensive position bidding granularity
+
+**Bid on individually, per group** — never bundled by real team. In the Timed Auction Draft, each defensive position group is its own auction line: a manager can bid on and win Georgia's DB group and Notre Dame's DL group as two separate, independent bids, and a single real team's DL/LB/DB groups are never combined into one bid line. This is consistent with the `DL/LB/DB draft pool` decision above, which already establishes each `defense_groups` row (one per real team per position group — DL, LB, DB) as an atomic `draftable_assets` entry; this decision confirms that same per-group unit is also the atomic bidding unit in the auction's round resolution logic. No additional bundling table or bundling logic is required.
+
 ## Key API actions
 
 All implemented and verified against a real database; full request/response shapes at `/docs`.
