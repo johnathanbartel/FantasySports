@@ -30,7 +30,7 @@ import nfl_data_py as nfl
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
-from fantasy_sports.sports.football.professional.defense import PositionResolver
+from fantasy_sports.sports.football.professional.defense import EventWeights, PositionResolver
 from fantasy_sports.sports.football.professional.pipeline import process_plays
 
 
@@ -47,6 +47,7 @@ def main():
     sched = sched[(sched.week == args.week) & (sched.game_type == "REG")]
     print(f"{len(sched)} REG games, {len(pbp)} plays for {args.year} week {args.week}\n")
 
+    weights = EventWeights.load()
     resolver = PositionResolver.from_roster_frame(nfl.import_seasonal_rosters([args.year]))
 
     real_score: dict[str, float] = {}
@@ -61,13 +62,16 @@ def main():
     def_rows: list[tuple[str, float, float, float]] = []  # team, model_allowed, real_allowed, error
     group_totals = {"DL": 0.0, "LB": 0.0, "DB": 0.0}
     max_tie_gap = 0.0
+    max_ind_gap = 0.0
+    remainder_total = 0.0
+    ind_players: set[str] = set()
     named_plays = fallback_plays = 0
     total_unattributed = 0
     total_skipped = 0
     total_scrimmage_plays = 0
 
     for game_id, game_plays in pbp.groupby("game_id"):
-        result = process_plays(game_plays, resolver=resolver)
+        result = process_plays(game_plays, resolver=resolver, individual_weights=weights)
         total_unattributed += len(result.unattributed)
         total_skipped += len(result.skipped)
         total_scrimmage_plays += game_plays.play_type.isin(("run", "pass")).sum()
@@ -80,6 +84,10 @@ def main():
             model_total = result.model_total(team)
             rows.append((team, model_total, real, model_total - real))
 
+        game_ind = sum(result.individual_credits.values()) + sum(result.defense_team_remainder.values())
+        max_ind_gap = max(max_ind_gap, abs(game_ind + sum(result.epa_allowed_by_team.values())))
+        remainder_total += sum(result.defense_team_remainder.values())
+        ind_players |= set(result.individual_credits)
         named_plays += result.defense_named_plays
         fallback_plays += result.defense_fallback_plays
         for team in set(result.epa_allowed_by_team) | set(result.fg_credit_allowed_by_team):
@@ -127,6 +135,9 @@ def main():
           f"({100 * named_plays / max(total_def_plays, 1):.1f}%); the rest use the play-type fallback.")
     print(f"Group credit tie-out: max |sum(DL+LB+DB) + epa allowed| per team = {max_tie_gap:.6f} "
           f"(must be ~0)")
+    print(f"Individual credit tie-out: max per-game |sum(players) + team remainder + epa allowed| = "
+          f"{max_ind_gap:.6f} (must be ~0); {len(ind_players)} defenders credited; "
+          f"team remainder (no named defender) = {remainder_total:+.2f} EPA")
     n_def = max(len(def_rows), 1)
     print("Mean group credit per team-game (uncentered): "
           + ", ".join(f"{g}={v / n_def:+.2f}" for g, v in group_totals.items()))

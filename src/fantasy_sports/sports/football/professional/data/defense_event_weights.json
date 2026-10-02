@@ -1,0 +1,83 @@
+{
+  "source": "nflfastR REG-season run/pass plays 2021-2025, OLS of -epa on event counts",
+  "years": [
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "floor_frac": 0.05,
+  "weights": {
+    "pass": {
+      "sack": 0.9925801893435889,
+      "qb_hit": 0.22231960733763634,
+      "tackle_for_loss": 1.2914921059269442,
+      "pass_defense": 0.7373063293960906,
+      "interception": 4.038338660436378,
+      "forced_fumble": 2.815122230131126,
+      "solo_tackle": 0.8741651065677232,
+      "assist_tackle": 0.3673509976739342
+    },
+    "run": {
+      "sack": 0.021657954360068933,
+      "qb_hit": 0.021657954360068933,
+      "tackle_for_loss": 1.3256193862722347,
+      "pass_defense": 0.021657954360068933,
+      "interception": 0.021657954360068933,
+      "forced_fumble": 2.8474457091941257,
+      "solo_tackle": 0.5961308665736643,
+      "assist_tackle": 0.43315908720137863
+    }
+  },
+  "fit": {
+    "pass": {
+      "n_plays": 97019,
+      "intercept": 0.11373676815482978,
+      "coefficients": {
+        "sack": 0.9925801893435889,
+        "qb_hit": 0.22231960733763634,
+        "tackle_for_loss": 1.2914921059269442,
+        "pass_defense": 0.7373063293960906,
+        "interception": 4.038338660436378,
+        "forced_fumble": 2.815122230131126,
+        "solo_tackle": -0.8741651065677232,
+        "assist_tackle": -0.3673509976739342
+      },
+      "role_counts": {
+        "sack": 6504.0,
+        "qb_hit": 15254.0,
+        "tackle_for_loss": 6648.0,
+        "pass_defense": 11619.0,
+        "interception": 2055.0,
+        "forced_fumble": 1373.0,
+        "solo_tackle": 50438.0,
+        "assist_tackle": 18166.0
+      }
+    },
+    "run": {
+      "n_plays": 71258,
+      "intercept": -0.7369364051796041,
+      "coefficients": {
+        "sack": 6.661338147750939e-16,
+        "qb_hit": -4.440892098500626e-16,
+        "tackle_for_loss": 1.3256193862722347,
+        "pass_defense": 4.440892098500626e-16,
+        "interception": 0.0,
+        "forced_fumble": 2.8474457091941257,
+        "solo_tackle": 0.5961308665736643,
+        "assist_tackle": 0.43315908720137863
+      },
+      "role_counts": {
+        "sack": 0.0,
+        "qb_hit": 0.0,
+        "tackle_for_loss": 6039.0,
+        "pass_defense": 0.0,
+        "interception": 0.0,
+        "forced_fumble": 546.0,
+        "solo_tackle": 40819.0,
+        "assist_tackle": 45788.0
+      }
+    }
+  }
+}
