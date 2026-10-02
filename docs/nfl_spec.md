@@ -112,19 +112,22 @@ ticket.
 ## Roster and draft
 
 Offense is the same in every mode: QB 1, RB 2, WR 2, TE 1, FLEX 1 (RB/WR/TE),
-K 1, plus 9 bench. Defense starters depend on the league's defense mode:
+K 1. The bench is 70% of the starter count (rounded to the nearest asset), so it
+also depends on the defense mode:
 
-| Mode | Defense slots | Starters | Roster assets |
-|---|---|---:|---:|
-| group | DL 1, LB 1, DB 1 (team units) | 11 | 20 |
-| team | DEF 1 (whole defense) | 9 | 18 |
-| individual | DL 3, LB 3, DB 4, DFLEX 1 (any of DL/LB/DB) | 19 | 28 |
+| Mode | Defense slots | Starters | Bench | Roster assets |
+|---|---|---:|---:|---:|
+| group | DL 1, LB 1, DB 1 (team units) | 11 | 8 | 19 |
+| team | DEF 1 (whole defense) | 9 | 6 | 15 |
+| individual | DL 3, LB 3, DB 4, DFLEX 1 (any of DL/LB/DB) | 19 | 13 | 32 |
 
 Individual defenders fill slots by their unit (DE/DT/NT/EDGE = DL,
-ILB/MLB/OLB = LB, CB/S/SS/FS = DB). A league's `draft_rounds` is the
-commissioner's setting and is not yet derived from the mode.
+ILB/MLB/OLB = LB, CB/S/SS/FS = DB). A league's `draft_rounds` is its roster size:
+`POST /leagues` derives it from the mode's slots unless the request sets it
+explicitly.
 
-The default league has 12 fantasy teams and a 20-round snake draft. Offensive
+The default league has 12 fantasy teams and a snake draft of roster-size rounds
+(19 in the default group mode). Offensive
 players, kickers, and defense groups share one draft pool; there are no
 reserved defensive rounds. The existing sealed-bid draft engine can use the
 same asset pool, but snake is the NFL v1 default.
@@ -156,13 +159,12 @@ reference row and roster-slot rows; it does not create a parallel schema.
 
 After the NFL reference data is seeded, the existing `POST /leagues` endpoint
 creates an NFL league with `universe_codes: ["nfl"]`. The default
-`defense_mode` is `group`; an `individual` request is rejected because the v1
-NFL universe does not advertise that capability.
+`defense_mode` is `group`; `team` and `individual` are also accepted.
 
 `scripts/seed_nfl_smoke_test.py` verifies, entirely in memory, that the API can
-create the NFL league and teams, expose the 20 roster slots, generate and fill
-all 40 picks of a two-team/20-round snake draft, and reject premature
-individual-defense league creation.
+create NFL leagues in all three defense modes, expose each mode's roster slots
+and derived draft rounds, fill a two-team snake draft, and keep each league's
+pool to its own mode's defense assets.
 
 ## Remaining NFL finish-line work
 

@@ -53,7 +53,7 @@ def override_get_db():
 def seed_reference_data() -> User:
     with TestingSession() as db:
         nfl, inserted = seed_nfl_reference_data(db)
-        assert inserted == 15
+        assert inserted == 17
         _, inserted = seed_nfl_reference_data(db)
         assert inserted == 0
 
@@ -129,7 +129,6 @@ def main() -> None:
                 "commissioner_user_id": commissioner.id,
                 "universe_codes": ["nfl"],
                 "size": 2,
-                "draft_rounds": 20,
                 "draft_type": "snake",
             }, headers=headers)
             assert response.status_code == 200, response.text
@@ -141,10 +140,12 @@ def main() -> None:
             }, headers=headers)
             assert response.status_code == 400, response.text
 
+            # draft_rounds defaults to the roster size: 11 starters + bench of 70% of starters (8)
+            assert league["draft_rounds"] == 19, league
             slots = client.get(f"/leagues/{league['id']}/roster-slots").json()
-            assert sum(slot["slot_count"] for slot in slots) == 20, slots
+            assert sum(slot["slot_count"] for slot in slots) == 19, slots
             assert sum(slot["slot_count"] for slot in slots if slot["is_starter"]) == 11, slots
-            assert next(slot for slot in slots if slot["slot_code"] == "BENCH")["slot_count"] == 9
+            assert next(slot for slot in slots if slot["slot_code"] == "BENCH")["slot_count"] == 8
 
             for name in ("Puget Sound", "Bay Area"):
                 response = client.post("/teams", json={
@@ -159,30 +160,32 @@ def main() -> None:
             assert response.status_code == 200, response.text
             draft = response.json()
 
-            for _ in range(40):
+            for _ in range(38):
                 response = client.post(f"/drafts/{draft['id']}/autopick")
                 assert response.status_code == 200, response.text
 
             picks = client.get(f"/drafts/{draft['id']}/picks").json()
             board = client.get(f"/drafts/{draft['id']}/board").json()
-            assert len(picks) == 40 and all(pick["draftable_asset_id"] for pick in picks), picks
-            assert board == [], board
+            assert len(picks) == 38 and all(pick["draftable_asset_id"] for pick in picks), picks
+            assert len(board) == 2, board  # 34 players + 6 group units = 40; DEF and defenders never enter
             assert client.post(f"/drafts/{draft['id']}/autopick").status_code == 400
 
             # team and individual leagues: pool holds only that mode's defense assets
-            for mode, starters, total, want_kind in (
-                ("team", 9, 18, "DEF"), ("individual", 19, 28, "defender"),
+            for mode, starters, bench, total in (
+                ("team", 9, 6, 15), ("individual", 19, 13, 32),
             ):
                 response = client.post("/leagues", json={
                     "name": f"NFL {mode} league", "commissioner_user_id": commissioner.id,
-                    "universe_codes": ["nfl"], "size": 2, "draft_rounds": 6, "draft_type": "snake",
+                    "universe_codes": ["nfl"], "size": 2, "draft_type": "snake",
                     "defense_modes": {"nfl": mode},
                 }, headers=headers)
                 assert response.status_code == 200, response.text
                 lid = response.json()["id"]
+                assert response.json()["draft_rounds"] == total, (mode, response.json())
                 slots = client.get(f"/leagues/{lid}/roster-slots").json()
                 assert sum(s["slot_count"] for s in slots) == total, (mode, slots)
                 assert sum(s["slot_count"] for s in slots if s["is_starter"]) == starters, (mode, slots)
+                assert next(s for s in slots if s["slot_code"] == "BENCH")["slot_count"] == bench, (mode, slots)
                 for name in ("A", "B"):
                     r = client.post("/teams", json={"league_id": lid, "name": f"{mode} {name}",
                                                     "owner_user_id": commissioner.id, "program_size": "small"},
@@ -205,13 +208,13 @@ def main() -> None:
         with TestingSession() as db:
             link = db.query(LeagueUniverse).filter_by(league_id=league["id"]).one()
             assert link.defense_mode == "group"
-            assert db.query(RosterEntry).count() == 40 + 2 * 12  # group league + team and individual leagues
+            assert db.query(RosterEntry).count() == 38 + 2 * 12  # group league + team and individual leagues
 
         print("NFL smoke test passed:")
         print("- shared-platform NFL league created with group defense; group pool excludes DEF and individual defenders")
-        print("- roster exposes 11 starters + 9 bench = 20 assets")
-        print("- two-team, 20-round snake draft filled all 40 picks")
-        print("- team (18 assets) and individual (28 assets) leagues draft only their own mode's defense")
+        print("- roster exposes 11 starters + 8 bench = 19 assets (draft_rounds defaults to roster size)")
+        print("- two-team, 19-round snake draft filled all 38 picks")
+        print("- team (15 assets) and individual (32 assets) leagues draft only their own mode's defense")
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(bind=engine)

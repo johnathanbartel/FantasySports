@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform.db.models.core import DraftableAsset, LeagueUniverse
+from fantasy_sports.platform.db.models.core import DraftableAsset, LeagueUniverse, RosterSlotDefinition
 
 DEFENSE_MODES = ("group", "individual", "team")
 
@@ -47,6 +47,16 @@ def asset_defense_mode(asset: DraftableAsset) -> str | None:
 def league_modes(db: Session, league_id: int) -> dict[int, str]:
     """universe_id -> that league's defense mode."""
     return {lu.universe_id: lu.defense_mode for lu in db.query(LeagueUniverse).filter_by(league_id=league_id)}
+
+
+def roster_size(db: Session, universe_id: int, mode: str) -> int | None:
+    """Total roster slots (starters + bench) a universe defines for a defense mode,
+    or None when it defines none. A league's draft_rounds is this number."""
+    counts = [
+        s.slot_count for s in db.query(RosterSlotDefinition).filter_by(universe_id=universe_id)
+        if s.defense_mode is None or s.defense_mode == mode
+    ]
+    return sum(counts) or None
 
 
 def in_pool(asset: DraftableAsset, modes: dict[int, str]) -> bool:

@@ -21,7 +21,8 @@ class LeagueCreateRequest(BaseModel):
     commissioner_user_id: int
     universe_codes: list[str]  # e.g. ["ncaaf"], or ["ncaaf", "nfl"] for Dual Universe
     size: int = 12
-    draft_rounds: int = 20
+    # None (the default) = the roster size the universe defines for the league's defense mode
+    draft_rounds: int | None = None
     # universe_code -> "group"/"individual", e.g. {"nfl": "individual"}.
     # Any universe_code not present here defaults to "group". Rejected at
     # creation if a universe doesn't support the requested mode (see

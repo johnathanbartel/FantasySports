@@ -13,7 +13,7 @@ from fantasy_sports.platform.db.models.core import (
     Conference, League, LeagueUniverse, RecruitingSettings, RosterSlotDefinition, Team, Universe, User, Week,
     WeeklyMatchup,
 )
-from fantasy_sports.platform.defense_modes import DEFENSE_MODES
+from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
 
@@ -61,11 +61,15 @@ def create_league(
     if payload.draft_type not in ("recruit", "snake"):
         raise HTTPException(400, f"Invalid draft_type '{payload.draft_type}'")
 
+    first = universes[0]
+    draft_rounds = payload.draft_rounds
+    if draft_rounds is None:
+        draft_rounds = roster_size(db, first.id, payload.defense_modes.get(first.code, "group")) or 20
     league = League(
         name=payload.name,
         commissioner_user_id=payload.commissioner_user_id,
         size=payload.size,
-        draft_rounds=payload.draft_rounds,
+        draft_rounds=draft_rounds,
         program_size_mode=payload.program_size_mode,
         draft_type=payload.draft_type,
         draft_scheduled_at=payload.draft_scheduled_at,
