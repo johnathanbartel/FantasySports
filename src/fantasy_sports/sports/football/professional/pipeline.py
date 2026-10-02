@@ -81,10 +81,11 @@ class PipelineResult:
     def model_total(self, team: str) -> float:
         return self.scrimmage_epa_by_team.get(team, 0.0) + self.fg_credit_by_team.get(team, 0.0)
 
-    def _credit(self, play, role: str, points: float, player_name: str, team: str):
+    def _credit(self, play, role: str, points: float, player_name: str, team: str, player_id=None):
         self.credits[(player_name, team)] += points
         self.play_level_credits.append(PlayLevelCredit(
             play=play, role=role, points=points, player_name=player_name, team=team,
+            player_id=None if player_id is None or pd.isna(player_id) else str(player_id),
         ))
 
 
@@ -104,7 +105,7 @@ def _attribute_scrimmage_play(play, result: PipelineResult):
         if pd.isna(play.rusher_player_name):
             result.unattributed.append(play)
             return
-        result._credit(play, "rusher", epa, play.rusher_player_name, team)
+        result._credit(play, "rusher", epa, play.rusher_player_name, team, getattr(play, "rusher_player_id", None))
         return
 
     # play_type == "pass"
@@ -117,14 +118,16 @@ def _attribute_scrimmage_play(play, result: PipelineResult):
         # college pipeline's same v1 scope cut - the sacking defender/
         # intercepting DB's positive mirror credit is a defense-attribution
         # concern, out of scope here.
-        result._credit(play, "passer", epa, play.passer_player_name, team)
+        result._credit(play, "passer", epa, play.passer_player_name, team, getattr(play, "passer_player_id", None))
         return
 
     if play.complete_pass == 1:
         yac_epa = 0.0 if pd.isna(play.yac_epa) else play.yac_epa
         split = split_passing_epa_exact(epa, yac_epa)
-        result._credit(play, "passer", split.qb_credit, play.passer_player_name, team)
-        result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team)
+        result._credit(play, "passer", split.qb_credit, play.passer_player_name, team,
+                       getattr(play, "passer_player_id", None))
+        result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team,
+                       getattr(play, "receiver_player_id", None))
         return
 
     # Incompletion. nflfastR names the targeted receiver on ~90% of these
@@ -133,9 +136,11 @@ def _attribute_scrimmage_play(play, result: PipelineResult):
     # not NFL-specific here but the same population it was measured on).
     receiver_identified = not pd.isna(play.receiver_player_name)
     split = split_passing_epa_incomplete(epa, receiver_identified=receiver_identified)
-    result._credit(play, "passer", split.qb_credit, play.passer_player_name, team)
+    result._credit(play, "passer", split.qb_credit, play.passer_player_name, team,
+                   getattr(play, "passer_player_id", None))
     if receiver_identified:
-        result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team)
+        result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team,
+                       getattr(play, "receiver_player_id", None))
 
 
 def _attribute_defense_play(play, weights: EventWeights, resolver: PositionResolver,
@@ -197,7 +202,8 @@ def process_plays(
                 continue
             made = play.field_goal_result == "made"
             kicker_credit = attribute_kicker(int(play.kick_distance), made, fg_lookup)
-            result._credit(play, "kicker", kicker_credit, play.kicker_player_name, play.posteam)
+            result._credit(play, "kicker", kicker_credit, play.kicker_player_name, play.posteam,
+                           getattr(play, "kicker_player_id", None))
             result.fg_credit_by_team[play.posteam] += kicker_credit
             result.fg_credit_allowed_by_team[play.defteam] += kicker_credit
             continue

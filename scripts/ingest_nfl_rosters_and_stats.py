@@ -42,6 +42,7 @@ from fantasy_sports.platform.db.models.core import (
     Week,
 )
 from fantasy_sports.platform.db.session import DATABASE_URL, SessionLocal
+from fantasy_sports.platform.defense_modes import defender_group
 from fantasy_sports.sports.football.models import PlayerSeasonPoints
 from seed_nfl_universe import seed_nfl_reference_data
 
@@ -82,7 +83,9 @@ TEAM_NAMES = {
 }
 FANTASY_POSITIONS = {"QB", "RB", "WR", "TE", "K", "PK"}
 ACTIVE_STATUSES = {"ACT", "DEV", "INA", "RES"}
-DEFENSE_GROUPS = ("DL", "LB", "DB")
+# DL/LB/DB are the position-group assets, DEF the whole-team defense asset; individual
+# defenders are ordinary player assets (see platform/defense_modes.py).
+DEFENSE_GROUPS = ("DL", "LB", "DB", "DEF")
 STAT_FIELDS = (
     "completions",
     "attempts",
@@ -214,7 +217,8 @@ def _sync_players_and_assets(db, universe: Universe, teams, rosters) -> dict[str
             player.real_team_id = team_id
             player.active = is_active
         active += int(player.active)
-        if player.position in FANTASY_POSITIONS and player.id not in player_asset_ids:
+        is_draftable = player.position in FANTASY_POSITIONS or defender_group(player.position)
+        if is_draftable and player.id not in player_asset_ids:
             db.add(DraftableAsset(
                 universe_id=universe.id,
                 asset_type="player",
