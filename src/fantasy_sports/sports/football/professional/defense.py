@@ -74,7 +74,10 @@ class PositionResolver:
 
     @classmethod
     def from_roster_frame(cls, roster: pd.DataFrame) -> "PositionResolver":
-        return cls(roster[["gsis_id", "position"]].dropna().to_dict("records"))
+        # nfl_data_py rosters carry the gsis id as `player_id`
+        id_col = "gsis_id" if "gsis_id" in roster.columns else "player_id"
+        rows = roster[[id_col, "position"]].dropna().rename(columns={id_col: "gsis_id"})
+        return cls(rows.to_dict("records"))
 
     def resolve(self, gsis_id) -> str | None:
         if gsis_id is None or pd.isna(gsis_id):
