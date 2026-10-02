@@ -1,33 +1,31 @@
 """
-NFL defense attribution: splitting a defended scrimmage play's value among
-the defense's DL / LB / DB units, from nflfastR's named-defender columns.
+NFL defense attribution from nflfastR's named-defender columns. One set of
+play-level credits feeds all three ways a league can draft defense:
 
-A play's value to the defense is -epa. Unlike the college pipeline
-(shared/defense.py), nflfastR names the defender who made the play on most
-snaps (tackler, sacker, interceptor, pass defender, ...) via *_player_id
-columns, so the group is usually read directly off the play instead of
-inferred from measured shares:
+  individual  each named defender shares the play's value (-epa) in proportion
+              to FITTED weights for what they did (sack, QB hit, tackle for
+              loss, pass defense, interception, forced fumble, solo tackle,
+              assist; data/defense_event_weights.json, from
+              scripts/fit_defense_weights.py). Keyed by gsis_id, never by team,
+              so a drafted player keeps scoring after a trade.
+  group       a team's DL / LB / DB unit = the sum of its resolved players'
+              credits, plus the value nobody is named on (and players whose
+              position doesn't resolve) by a provisional rule: pass plays to DB
+              (coverage), runs to LB. Keyed by team and unit.
+  team        a team's whole defense = every credit on the play = -epa.
 
-  1. Named defender -> that defender's group (via a gsis_id -> position
-     resolver built from the season roster) takes the WHOLE play value. Which
-     named defender wins is a fixed priority (sack > interception > forced
-     fumble > pass defense > tackle for loss > solo tackle > assist tackle >
-     QB hit), so exactly one group is credited per play.
-  2. No resolvable defender (TDs, incompletions with no pass defender/hit,
-     unmapped positions) -> provisional play-type rule: pass plays to DB
-     (coverage), runs to LB. Reported as "fallback" so the caller can see how
-     much credit rests on it. Not a validated model.
-
-Because exactly one group gets each play, the group credits sum to -epa
-(the non-duplicative invariant in docs/nfl_spec.md). An optional per-group
-baseline (credit an average group earns per defended play) centers the
-credits the way college does; with no baseline credits are uncentered. No NFL
-baseline is derived yet - that needs a league-wide sample of real plays.
+Credits on a play always sum to -epa (non-duplicative; docs/nfl_spec.md).
+Optional baselines (what an average defended play earns each group / the team
+/ an average involved defender of a position) are subtracted to center credits
+so positions share a scale; the validation tie-out runs uncentered.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 
@@ -38,26 +36,6 @@ POSITION_TO_GROUP = {
     "LB": "LB", "ILB": "LB", "MLB": "LB", "OLB": "LB",
     "DB": "DB", "CB": "DB", "S": "DB", "SS": "DB", "FS": "DB", "SAF": "DB",
 }
-
-# (role, nflfastR player-id column) in priority order - first resolvable wins.
-NAMED_DEFENDER_COLUMNS = (
-    ("sack", "sack_player_id"),
-    ("sack", "half_sack_1_player_id"),
-    ("sack", "half_sack_2_player_id"),
-    ("interception", "interception_player_id"),
-    ("forced_fumble", "forced_fumble_player_1_player_id"),
-    ("pass_defense", "pass_defense_1_player_id"),
-    ("pass_defense", "pass_defense_2_player_id"),
-    ("tackle_for_loss", "tackle_for_loss_1_player_id"),
-    ("tackle_for_loss", "tackle_for_loss_2_player_id"),
-    ("tackle", "solo_tackle_1_player_id"),
-    ("tackle", "assist_tackle_1_player_id"),
-    ("tackle", "assist_tackle_2_player_id"),
-    ("tackle", "assist_tackle_3_player_id"),
-    ("tackle", "assist_tackle_4_player_id"),
-    ("qb_hit", "qb_hit_1_player_id"),
-    ("qb_hit", "qb_hit_2_player_id"),
-)
 
 
 class PositionResolver:
@@ -85,42 +63,6 @@ class PositionResolver:
         return self._by_id.get(str(gsis_id))
 
 
-@dataclass(frozen=True)
-class DefenseCredit:
-    group: str
-    points: float
-    named: bool  # True when a named defender resolved to this group
-
-
-def _fallback_group(play) -> str:
-    return "DB" if play.play_type == "pass" else "LB"
-
-
-def credited_group(play, resolver: PositionResolver) -> tuple[str, bool]:
-    """(group, named) for one scrimmage play."""
-    for _role, column in NAMED_DEFENDER_COLUMNS:
-        group = resolver.resolve(getattr(play, column, None))
-        if group:
-            return group, True
-    return _fallback_group(play), False
-
-
-def attribute_defense(
-    play, resolver: PositionResolver, baseline: dict[str, float] | None = None
-) -> list[DefenseCredit]:
-    """Credits for one scrimmage play with a usable epa. The credited group
-    gets -epa; with a baseline every group also has its baseline subtracted
-    (centering), so a group can carry a row on a play it had no part in."""
-    group, named = credited_group(play, resolver)
-    value = -play.epa
-    out = []
-    for g in GROUPS:
-        points = (value if g == group else 0.0) - (baseline or {}).get(g, 0.0)
-        if points != 0.0:
-            out.append(DefenseCredit(g, points, named and g == group))
-    return out
-
-
 # --- Individual defender attribution ---------------------------------------
 #
 # For leagues that draft individual defenders. Every defender nflfastR names
@@ -138,10 +80,6 @@ def attribute_defense(
 # drafts a player keeps him after a trade, and the play's own `defteam` only
 # records where he played that snap. Team and group assets, by contrast, are
 # keyed by team and unit and ignore who was on the field.
-
-import json
-from collections import defaultdict
-from pathlib import Path
 
 _WEIGHTS_PATH = Path(__file__).parent / "data" / "defense_event_weights.json"
 
@@ -206,6 +144,7 @@ class IndividualCredit:
     name: str | None
     points: float
     roles: tuple[str, ...]
+    group: str | None = None  # DL/LB/DB from the roster; None if unresolved
 
 
 def attribute_individuals(play, weights: EventWeights) -> tuple[list[IndividualCredit], float]:
@@ -228,3 +167,61 @@ def attribute_individuals(play, weights: EventWeights) -> tuple[list[IndividualC
     credits = [IndividualCredit(g, names[g], value * s / total, tuple(roles[g]))
                for g, s in shares.items() if s > 0]
     return credits, 0.0
+
+
+_BASELINE_PATH = Path(__file__).parent / "data" / "defense_baseline.json"
+
+
+@dataclass
+class DefenseBaseline:
+    """Credit an average defended play / involved defender earns, subtracted so
+    DL, LB, DB, team and individual credits sit on comparable scales."""
+    group: dict[str, float] = field(default_factory=lambda: {g: 0.0 for g in GROUPS})
+    individual: dict[str, float] = field(default_factory=lambda: {g: 0.0 for g in GROUPS})
+
+    @property
+    def team(self) -> float:
+        return sum(self.group.values())
+
+    @classmethod
+    def load(cls, path: Path = _BASELINE_PATH) -> "DefenseBaseline":
+        if not path.exists():
+            raise FileNotFoundError(f"{path} not found - run professional/scripts/fit_defense_weights.py")
+        d = json.loads(path.read_text())
+        return cls(group=d["group"], individual=d["individual"])
+
+
+@dataclass
+class PlayDefense:
+    individuals: list[IndividualCredit]
+    groups: dict[str, float]  # DL/LB/DB -> credit (after baseline)
+    team: float
+    named: bool  # at least one resolved defender was named on the play
+
+
+def fallback_group(play) -> str:
+    return "DB" if play.play_type == "pass" else "LB"
+
+
+def attribute_play(play, weights: EventWeights, resolver: PositionResolver,
+                   baseline: DefenseBaseline | None = None) -> PlayDefense:
+    """All three views of one scrimmage play with a usable epa."""
+    base = baseline or DefenseBaseline()
+    credits, remainder = attribute_individuals(play, weights)
+    groups = {g: 0.0 for g in GROUPS}
+    individuals = []
+    unassigned = remainder
+    named = False
+    for c in credits:
+        group = resolver.resolve(c.gsis_id)
+        if group:
+            groups[group] += c.points
+            named = True
+        else:
+            unassigned += c.points
+        individuals.append(IndividualCredit(
+            c.gsis_id, c.name, c.points - (base.individual[group] if group else 0.0), c.roles, group))
+    groups[fallback_group(play)] += unassigned
+    for g in GROUPS:
+        groups[g] -= base.group[g]
+    return PlayDefense(individuals, groups, -play.epa - base.team, named)

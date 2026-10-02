@@ -1,0 +1,19 @@
+{
+  "source": "mean uncentered credit over 168277 REG run/pass plays, 2021-2025",
+  "group": {
+    "DL": 0.08854854613193072,
+    "LB": 0.019062143773767793,
+    "DB": -0.103758674411458
+  },
+  "individual": {
+    "DL": 0.3592603842569894,
+    "LB": 0.111686621897794,
+    "DB": -0.28097348777999537
+  },
+  "n_plays": 168277,
+  "n_individual_involvements": {
+    "DL": 41476,
+    "LB": 58946,
+    "DB": 74554
+  }
+}

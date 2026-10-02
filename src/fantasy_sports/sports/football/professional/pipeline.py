@@ -24,10 +24,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from fantasy_sports.sports.football.professional.defense import (
+    DefenseBaseline,
     EventWeights,
     PositionResolver,
-    attribute_defense,
-    attribute_individuals,
+    attribute_play,
 )
 from fantasy_sports.sports.football.shared.attribution import (
     FieldGoalEpLookup,
@@ -43,7 +43,7 @@ class PlayLevelCredit:
     college/pipeline.py's PlayLevelCredit shape so both sports feed the
     same play_credits DB table without a translation layer."""
     play: object  # the nflfastR pbp row (a pandas Series)
-    role: str  # "passer"/"receiver"/"rusher"/"kicker", or "dl"/"lb"/"db" for defense
+    role: str  # "passer"/"receiver"/"rusher"/"kicker", or "dl"/"lb"/"db"/"def_team"/"defender" for defense
     points: float
     player_name: str | None = None
     team: str | None = None  # offense team, or the defense team for group credits
@@ -59,9 +59,10 @@ class PipelineResult:
     defense_credits: dict = field(default_factory=lambda: defaultdict(float))  # (team, group) -> pts
     epa_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp scrimmage epa
     fg_credit_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp kicker credit
+    team_defense_credits: dict = field(default_factory=lambda: defaultdict(float))  # defteam -> whole-defense credit
     individual_credits: dict = field(default_factory=lambda: defaultdict(float))  # gsis_id -> pts (follows the player across teams)
     individual_names: dict = field(default_factory=dict)  # gsis_id -> name
-    defense_team_remainder: dict = field(default_factory=lambda: defaultdict(float))  # defteam -> value with no named defender
+    defense_team_remainder: dict = field(default_factory=lambda: defaultdict(float))  # defteam -> -epa on plays with no named defender
     defense_named_plays: int = 0
     defense_fallback_plays: int = 0
     play_level_credits: list = field(default_factory=list)  # list[PlayLevelCredit]
@@ -137,32 +138,33 @@ def _attribute_scrimmage_play(play, result: PipelineResult):
         result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team)
 
 
-def _attribute_defense_play(play, resolver: PositionResolver, baseline, result: PipelineResult):
+def _attribute_defense_play(play, weights: EventWeights, resolver: PositionResolver,
+                            baseline: DefenseBaseline | None, result: PipelineResult):
     team = play.defteam
     result.epa_allowed_by_team[team] += play.epa
-    credits = attribute_defense(play, resolver, baseline)
-    if any(c.named for c in credits):
+    d = attribute_play(play, weights, resolver, baseline)
+    if d.named:
         result.defense_named_plays += 1
     else:
         result.defense_fallback_plays += 1
-    for credit in credits:
-        result.defense_credits[(team, credit.group)] += credit.points
+    if not d.individuals:
+        result.defense_team_remainder[team] += -play.epa
+
+    result.team_defense_credits[team] += d.team
+    result.play_level_credits.append(PlayLevelCredit(
+        play=play, role="def_team", points=d.team, team=team, position_group="TEAM",
+    ))
+    for g, points in d.groups.items():
+        result.defense_credits[(team, g)] += points
         result.play_level_credits.append(PlayLevelCredit(
-            play=play, role=credit.group.lower(), points=credit.points,
-            team=team, position_group=credit.group,
+            play=play, role=g.lower(), points=points, team=team, position_group=g,
         ))
-
-
-def _attribute_individual_defense(play, weights: EventWeights, resolver: PositionResolver,
-                                  result: PipelineResult):
-    credits, remainder = attribute_individuals(play, weights)
-    result.defense_team_remainder[play.defteam] += remainder
-    for c in credits:
+    for c in d.individuals:
         result.individual_credits[c.gsis_id] += c.points
         result.individual_names[c.gsis_id] = c.name
         result.play_level_credits.append(PlayLevelCredit(
             play=play, role="defender", points=c.points, player_name=c.name,
-            team=play.defteam, position_group=resolver.resolve(c.gsis_id), player_id=c.gsis_id,
+            team=team, position_group=c.group, player_id=c.gsis_id,
         ))
 
 
@@ -170,20 +172,20 @@ def process_plays(
     pbp,
     fg_lookup: FieldGoalEpLookup | None = None,
     resolver: PositionResolver | None = None,
-    defense_baseline: dict[str, float] | None = None,
+    defense_baseline: DefenseBaseline | None = None,
     individual_weights: EventWeights | None = None,
 ) -> PipelineResult:
-    """Runs offense attribution, defense-group attribution and kicker
-    marginal-EP over nflfastR play-by-play rows (a DataFrame, or any iterable
-    of row objects/Series exposing the same columns) for one or many games.
-    `resolver` (season roster -> DL/LB/DB) maps named defenders to their real
-    group; without it every defended play uses the fallback rule.
-    `defense_baseline` ({group: credit per defended play}) centers defense
-    credits; omit for uncentered. `individual_weights` (fitted, see
-    EventWeights.load) also produces per-defender credits for leagues that
-    draft individual defenders; omit to skip them."""
+    """Runs offense attribution, defense attribution (individual, DL/LB/DB group
+    and whole-team credit - see defense.py) and kicker marginal-EP over nflfastR
+    play-by-play rows (a DataFrame, or any iterable of row objects/Series
+    exposing the same columns) for one or many games.
+    `resolver` (season roster -> DL/LB/DB) maps defenders to their position
+    group; `individual_weights` are the fitted event weights (default: the saved
+    file, which must exist); `defense_baseline` centers defense credits (omit for
+    uncentered, which is what the validation tie-out uses)."""
     fg_lookup = fg_lookup or FieldGoalEpLookup()
     resolver = resolver or PositionResolver()
+    individual_weights = individual_weights or EventWeights.load()
     result = PipelineResult()
 
     rows = pbp.itertuples() if isinstance(pbp, pd.DataFrame) else pbp
@@ -206,8 +208,6 @@ def process_plays(
 
         result.scrimmage_epa_by_team[play.posteam] += play.epa
         _attribute_scrimmage_play(play, result)
-        _attribute_defense_play(play, resolver, defense_baseline, result)
-        if individual_weights is not None:
-            _attribute_individual_defense(play, individual_weights, resolver, result)
+        _attribute_defense_play(play, individual_weights, resolver, defense_baseline, result)
 
     return result
