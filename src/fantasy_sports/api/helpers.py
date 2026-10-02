@@ -1,4 +1,5 @@
 from fantasy_sports.platform.db.models.core import DraftableAsset
+from fantasy_sports.platform.defense_modes import defender_group
 
 
 def draftable_asset_display_name(asset: DraftableAsset) -> str:
@@ -10,5 +11,6 @@ def draftable_asset_display_name(asset: DraftableAsset) -> str:
 
 def draftable_asset_position(asset: DraftableAsset) -> str | None:
     if asset.asset_type == "player":
-        return asset.player.position
+        # an individual defender (CB, DE, OLB...) fills the DL/LB/DB slots by his unit
+        return defender_group(asset.player.position) or asset.player.position
     return asset.defense_group.position_group

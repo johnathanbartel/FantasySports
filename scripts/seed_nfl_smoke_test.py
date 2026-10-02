@@ -1,4 +1,5 @@
-"""Offline, in-memory NFL universe, league-creation, and draft smoke test.
+"""Offline, in-memory NFL universe, league-creation, and draft smoke test for all three
+defense modes (group, team, individual).
 
 The test exercises the real FastAPI routes without creating or modifying a
 database file. It intentionally does not test NFL scoring, which still needs a
@@ -52,7 +53,7 @@ def override_get_db():
 def seed_reference_data() -> User:
     with TestingSession() as db:
         nfl, inserted = seed_nfl_reference_data(db)
-        assert inserted == 10
+        assert inserted == 15
         _, inserted = seed_nfl_reference_data(db)
         assert inserted == 0
 
@@ -65,7 +66,7 @@ def seed_reference_data() -> User:
 
         assets = []
         for team in real_teams:
-            for group in ("DL", "LB", "DB"):
+            for group in ("DL", "LB", "DB", "DEF"):
                 defense = DefenseGroup(real_team_id=team.id, position_group=group)
                 db.add(defense)
                 db.flush()
@@ -91,6 +92,18 @@ def seed_reference_data() -> User:
                 asset_type="player",
                 player_id=player.id,
             ))
+
+        # individual defenders: ordinary players with real roster positions (not normalized)
+        for index, position in enumerate(["DE", "DT", "OLB", "MLB", "CB", "FS"] * 3):
+            player = Player(
+                universe_id=nfl.id,
+                real_team_id=real_teams[index % len(real_teams)].id,
+                full_name=f"NFL Test Defender {index + 1}",
+                position=position,
+            )
+            db.add(player)
+            db.flush()
+            assets.append(DraftableAsset(universe_id=nfl.id, asset_type="player", player_id=player.id))
 
         db.add_all(assets)
         commissioner = User(email="nfl-commissioner@example.com", display_name="NFL Commissioner")
@@ -123,15 +136,10 @@ def main() -> None:
             league = response.json()
 
             response = client.post("/leagues", json={
-                "name": "Unsupported Individual NFL League",
-                "commissioner_user_id": commissioner.id,
-                "universe_codes": ["nfl"],
-                "size": 2,
-                "draft_rounds": 20,
-                "defense_modes": {"nfl": "individual"},
+                "name": "Bad Mode", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"],
+                "size": 2, "draft_rounds": 20, "defense_modes": {"nfl": "bogus"},
             }, headers=headers)
             assert response.status_code == 400, response.text
-            assert "don't support individual defense" in response.json()["detail"]
 
             slots = client.get(f"/leagues/{league['id']}/roster-slots").json()
             assert sum(slot["slot_count"] for slot in slots) == 20, slots
@@ -161,16 +169,49 @@ def main() -> None:
             assert board == [], board
             assert client.post(f"/drafts/{draft['id']}/autopick").status_code == 400
 
+            # team and individual leagues: pool holds only that mode's defense assets
+            for mode, starters, total, want_kind in (
+                ("team", 9, 18, "DEF"), ("individual", 19, 28, "defender"),
+            ):
+                response = client.post("/leagues", json={
+                    "name": f"NFL {mode} league", "commissioner_user_id": commissioner.id,
+                    "universe_codes": ["nfl"], "size": 2, "draft_rounds": 6, "draft_type": "snake",
+                    "defense_modes": {"nfl": mode},
+                }, headers=headers)
+                assert response.status_code == 200, response.text
+                lid = response.json()["id"]
+                slots = client.get(f"/leagues/{lid}/roster-slots").json()
+                assert sum(s["slot_count"] for s in slots) == total, (mode, slots)
+                assert sum(s["slot_count"] for s in slots if s["is_starter"]) == starters, (mode, slots)
+                for name in ("A", "B"):
+                    r = client.post("/teams", json={"league_id": lid, "name": f"{mode} {name}",
+                                                    "owner_user_id": commissioner.id, "program_size": "small"},
+                                    headers=headers)
+                    assert r.status_code == 200, r.text
+                d = client.post("/drafts/start", json={"league_id": lid}).json()
+                board = client.get(f"/drafts/{d['id']}/board").json()
+                names = [a["display_name"] for a in board]
+                has_team = any(n.endswith(" DEF") for n in names)
+                has_group = any(n.split()[-1] in ("DL", "LB", "DB") and "Defender" not in n for n in names)
+                has_defender = any("Defender" in n for n in names)
+                assert (has_team, has_group, has_defender) == (
+                    mode == "team", False, mode == "individual"), (mode, has_team, has_group, has_defender)
+                if mode == "individual":
+                    positions = {a["position"] for a in board if "Defender" in a["display_name"]}
+                    assert positions == {"DL", "LB", "DB"}, positions
+                for _ in range(12):
+                    assert client.post(f"/drafts/{d['id']}/autopick").status_code == 200
+
         with TestingSession() as db:
             link = db.query(LeagueUniverse).filter_by(league_id=league["id"]).one()
             assert link.defense_mode == "group"
-            assert db.query(RosterEntry).count() == 40
+            assert db.query(RosterEntry).count() == 40 + 2 * 12  # group league + team and individual leagues
 
         print("NFL smoke test passed:")
-        print("- shared-platform NFL league created with group defense")
+        print("- shared-platform NFL league created with group defense; group pool excludes DEF and individual defenders")
         print("- roster exposes 11 starters + 9 bench = 20 assets")
         print("- two-team, 20-round snake draft filled all 40 picks")
-        print("- individual defense rejected until attribution is implemented")
+        print("- team (18 assets) and individual (28 assets) leagues draft only their own mode's defense")
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(bind=engine)

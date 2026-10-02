@@ -10,6 +10,7 @@ from fantasy_sports.platform.db.models.core import (
 )
 from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 from fantasy_sports.platform.db.session import get_db
+from fantasy_sports.platform.defense_modes import league_pool
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -93,19 +94,13 @@ def get_free_agents(team_id: int, db: Session = Depends(get_db)):
     if team is None:
         raise HTTPException(404, "Team not found")
 
-    universe_ids = [
-        lu.universe_id
-        for lu in db.query(LeagueUniverse).filter(LeagueUniverse.league_id == team.league_id)
-    ]
     league_team_ids = [t.id for t in db.query(Team).filter(Team.league_id == team.league_id)]
     rostered_asset_ids = {
         r.draftable_asset_id
         for r in db.query(RosterEntry).filter(RosterEntry.team_id.in_(league_team_ids))
     }
 
-    candidates = (
-        db.query(DraftableAsset).filter(DraftableAsset.universe_id.in_(universe_ids)).all()
-    )
+    candidates = league_pool(db, team.league_id)
     return [
         DraftBoardAsset(
             draftable_asset_id=a.id,

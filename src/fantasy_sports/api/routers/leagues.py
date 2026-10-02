@@ -10,8 +10,10 @@ from fantasy_sports.api.schemas import (
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    Conference, League, LeagueUniverse, RecruitingSettings, Team, Universe, User, Week, WeeklyMatchup,
+    Conference, League, LeagueUniverse, RecruitingSettings, RosterSlotDefinition, Team, Universe, User, Week,
+    WeeklyMatchup,
 )
+from fantasy_sports.platform.defense_modes import DEFENSE_MODES
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
 
@@ -31,7 +33,7 @@ def create_league(
         raise HTTPException(400, f"Unknown universe code(s): {sorted(missing)}")
 
     for code, mode in payload.defense_modes.items():
-        if mode not in ("group", "individual"):
+        if mode not in DEFENSE_MODES:
             raise HTTPException(400, f"Invalid defense_mode '{mode}' for universe '{code}'")
     unsupported = [
         u.code for u in universes
@@ -39,6 +41,13 @@ def create_league(
     ]
     if unsupported:
         raise HTTPException(400, f"Universe(s) {sorted(unsupported)} don't support individual defense")
+    no_team_mode = [
+        u.code for u in universes
+        if payload.defense_modes.get(u.code) == "team"
+        and not db.query(RosterSlotDefinition).filter_by(universe_id=u.id, defense_mode="team").first()
+    ]
+    if no_team_mode:
+        raise HTTPException(400, f"Universe(s) {sorted(no_team_mode)} don't offer whole-team defense")
 
     if payload.program_size_mode not in ("team_choice", "dynamic"):
         raise HTTPException(400, f"Invalid program_size_mode '{payload.program_size_mode}'")

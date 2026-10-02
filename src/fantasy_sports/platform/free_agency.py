@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
 from fantasy_sports.platform import season
+from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.db.models.core import (
@@ -63,12 +64,13 @@ def is_open(db: Session, league_id: int) -> bool:
 def pool_ids(db: Session, league_id: int) -> list[int]:
     """Every player and defense group a league can use: players no longer on an FBS roster
     (Player.active False) are out."""
-    universe_ids = [lu.universe_id for lu in db.query(LeagueUniverse).filter_by(league_id=league_id)]
+    modes = league_modes(db, league_id)
     return [
         a.id for a in db.query(DraftableAsset)
         .outerjoin(Player, Player.id == DraftableAsset.player_id)
-        .filter(DraftableAsset.universe_id.in_(universe_ids),
+        .filter(DraftableAsset.universe_id.in_(list(modes) or [0]),
                 or_(DraftableAsset.player_id.is_(None), Player.active.is_(True)))
+        if in_pool(a, modes)
     ]
 
 

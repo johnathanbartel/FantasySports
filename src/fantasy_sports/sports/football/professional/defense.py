@@ -29,13 +29,9 @@ from pathlib import Path
 
 import pandas as pd
 
-GROUPS = ("DL", "LB", "DB")
+from fantasy_sports.platform.defense_modes import POSITION_TO_GROUP
 
-POSITION_TO_GROUP = {
-    "DL": "DL", "DE": "DL", "DT": "DL", "NT": "DL", "EDGE": "DL",
-    "LB": "LB", "ILB": "LB", "MLB": "LB", "OLB": "LB",
-    "DB": "DB", "CB": "DB", "S": "DB", "SS": "DB", "FS": "DB", "SAF": "DB",
-}
+GROUPS = ("DL", "LB", "DB")
 
 
 class PositionResolver:

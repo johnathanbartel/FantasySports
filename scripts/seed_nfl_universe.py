@@ -24,10 +24,18 @@ ROSTER_SLOTS = [
     ("TE", ["TE"], 1, True, None),
     ("FLEX", ["RB", "WR", "TE"], 1, True, None),
     ("K", ["K", "PK"], 1, True, None),
+    # Defense depends on how the league drafts it (league_universes.defense_mode):
+    # group - the three DL/LB/DB units; team - one whole-defense asset;
+    # individual - 11 named defenders (3 DL, 3 LB, 4 DB, 1 defensive flex).
     ("DL", ["DL"], 1, True, "group"),
     ("LB", ["LB"], 1, True, "group"),
     ("DB", ["DB"], 1, True, "group"),
-    ("BENCH", ["QB", "RB", "WR", "TE", "K", "PK", "DL", "LB", "DB"], 9, False, None),
+    ("DEF", ["DEF"], 1, True, "team"),
+    ("DL", ["DL"], 3, True, "individual"),
+    ("LB", ["LB"], 3, True, "individual"),
+    ("DB", ["DB"], 4, True, "individual"),
+    ("DFLEX", ["DL", "LB", "DB"], 1, True, "individual"),
+    ("BENCH", ["QB", "RB", "WR", "TE", "K", "PK", "DL", "LB", "DB", "DEF"], 9, False, None),
 ]
 
 
@@ -39,7 +47,7 @@ def seed_nfl_reference_data(db) -> tuple[Universe, int]:
             level="pro",
             code="nfl",
             display_name="NFL",
-            supports_individual_defense=False,
+            supports_individual_defense=True,
         )
         db.add(nfl)
         db.flush()
@@ -48,11 +56,8 @@ def seed_nfl_reference_data(db) -> tuple[Universe, int]:
             "Existing 'nfl' universe has incompatible sport/level: "
             f"{nfl.sport!r}/{nfl.level!r}"
         )
-    elif nfl.supports_individual_defense:
-        raise RuntimeError(
-            "Existing 'nfl' universe enables individual defense, but the v1 "
-            "NFL attribution and roster spec supports group defense only"
-        )
+    else:
+        nfl.supports_individual_defense = True
 
     inserted = 0
     for slot_code, eligible, count, is_starter, defense_mode in ROSTER_SLOTS:
@@ -69,7 +74,13 @@ def seed_nfl_reference_data(db) -> tuple[Universe, int]:
             row = rows[0]
             actual = (row.eligible_positions, row.slot_count, row.is_starter)
             expected = (eligible, count, is_starter)
-            if actual != expected:
+            if (
+                actual != expected
+                and (actual[1:], set(actual[0]) <= set(eligible)) == (expected[1:], True)
+            ):
+                # only the eligible positions grew (e.g. BENCH gained DEF): additive, safe to widen
+                row.eligible_positions = eligible
+            elif actual != expected:
                 raise RuntimeError(
                     f"Existing NFL roster slot {slot_code!r} conflicts with the v1 spec: "
                     f"found {actual!r}, expected {expected!r}"

@@ -23,6 +23,7 @@ from fantasy_sports.platform.db.models.core import (
     User,
 )
 from fantasy_sports.platform.db.session import get_db
+from fantasy_sports.platform.defense_modes import in_pool, league_modes, league_pool
 
 router = APIRouter(prefix="/drafts", tags=["draft"])
 
@@ -100,19 +101,13 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     if draft is None:
         raise HTTPException(404, "Draft not found")
 
-    universe_ids = [
-        lu.universe_id
-        for lu in db.query(LeagueUniverse).filter(LeagueUniverse.league_id == draft.league_id)
-    ]
     already_picked = {
         p.draftable_asset_id
         for p in db.query(DraftPick).filter(
             DraftPick.draft_id == draft_id, DraftPick.draftable_asset_id.isnot(None)
         )
     }
-    candidates = (
-        db.query(DraftableAsset).filter(DraftableAsset.universe_id.in_(universe_ids)).all()
-    )
+    candidates = league_pool(db, draft.league_id)
     return [
         DraftBoardAsset(
             draftable_asset_id=a.id,
@@ -151,6 +146,8 @@ def make_pick(
     asset = db.get(DraftableAsset, payload.draftable_asset_id)
     if asset is None:
         raise HTTPException(404, "Draftable asset not found")
+    if not in_pool(asset, league_modes(db, team_on_clock.league_id)):
+        raise HTTPException(400, "That asset isn't in this league's defense mode")
 
     already_rostered = (
         db.query(RosterEntry.id)

@@ -23,6 +23,7 @@ import random
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.auction.constants import MINIMUM_BID, STARTING_BUDGET_BY_PROGRAM_SIZE
+from fantasy_sports.platform.defense_modes import league_pool
 from fantasy_sports.platform.db.models.core import (
     AuctionBid,
     AuctionDraft,
@@ -76,17 +77,13 @@ def available_assets(db: Session, auction: AuctionDraft) -> list[DraftableAsset]
     group competes in the same pool as any player, same as the snake draft
     board (api/routers/draft.py::get_draft_board) and the same-pool decision
     in docs/data_contract.md."""
-    universe_ids = [
-        lu.universe_id
-        for lu in db.query(LeagueUniverse).filter(LeagueUniverse.league_id == auction.league_id)
-    ]
     sold_asset_ids = {
         r.draftable_asset_id
         for r in db.query(AuctionRound).filter(
             AuctionRound.auction_draft_id == auction.id, AuctionRound.status == "resolved"
         )
     }
-    candidates = db.query(DraftableAsset).filter(DraftableAsset.universe_id.in_(universe_ids)).all()
+    candidates = league_pool(db, auction.league_id)
     return [a for a in candidates if a.id not in sold_asset_ids]
 
 

@@ -126,15 +126,18 @@ class LeagueUniverse(Base):
     __tablename__ = "league_universes"
     __table_args__ = (
         UniqueConstraint("league_id", "universe_id"),
-        CheckConstraint("defense_mode IN ('group', 'individual')", name="ck_league_universe_defense_mode"),
+        CheckConstraint(
+            "defense_mode IN ('group', 'individual', 'team')", name="ck_league_universe_defense_mode"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
     universe_id: Mapped[int] = mapped_column(ForeignKey("universes.id"))
-    # A league's choice, per universe, of whether defense is drafted/scored
-    # as DL/LB/DB position groups or as individual defenders. "individual"
-    # is only a legal choice when universe.supports_individual_defense is
+    # A league's choice, per universe, of how defense is drafted/scored:
+    # "group" (DL/LB/DB units), "team" (one whole-defense asset per team) or
+    # "individual" (named defenders). "team" and "group" are always legal;
+    # "individual" is only a legal choice when universe.supports_individual_defense is
     # True - enforced at the API layer (create_league), not by a DB
     # constraint, since that check spans two tables.
     defense_mode: Mapped[str] = mapped_column(String(20), default="group")
@@ -247,18 +250,20 @@ class Player(Base):
 
 
 class DefenseGroup(Base):
-    """The actual draftable defensive asset - e.g. "Georgia DL". Defense is
-    drafted as a position group, not individual defenders."""
+    """A draftable team-defense asset - e.g. "Georgia DL" (a position group) or,
+    where a universe offers whole-team defense, "Georgia DEF" (position_group
+    "DEF": the entire defense). Scores what that team's unit does regardless of
+    which players are on it. Individual defenders are `players` instead."""
 
     __tablename__ = "defense_groups"
     __table_args__ = (
         UniqueConstraint("real_team_id", "position_group"),
-        CheckConstraint("position_group IN ('DL','LB','DB')", name="ck_defense_group_position"),
+        CheckConstraint("position_group IN ('DL','LB','DB','DEF')", name="ck_defense_group_position"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     real_team_id: Mapped[int] = mapped_column(ForeignKey("real_teams.id"))
-    position_group: Mapped[str] = mapped_column(String(2))  # "DL"/"LB"/"DB"
+    position_group: Mapped[str] = mapped_column(String(3))  # "DL"/"LB"/"DB", or "DEF" for a whole defense
 
     real_team: Mapped["RealTeam"] = relationship()
 
@@ -287,6 +292,7 @@ class DraftableAsset(Base):
         ForeignKey("defense_groups.id"), nullable=True
     )
 
+    universe: Mapped["Universe"] = relationship()
     player: Mapped["Player | None"] = relationship()
     defense_group: Mapped["DefenseGroup | None"] = relationship()
 
@@ -299,7 +305,7 @@ class RosterSlotDefinition(Base):
     __tablename__ = "roster_slot_definitions"
     __table_args__ = (
         CheckConstraint(
-            "defense_mode IS NULL OR defense_mode IN ('group', 'individual')",
+            "defense_mode IS NULL OR defense_mode IN ('group', 'individual', 'team')",
             name="ck_roster_slot_definition_defense_mode",
         ),
     )

@@ -59,6 +59,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
+from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
     League,
@@ -85,14 +86,13 @@ DEFAULT_BUFFER_SECONDS = 20
 def pool_asset_ids(db: Session, league_id: int) -> list[int]:
     """Every player and defense group in the league's universe(s) - one shared
     pool, defense groups bid on exactly like players."""
-    universe_ids = [
-        lu.universe_id for lu in db.query(LeagueUniverse).filter(LeagueUniverse.league_id == league_id)
-    ]
+    modes = league_modes(db, league_id)
     return [
         a.id for a in db.query(DraftableAsset)
         .outerjoin(Player, Player.id == DraftableAsset.player_id)
-        .filter(DraftableAsset.universe_id.in_(universe_ids),
+        .filter(DraftableAsset.universe_id.in_(list(modes) or [0]),
                 or_(DraftableAsset.player_id.is_(None), Player.active.is_(True)))
+        if in_pool(a, modes)
     ]
 
 
