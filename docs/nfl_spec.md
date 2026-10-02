@@ -55,21 +55,30 @@ map directly to `play_credits.role` (`rusher`, `passer`, `receiver`, and
 
 ### Defense
 
-NFL v1 leagues draft a real team's DL, LB, and DB units as three separate
-assets. The intended scoring invariant is that defensive credit reflects
-expected points removed from the opponent and is not also awarded in full to
-multiple units.
+A league chooses one of three ways to draft defense (`league_universes.defense_mode`):
 
-Group-level professional defensive attribution is implemented in
-`src/fantasy_sports/sports/football/professional/defense.py`: the play's
--EPA goes whole to the DL/LB/DB group of the highest-priority named defender
-(sack, interception, forced fumble, pass defense, tackle), with a provisional
-play-type fallback when none resolves. It is validated offline only; the
-real-week points-allowed validation has not been run, and no NFL
-centering baseline exists yet. The seeded NFL universe advertises group defense only and does not advertise the
-schema-supported `individual` option. Enabling individual NFL defense requires
-a separately reviewed attribution implementation and validation; merely
-having defender identifiers in nflfastR is not sufficient.
+| Mode | Asset | Scores |
+|---|---|---|
+| `team` | one whole-defense asset per team (`defense_groups.position_group = DEF`) | everything the team's defense does |
+| `group` (default) | a team's DL, LB or DB unit | the sum of that unit's players' credit, plus unnamed credit by a play-type rule (pass to DB, run to LB) |
+| `individual` | a named defender (an ordinary player asset) | that player's own credit |
+
+All three come from one set of play-level credits
+(`professional/defense.py`) and always sum to the play's -EPA, so no play is
+awarded in full to more than one asset of the same mode. Each named defender
+shares the play in proportion to weights fitted from nflfastR data
+(`data/defense_event_weights.json`, from `scripts/fit_defense_weights.py`; never
+hand-set). Credits are centered by `data/defense_baseline.json`.
+
+Team and group assets are keyed to the team and unit: roster changes on the real
+team do not change what a drafter owns. An individual asset is keyed to the
+player's nflverse id: a drafted player who is traded stays on the fantasy
+roster and keeps scoring for his new team.
+
+The mode-specific pool is enforced by `platform/defense_modes.py`; a league never
+sees assets that belong to another mode. The real-week points-allowed
+validation (`professional/scripts/run_week_validation.py`) and the three-mode
+tie-outs run on 2024 week 1; the NFL team-score scale is still unfitted.
 
 ### Weekly totals and realism gate
 
@@ -102,22 +111,18 @@ ticket.
 
 ## Roster and draft
 
-The v1 roster has 20 assets: 11 starters and 9 bench assets. Shrinking the
-bench to nine resolves the prior 21-slot-versus-20-round mismatch while
-retaining the kicker starter.
+Offense is the same in every mode: QB 1, RB 2, WR 2, TE 1, FLEX 1 (RB/WR/TE),
+K 1, plus 9 bench. Defense starters depend on the league's defense mode:
 
-| Slot | Eligible asset position | Count | Starter |
-|---|---|---:|---|
-| QB | QB | 1 | yes |
-| RB | RB | 2 | yes |
-| WR | WR | 2 | yes |
-| TE | TE | 1 | yes |
-| FLEX | RB, WR, TE | 1 | yes |
-| K | K, PK | 1 | yes |
-| DL | drafted team DL unit | 1 | yes |
-| LB | drafted team LB unit | 1 | yes |
-| DB | drafted team DB unit | 1 | yes |
-| BENCH | any v1 offense, kicker, or group-defense asset | 9 | no |
+| Mode | Defense slots | Starters | Roster assets |
+|---|---|---:|---:|
+| group | DL 1, LB 1, DB 1 (team units) | 11 | 20 |
+| team | DEF 1 (whole defense) | 9 | 18 |
+| individual | DL 3, LB 3, DB 4, DFLEX 1 (any of DL/LB/DB) | 19 | 28 |
+
+Individual defenders fill slots by their unit (DE/DT/NT/EDGE = DL,
+ILB/MLB/OLB = LB, CB/S/SS/FS = DB). A league's `draft_rounds` is the
+commissioner's setting and is not yet derived from the mode.
 
 The default league has 12 fantasy teams and a 20-round snake draft. Offensive
 players, kickers, and defense groups share one draft pool; there are no
