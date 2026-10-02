@@ -60,8 +60,13 @@ assets. The intended scoring invariant is that defensive credit reflects
 expected points removed from the opponent and is not also awarded in full to
 multiple units.
 
-Professional defensive attribution is not implemented yet. Consequently the
-seeded NFL universe advertises group defense only and does not advertise the
+Group-level professional defensive attribution is implemented in
+`src/fantasy_sports/sports/football/professional/defense.py`: the play's
+-EPA goes whole to the DL/LB/DB group of the highest-priority named defender
+(sack, interception, forced fumble, pass defense, tackle), with a provisional
+play-type fallback when none resolves. It is validated offline only; the
+real-week points-allowed validation has not been run, and no NFL
+centering baseline exists yet. The seeded NFL universe advertises group defense only and does not advertise the
 schema-supported `individual` option. Enabling individual NFL defense requires
 a separately reviewed attribution implementation and validation; merely
 having defender identifiers in nflfastR is not sufficient.

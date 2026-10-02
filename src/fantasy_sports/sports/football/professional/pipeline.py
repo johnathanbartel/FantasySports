@@ -12,8 +12,8 @@ real per-play yac_epa - so the passer/receiver split is exact
 (split_passing_epa_exact), not the yards-gained-bucket approximation the
 college pipeline needs (YacEpaLookup).
 
-Defense (DL/LB/DB) attribution is intentionally out of scope here - see the
-module docstring in scripts/run_week_validation.py for why.
+Defense (DL/LB/DB) attribution lives in professional/defense.py and is wired
+into process_plays below; see its docstring for the rules.
 """
 
 from __future__ import annotations
@@ -23,6 +23,10 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from fantasy_sports.sports.football.professional.defense import (
+    PositionResolver,
+    attribute_defense,
+)
 from fantasy_sports.sports.football.shared.attribution import (
     FieldGoalEpLookup,
     attribute_kicker,
@@ -37,10 +41,11 @@ class PlayLevelCredit:
     college/pipeline.py's PlayLevelCredit shape so both sports feed the
     same play_credits DB table without a translation layer."""
     play: object  # the nflfastR pbp row (a pandas Series)
-    role: str  # "passer"/"receiver"/"rusher"/"kicker"
+    role: str  # "passer"/"receiver"/"rusher"/"kicker", or "dl"/"lb"/"db" for defense
     points: float
     player_name: str | None = None
-    team: str | None = None
+    team: str | None = None  # offense team, or the defense team for group credits
+    position_group: str | None = None  # "DL"/"LB"/"DB" for defense-group credits
 
 
 @dataclass
@@ -48,9 +53,23 @@ class PipelineResult:
     credits: dict = field(default_factory=lambda: defaultdict(float))  # (player, team) -> pts
     scrimmage_epa_by_team: dict = field(default_factory=lambda: defaultdict(float))
     fg_credit_by_team: dict = field(default_factory=lambda: defaultdict(float))
+    defense_credits: dict = field(default_factory=lambda: defaultdict(float))  # (team, group) -> pts
+    epa_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp scrimmage epa
+    fg_credit_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp kicker credit
+    defense_named_plays: int = 0
+    defense_fallback_plays: int = 0
     play_level_credits: list = field(default_factory=list)  # list[PlayLevelCredit]
     unattributed: list = field(default_factory=list)
     skipped: list = field(default_factory=list)
+
+    def model_points_allowed(self, team: str) -> float:
+        """Model estimate of the points `team`'s defense allowed (mirror of
+        model_total: opponent scrimmage epa + opponent kicker credit)."""
+        return self.epa_allowed_by_team.get(team, 0.0) + self.fg_credit_allowed_by_team.get(team, 0.0)
+
+    def defense_group_total(self, team: str) -> float:
+        """Sum of the team's DL/LB/DB credits (uncentered: equals -epa allowed)."""
+        return sum(self.defense_credits.get((team, g), 0.0) for g in ("DL", "LB", "DB"))
 
     def model_total(self, team: str) -> float:
         return self.scrimmage_epa_by_team.get(team, 0.0) + self.fg_credit_by_team.get(team, 0.0)
@@ -112,11 +131,37 @@ def _attribute_scrimmage_play(play, result: PipelineResult):
         result._credit(play, "receiver", split.receiver_credit, play.receiver_player_name, team)
 
 
-def process_plays(pbp, fg_lookup: FieldGoalEpLookup | None = None) -> PipelineResult:
-    """Runs offense attribution + kicker marginal-EP over nflfastR
-    play-by-play rows (a DataFrame, or any iterable of row objects/Series
-    exposing the same columns) for one or many games."""
+def _attribute_defense_play(play, resolver: PositionResolver, baseline, result: PipelineResult):
+    team = play.defteam
+    result.epa_allowed_by_team[team] += play.epa
+    credits = attribute_defense(play, resolver, baseline)
+    if any(c.named for c in credits):
+        result.defense_named_plays += 1
+    else:
+        result.defense_fallback_plays += 1
+    for credit in credits:
+        result.defense_credits[(team, credit.group)] += credit.points
+        result.play_level_credits.append(PlayLevelCredit(
+            play=play, role=credit.group.lower(), points=credit.points,
+            team=team, position_group=credit.group,
+        ))
+
+
+def process_plays(
+    pbp,
+    fg_lookup: FieldGoalEpLookup | None = None,
+    resolver: PositionResolver | None = None,
+    defense_baseline: dict[str, float] | None = None,
+) -> PipelineResult:
+    """Runs offense attribution, defense-group attribution and kicker
+    marginal-EP over nflfastR play-by-play rows (a DataFrame, or any iterable
+    of row objects/Series exposing the same columns) for one or many games.
+    `resolver` (season roster -> DL/LB/DB) maps named defenders to their real
+    group; without it every defended play uses the fallback rule.
+    `defense_baseline` ({group: credit per defended play}) centers defense
+    credits; omit for uncentered."""
     fg_lookup = fg_lookup or FieldGoalEpLookup()
+    resolver = resolver or PositionResolver()
     result = PipelineResult()
 
     rows = pbp.itertuples() if isinstance(pbp, pd.DataFrame) else pbp
@@ -130,6 +175,7 @@ def process_plays(pbp, fg_lookup: FieldGoalEpLookup | None = None) -> PipelineRe
             kicker_credit = attribute_kicker(int(play.kick_distance), made, fg_lookup)
             result._credit(play, "kicker", kicker_credit, play.kicker_player_name, play.posteam)
             result.fg_credit_by_team[play.posteam] += kicker_credit
+            result.fg_credit_allowed_by_team[play.defteam] += kicker_credit
             continue
 
         if play.play_type not in SCRIMMAGE_PLAY_TYPES or pd.isna(play.epa):
@@ -138,5 +184,6 @@ def process_plays(pbp, fg_lookup: FieldGoalEpLookup | None = None) -> PipelineRe
 
         result.scrimmage_epa_by_team[play.posteam] += play.epa
         _attribute_scrimmage_play(play, result)
+        _attribute_defense_play(play, resolver, defense_baseline, result)
 
     return result

@@ -12,6 +12,12 @@ pipeline. This checks whether the offense attribution (exact, from
 nflfastR's real yac_epa - no yards-bucket approximation needed) is sane at
 scale, not whether raw totals match.
 
+Defense: the same pass also scores each defense. Its model "points allowed"
+(opponent scrimmage epa + opponent kicker credit) is compared against the
+real points allowed, and the DL/LB/DB group credits are checked to sum to
+-epa allowed (no play credited in full to more than one unit). The same
+exclusions apply, so a negative bias is expected here too.
+
 Usage:
     python run_week_validation.py --year 2024 --week 1
 """
@@ -24,6 +30,7 @@ import nfl_data_py as nfl
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
+from fantasy_sports.sports.football.professional.defense import PositionResolver
 from fantasy_sports.sports.football.professional.pipeline import process_plays
 
 
@@ -40,18 +47,27 @@ def main():
     sched = sched[(sched.week == args.week) & (sched.game_type == "REG")]
     print(f"{len(sched)} REG games, {len(pbp)} plays for {args.year} week {args.week}\n")
 
+    resolver = PositionResolver.from_roster_frame(nfl.import_seasonal_rosters([args.year]))
+
     real_score: dict[str, float] = {}
+    real_allowed: dict[str, float] = {}
     for row in sched.itertuples():
         real_score[row.home_team] = row.home_score
         real_score[row.away_team] = row.away_score
+        real_allowed[row.home_team] = row.away_score
+        real_allowed[row.away_team] = row.home_score
 
     rows: list[tuple[str, float, float, float]] = []  # team, model_total, real, error
+    def_rows: list[tuple[str, float, float, float]] = []  # team, model_allowed, real_allowed, error
+    group_totals = {"DL": 0.0, "LB": 0.0, "DB": 0.0}
+    max_tie_gap = 0.0
+    named_plays = fallback_plays = 0
     total_unattributed = 0
     total_skipped = 0
     total_scrimmage_plays = 0
 
     for game_id, game_plays in pbp.groupby("game_id"):
-        result = process_plays(game_plays)
+        result = process_plays(game_plays, resolver=resolver)
         total_unattributed += len(result.unattributed)
         total_skipped += len(result.skipped)
         total_scrimmage_plays += game_plays.play_type.isin(("run", "pass")).sum()
@@ -63,6 +79,19 @@ def main():
                 continue
             model_total = result.model_total(team)
             rows.append((team, model_total, real, model_total - real))
+
+        named_plays += result.defense_named_plays
+        fallback_plays += result.defense_fallback_plays
+        for team in set(result.epa_allowed_by_team) | set(result.fg_credit_allowed_by_team):
+            for g in group_totals:
+                group_totals[g] += result.defense_credits.get((team, g), 0.0)
+            max_tie_gap = max(max_tie_gap, abs(
+                result.defense_group_total(team) + result.epa_allowed_by_team.get(team, 0.0)))
+            real = real_allowed.get(team)
+            if real is None:
+                continue
+            allowed = result.model_points_allowed(team)
+            def_rows.append((team, allowed, real, allowed - real))
 
     errors = [r[3] for r in rows]
     print(f"{len(rows)} team-games scored.")
@@ -90,6 +119,25 @@ def main():
     print("\nBiggest undercounts (model << real):")
     for team, model_total, real, err in rows_sorted[:5]:
         print(f"  {team:<6} model={model_total:+6.2f}  real={real:<4}  error={err:+.2f}")
+
+    d_errors = [r[3] for r in def_rows]
+    print(f"\n=== Defense: {len(def_rows)} team-games, model points allowed vs real ===")
+    total_def_plays = named_plays + fallback_plays
+    print(f"Named-defender coverage: {named_plays} / {total_def_plays} defended plays "
+          f"({100 * named_plays / max(total_def_plays, 1):.1f}%); the rest use the play-type fallback.")
+    print(f"Group credit tie-out: max |sum(DL+LB+DB) + epa allowed| per team = {max_tie_gap:.6f} "
+          f"(must be ~0)")
+    n_def = max(len(def_rows), 1)
+    print("Mean group credit per team-game (uncentered): "
+          + ", ".join(f"{g}={v / n_def:+.2f}" for g, v in group_totals.items()))
+    print(f"Mean error (model - real):   {statistics.mean(d_errors):+.2f}")
+    print(f"Median error:                {statistics.median(d_errors):+.2f}")
+    print(f"Std dev of error:            {statistics.pstdev(d_errors):.2f}")
+    try:
+        d_corr = statistics.correlation([r[1] for r in def_rows], [r[2] for r in def_rows])
+    except statistics.StatisticsError:
+        d_corr = float("nan")
+    print(f"Correlation(model allowed, real allowed): {d_corr:.3f}")
 
 
 if __name__ == "__main__":
