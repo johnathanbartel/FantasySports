@@ -18,7 +18,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from fantasy_sports.sports.football.professional.defense import PositionResolver
+from fantasy_sports.sports.football.professional.defense import (
+    EventWeights,
+    PositionResolver,
+    attribute_individuals,
+)
 from fantasy_sports.sports.football.professional.pipeline import process_plays
 
 ROSTER = [
@@ -88,6 +92,41 @@ def main():
 
     # offense unchanged by the defense wiring
     assert abs(result.model_total("AAA") - (-2.0 + 0.5 - 4.0 + 1.5 - 0.25)) < 1e-9
+
+    # individual defenders: shares follow the weights, credits + remainder == -epa,
+    # credits are keyed by player (not team), unnamed plays go to the team remainder
+    w = EventWeights({"pass": {"sack": 3.0, "qb_hit": 1.0, "solo_tackle": 0.5, "pass_defense": 2.0},
+                      "run": {"solo_tackle": 1.0, "assist_tackle": 0.5}})
+    ind_plays = pd.DataFrame([
+        {**play(play_type="pass", epa=-2.0, passer_player_name="QB", sack=1), "sack_player_id": "dl1",
+         "sack_player_name": "D.Line", "qb_hit_1_player_id": "dl2", "qb_hit_1_player_name": "E.Dge"},
+        {**play(play_type="run", epa=0.6), "solo_tackle_1_player_id": "lb1", "solo_tackle_1_player_name": "L.Backer",
+         "assist_tackle_1_player_id": "db1", "assist_tackle_1_player_name": "D.Back"},
+        play(play_type="pass", epa=1.0, complete_pass=1, passer_player_name="QB", yac_epa=0.2),
+    ])
+    first = next(ind_plays.itertuples())
+    credits, rem = attribute_individuals(first, w)
+    by_id = {c.gsis_id: c.points for c in credits}
+    assert abs(by_id["dl1"] - 2.0 * 3 / 4) < 1e-9 and abs(by_id["dl2"] - 2.0 / 4) < 1e-9 and rem == 0.0
+
+    res = process_plays(ind_plays, resolver=PositionResolver(ROSTER), individual_weights=w)
+    assert abs(res.individual_credits["lb1"] - (-0.6 * 1.0 / 1.5)) < 1e-9
+    assert abs(res.individual_credits["db1"] - (-0.6 * 0.5 / 1.5)) < 1e-9
+    assert abs(res.defense_team_remainder["BBB"] - (-1.0)) < 1e-9
+    total = sum(res.individual_credits.values()) + res.defense_team_remainder["BBB"]
+    assert abs(total + res.epa_allowed_by_team["BBB"]) < 1e-9
+    ind_rows = [c for c in res.play_level_credits if c.role == "defender"]
+    assert {c.player_id for c in ind_rows} == {"dl1", "dl2", "lb1", "db1"}
+    # same player credited under a different defteam keeps one running total
+    traded = ind_plays.iloc[[1]].assign(defteam="CCC")
+    both = process_plays(pd.concat([ind_plays.iloc[[1]], traded]), resolver=PositionResolver(ROSTER),
+                         individual_weights=w)
+    assert abs(both.individual_credits["lb1"] - 2 * (-0.6 / 1.5)) < 1e-9
+    try:
+        EventWeights.load(Path("/nonexistent/weights.json"))
+        raise AssertionError("missing weights file must fail loudly")
+    except FileNotFoundError:
+        pass
 
     print("NFL defense attribution smoke test: OK")
 

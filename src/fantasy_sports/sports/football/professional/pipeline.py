@@ -24,8 +24,10 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from fantasy_sports.sports.football.professional.defense import (
+    EventWeights,
     PositionResolver,
     attribute_defense,
+    attribute_individuals,
 )
 from fantasy_sports.sports.football.shared.attribution import (
     FieldGoalEpLookup,
@@ -45,7 +47,8 @@ class PlayLevelCredit:
     points: float
     player_name: str | None = None
     team: str | None = None  # offense team, or the defense team for group credits
-    position_group: str | None = None  # "DL"/"LB"/"DB" for defense-group credits
+    position_group: str | None = None  # "DL"/"LB"/"DB" for defense credits
+    player_id: str | None = None  # gsis_id; set on individual-defender credits
 
 
 @dataclass
@@ -56,6 +59,9 @@ class PipelineResult:
     defense_credits: dict = field(default_factory=lambda: defaultdict(float))  # (team, group) -> pts
     epa_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp scrimmage epa
     fg_credit_allowed_by_team: dict = field(default_factory=lambda: defaultdict(float))  # defense team -> opp kicker credit
+    individual_credits: dict = field(default_factory=lambda: defaultdict(float))  # gsis_id -> pts (follows the player across teams)
+    individual_names: dict = field(default_factory=dict)  # gsis_id -> name
+    defense_team_remainder: dict = field(default_factory=lambda: defaultdict(float))  # defteam -> value with no named defender
     defense_named_plays: int = 0
     defense_fallback_plays: int = 0
     play_level_credits: list = field(default_factory=list)  # list[PlayLevelCredit]
@@ -147,11 +153,25 @@ def _attribute_defense_play(play, resolver: PositionResolver, baseline, result: 
         ))
 
 
+def _attribute_individual_defense(play, weights: EventWeights, resolver: PositionResolver,
+                                  result: PipelineResult):
+    credits, remainder = attribute_individuals(play, weights)
+    result.defense_team_remainder[play.defteam] += remainder
+    for c in credits:
+        result.individual_credits[c.gsis_id] += c.points
+        result.individual_names[c.gsis_id] = c.name
+        result.play_level_credits.append(PlayLevelCredit(
+            play=play, role="defender", points=c.points, player_name=c.name,
+            team=play.defteam, position_group=resolver.resolve(c.gsis_id), player_id=c.gsis_id,
+        ))
+
+
 def process_plays(
     pbp,
     fg_lookup: FieldGoalEpLookup | None = None,
     resolver: PositionResolver | None = None,
     defense_baseline: dict[str, float] | None = None,
+    individual_weights: EventWeights | None = None,
 ) -> PipelineResult:
     """Runs offense attribution, defense-group attribution and kicker
     marginal-EP over nflfastR play-by-play rows (a DataFrame, or any iterable
@@ -159,7 +179,9 @@ def process_plays(
     `resolver` (season roster -> DL/LB/DB) maps named defenders to their real
     group; without it every defended play uses the fallback rule.
     `defense_baseline` ({group: credit per defended play}) centers defense
-    credits; omit for uncentered."""
+    credits; omit for uncentered. `individual_weights` (fitted, see
+    EventWeights.load) also produces per-defender credits for leagues that
+    draft individual defenders; omit to skip them."""
     fg_lookup = fg_lookup or FieldGoalEpLookup()
     resolver = resolver or PositionResolver()
     result = PipelineResult()
@@ -185,5 +207,7 @@ def process_plays(
         result.scrimmage_epa_by_team[play.posteam] += play.epa
         _attribute_scrimmage_play(play, result)
         _attribute_defense_play(play, resolver, defense_baseline, result)
+        if individual_weights is not None:
+            _attribute_individual_defense(play, individual_weights, resolver, result)
 
     return result
