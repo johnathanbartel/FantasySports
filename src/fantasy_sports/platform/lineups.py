@@ -102,10 +102,11 @@ def save_lineup(db: Session, team: Team, week_id: int, pairs: list[tuple[RosterS
     return entries
 
 
-def best_lineup(db: Session, team: Team) -> dict[str, list[int]]:
+def best_lineup(db: Session, team: Team, prior: dict[int, float] | None = None) -> dict[str, list[int]]:
     """slot_code -> asset ids: the best legal lineup this roster can field,
     bench included. Slots with nobody to fill them are left short (partial
-    rosters are allowed)."""
+    rosters are allowed). With `prior` (asset id -> value) players are ranked by that alone, not by
+    this database's own scores."""
     slots = league_slots(db, team.league_id)
     roster = roster_assets(db, team.id)
     season = season_points_by_asset(db)
@@ -114,6 +115,8 @@ def best_lineup(db: Session, team: Team) -> dict[str, list[int]]:
         weekly[w.draftable_asset_id] += w.points
 
     def strength(a: DraftableAsset):
+        if prior is not None:
+            return (prior.get(a.id, 0.0), 0.0)
         return (season.get(a.id, 0.0), weekly.get(a.id, 0.0))
 
     remaining = sorted(roster, key=strength, reverse=True)

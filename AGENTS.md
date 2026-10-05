@@ -38,6 +38,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/ingest_nfl_rosters_and_stats.py` | Idempotently ingests nflverse NFL rosters and one regular-season week of player stats | `.venv` | Yes (nflverse GitHub releases; no key) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_season_points.py` | Ingests full-season stat lines from CFBD and stores ESPN standard points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_week_scores.py` | Scores real games for season weeks (games, plays, credits, weekly scores) | `.venv` | Yes (CFBD API; `CFBD_API_KEY` unverified in docstring) | Yes (`DATABASE_URL`) |
+| `scripts/run_nfl_mock_run.py` | NFL Timed Auction Draft (12 AI teams) plus one scored week, then runs the realism audit | `.venv-api` | No | Yes (throwaway copy `nfl_mock_run.db` of `nfl_score_run.db`) |
 | `scripts/run_mock_auction_draft.py` | Runs timed auction draft end-to-end via FastAPI TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
 | `scripts/run_mock_commissioner_mode.py` | Tests commissioner mode entitlement, draft simulation, and lineup rules | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
 | `scripts/run_mock_e2e.py` | Orchestrates all mock test stages end-to-end | `.venv-api` | No (unverified in docstring) | Yes (via child stages) |

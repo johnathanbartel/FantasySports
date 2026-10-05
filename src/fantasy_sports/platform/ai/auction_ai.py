@@ -43,15 +43,22 @@ from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
 # Per-position roster caps an AI will fill, and the starter minimums it
 # chases first (same shape as scripts/run_mock_auction_draft.py's bots).
-POSITION_CAP = {"QB": 2, "RB": 5, "WR": 5, "TE": 3, "PK": 2, "DL": 2, "LB": 2, "DB": 2}
-STARTER_MIN = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "PK": 1, "DL": 1, "LB": 1, "DB": 1}
+POSITION_CAP = {"QB": 2, "RB": 5, "WR": 5, "TE": 3, "PK": 2, "K": 2, "DL": 2, "LB": 2, "DB": 2}
+STARTER_MIN = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "PK": 1, "K": 1, "DL": 1, "LB": 1, "DB": 1}
 
 
 def _aggression(team_id: int) -> float:
     return random.Random(team_id * 7919).uniform(0.7, 1.3)
 
 
+# asset id -> prior value. When set (the NFL mock run sets it from the previous season's credit), the AI prices
+# from this instead of the database's own weekly scores, so the draft has no look-ahead.
+PRIOR_VALUE: dict[int, float] | None = None
+
+
 def value_by_asset(db: Session) -> dict[int, float]:
+    if PRIOR_VALUE is not None:
+        return defaultdict(float, PRIOR_VALUE)
     value: dict[int, float] = defaultdict(float)
     for s in db.query(WeeklyPlayerScore):
         value[s.draftable_asset_id] += s.points

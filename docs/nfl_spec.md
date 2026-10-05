@@ -78,7 +78,7 @@ roster and keeps scoring for his new team.
 The mode-specific pool is enforced by `platform/defense_modes.py`; a league never
 sees assets that belong to another mode. The real-week points-allowed
 validation (`professional/scripts/run_week_validation.py`) and the three-mode
-tie-outs run on 2024 week 1; the NFL team-score scale is still unfitted.
+tie-outs run on 2024 week 1; `scripts/run_nfl_scored_week.py` runs the audit on a drafted league.
 
 ### Weekly totals and realism gate
 
@@ -86,11 +86,17 @@ tie-outs run on 2024 week 1; the NFL team-score scale is still unfitted.
 recomputable player/asset-week aggregate. A fantasy team's raw weekly total is
 the sum of its starters' weekly asset scores; bench scores do not count.
 
-The live team-score transform is currently fitted to college football and
-must not be reused as an NFL calibration. NFL needs its own fitted scale (and
-universe-aware scale selection in the platform) before an NFL matchup is
-treated as scored. The raw-credit storage model does not need to change for
-that work.
+The NFL has its own fitted scale (`platform/scoring_scale.py` picks it by universe and, for the NFL, by the
+league's defense mode; `professional/data/scoring_scale.json`). It is the college method run on NFL data
+(`docs/scoring_scale_fit_report.md`): simulated snake drafts on the prior season's credit per game, lineups set from
+the same ranking, scored on the season's actual weekly credits, for 4-24 team leagues, one block per defense mode.
+It is fitted on the 2019-2024 regular seasons (2018 is the first prior season) and maps a lineup's summed credit to
+points so a league's season average equals the NFL's 22.84 points per team-game (sd 9.96), strictly increasing so
+the credit leader always wins. Rebuild and refit with `professional/scripts/build_weekly_credits.py` then
+`professional/scripts/fit_scoring_scale.py` (network for the first, offline for the second). Held out one season at
+a time, a fitted scale's league-average score lands within about 1-1.5 points of that season's real average (the
+season-to-season drift of the NFL's own scoring, 21.8-24.8, is most of the gap). A single week is noisier: 2024
+week 1 runs about 29 for prior-ranked lineups because every starter is healthy, and the season settles near 22.
 
 Before NFL scoring is called complete, one regular-season week must pass all
 of these checks using real data:
@@ -171,7 +177,5 @@ pool to its own mode's defense assets.
 - ingest NFL teams, players, schedule, and nflfastR play-by-play into the
   shared database;
 - implement and validate professional group-defense attribution;
-- fit an NFL team-score scale and route scale selection by universe instead of
-  using the current college-only parameters;
 - persist a scored regular-season week and run the realism gate above;
 - run the end-to-end scored-week/matchup/standings flow on that real week.
