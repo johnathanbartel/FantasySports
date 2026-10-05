@@ -43,8 +43,8 @@ from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
 # Per-position roster caps an AI will fill, and the starter minimums it
 # chases first (same shape as scripts/run_mock_auction_draft.py's bots).
-POSITION_CAP = {"QB": 2, "RB": 5, "WR": 5, "TE": 3, "PK": 2, "DL": 2, "LB": 2, "DB": 2}
-STARTER_MIN = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "PK": 1, "DL": 1, "LB": 1, "DB": 1}
+POSITION_CAP = {"QB": 2, "RB": 5, "WR": 5, "TE": 3, "PK": 2, "K": 2, "DL": 2, "LB": 2, "DB": 2}
+STARTER_MIN = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "PK": 1, "K": 1, "DL": 1, "LB": 1, "DB": 1}
 
 
 def _aggression(team_id: int) -> float:
