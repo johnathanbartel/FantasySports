@@ -18,6 +18,7 @@ look-ahead, so the realism numbers are an upper bound on how well drafters do - 
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -35,6 +36,8 @@ ap.add_argument("--mode", choices=["group", "team", "individual"], default="grou
 ap.add_argument("--week", type=int, default=1)
 ap.add_argument("--teams", type=int, default=12)
 ap.add_argument("--round-seconds", type=int, default=1)
+ap.add_argument("--prior-season", type=int, default=2023,
+                help="season whose scored weeks price the draft and set lineups, as if drafting before week 1 (0 = look-ahead)")
 args = ap.parse_args()
 source, run_db = ROOT / args.source, ROOT / args.db
 if not source.exists():
@@ -45,10 +48,13 @@ os.environ["DATABASE_URL"] = f"sqlite:///{run_db.as_posix()}"
 from fastapi.testclient import TestClient
 
 from fantasy_sports.api.main import app
+from fantasy_sports.platform import lineups
+from fantasy_sports.platform.ai import auction_ai
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.db.models import core  # noqa: F401
 from fantasy_sports.platform.db.models.core import (
-    AuctionBid, AuctionDraft, AuctionRound, AuctionTeamBudget, RosterEntry, Team, User,
+    AuctionBid, AuctionDraft, AuctionRound, AuctionTeamBudget, DefenseGroup, DraftableAsset, Player, RealTeam,
+    RosterEntry, Team, User,
 )
 from fantasy_sports.platform.db.session import SessionLocal
 
@@ -56,6 +62,24 @@ from fantasy_sports.platform.db.session import SessionLocal
 def check(cond, msg):
     if not cond:
         raise AssertionError(msg)
+
+
+def prior_values(db):
+    """asset id -> total credit over the prior season's scored weeks (offline cache, never the audited week)."""
+    path = ROOT / "data" / "cache" / f"nfl_weekly_credits_{args.prior_season}.json"
+    check(path.exists(), f"{path} missing")
+    asset_of = {f"P|{p.external_ref}": a.id for a, p in db.query(DraftableAsset, Player).join(Player, Player.id == DraftableAsset.player_id)
+                if p.external_ref}
+    refs = {t.id: t.external_ref for t in db.query(RealTeam) if t.external_ref}
+    for a, g in db.query(DraftableAsset, DefenseGroup).join(DefenseGroup, DefenseGroup.id == DraftableAsset.defense_group_id):
+        if g.real_team_id in refs:
+            asset_of[f"D|{refs[g.real_team_id]}|{g.position_group}"] = a.id
+    total = {}
+    for wk in json.loads(path.read_text())["weeks"].values():
+        for key, pts in wk.items():
+            if key in asset_of:
+                total[asset_of[key]] = total.get(asset_of[key], 0.0) + pts
+    return total
 
 
 def main():
@@ -81,6 +105,11 @@ def main():
     check(len(teams) == args.teams and all(t["is_ai_owned"] for t in teams), "expected an all-AI league")
     print(f"League {lid} ({args.mode} defense, {args.teams} teams {dict(tiers)}, roster {roster_size}, draft_type {league['draft_type']})")
 
+    prior = None
+    if args.prior_season:
+        prior = prior_values(db)
+        auction_ai.PRIOR_VALUE = {k: max(v, 0.0) for k, v in prior.items()}
+        print(f"Drafting as if before week 1: AI prices and lineups use {args.prior_season} credit only ({len(prior)} assets)")
     aid = client.post("/auctions/start", json={"league_id": lid, "round_seconds": args.round_seconds}, headers=H).json()["id"]
     budgets = {b["team_id"]: b for b in client.get(f"/auctions/{aid}/budgets").json()}
     size_of = {t["id"]: t["program_size"] for t in teams}
@@ -137,8 +166,9 @@ def main():
     # ---- lineups, schedule, scored-week audit --------------------------------------------------------
     week = next((w for w in client.get(f"/leagues/{lid}/weeks").json() if w["week_number"] == args.week), None)
     check(week is not None, f"league has no week {args.week}")
-    r = client.post(f"/leagues/{lid}/lineups/auto", params={"week_id": week["id"]}, headers=H)
-    check(r.status_code == 200, r.text)
+    for team in db.query(Team).filter_by(league_id=lid):
+        lineups.save_lineup(db, team, week["id"], lineups.build_lineup(db, team, lineups.best_lineup(db, team, prior)))
+    db.commit()
     r = client.post(f"/leagues/{lid}/schedule/auto", json={"weeks": 1}, headers=H)
     check(r.status_code == 200, r.text)
     print(f"Lineups set for week {args.week}; schedule created ({r.json()['matchups']} matchups)\n")
