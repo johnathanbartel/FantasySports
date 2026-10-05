@@ -39,13 +39,13 @@ if not db_path.exists():
 os.environ["DATABASE_URL"] = f"sqlite:///{db_path.as_posix()}"
 
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import scoring
+from fantasy_sports.platform import scoring, scoring_scale
+from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.db.models import core  # noqa: F401
 from fantasy_sports.platform.db.models.core import DraftableAsset, Game, RealTeam, Team
 from fantasy_sports.platform.db.session import SessionLocal
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
-NCAA_PPG = 28.11          # FBS points per team per game (scoring_scale.json ncaa_ppg)
 
 
 def check(cond, msg):
@@ -75,13 +75,17 @@ def main():
         real_pts[g.away_team_id] += g.away_score
     teams_meta = {t.id: t for t in db.query(RealTeam)}
     all_pts = [g.home_score for g in games] + [g.away_score for g in games]
+    context = scoring.league_context(db, args.league)
+    season_ppg = scoring_scale._params(context)["ppg"]       # the fitted league-average points per team-game
+    sport = "NFL" if context.universe == "nfl" else "NCAA"
     fbs_pts = [p for tid, p in real_pts.items() if teams_meta[tid].classification == "fbs"]
     print(f"Real points per team-game: all {statistics.fmean(all_pts):.1f} (sd {statistics.pstdev(all_pts):.1f}, n={len(all_pts)}); "
-          f"FBS teams only {statistics.fmean(fbs_pts):.1f} (n={len(fbs_pts)}); season-long NCAA benchmark {NCAA_PPG}")
+          + (f"FBS teams only {statistics.fmean(fbs_pts):.1f} (n={len(fbs_pts)}); " if fbs_pts else "")
+          + f"season-long {sport} benchmark {season_ppg:.1f}"
+          + (f"; scale: {context.universe} / {context.defense_mode} defense" if context.universe == "nfl" else ""))
 
     # -- fantasy team scores for the week -------------------------------------------------------
     league_teams = db.query(Team).filter_by(league_id=args.league).order_by(Team.id).all()
-    context = scoring.league_context(db, args.league)
     rows = []
     for t in league_teams:
         lines = scoring.lineup_breakdown(db, t.id, week.id)
@@ -97,15 +101,24 @@ def main():
         print(f"  {t.name:<22} {s:6.1f} pts   raw credit {raw:7.2f}   {played}/{len(lines)} starters had a game")
     # Non-inflation: the league mean tracks the real scoring environment of the same week, and no team
     # scores more than a football team plausibly could.
+    print(f"League mean {mean:.1f} vs that week's real {statistics.fmean(all_pts):.1f} per team-game "
+          f"(ratio {mean / statistics.fmean(all_pts):.2f}; the scale is fitted to match over a whole season, "
+          f"so one week can sit above or below it)")
     check(mean <= 1.5 * statistics.fmean(all_pts), f"league mean {mean:.1f} is inflated vs real {statistics.fmean(all_pts):.1f}")
     check(max(scores) <= 90, f"top team score {max(scores):.1f} is implausible")
 
     # -- credit follows real results ---------------------------------------------------------------
+    # Only assets this league can draft count: a universe stores credit for every defense mode (individual
+    # defenders, DL/LB/DB units and the whole-team DEF all cover the same plays), so summing all of them
+    # would count each defensive play several times.
+    modes = league_modes(db, args.league)
     credit_by_team = defaultdict(float)
     asset_team = {}
-    for a in db.query(DraftableAsset):
+    assets = {a.id: a for a in db.query(DraftableAsset) if in_pool(a, modes)}
+    for a in assets.values():
         asset_team[a.id] = a.player.real_team_id if a.player else a.defense_group.real_team_id
-    for s in db.query(WeeklyPlayerScore).filter_by(week_id=week.id):
+    week_scores = [s for s in db.query(WeeklyPlayerScore).filter_by(week_id=week.id) if s.draftable_asset_id in assets]
+    for s in week_scores:
         credit_by_team[asset_team[s.draftable_asset_id]] += s.points
     common = [tid for tid in real_pts if tid in credit_by_team]
     xs = [credit_by_team[t] for t in common]
@@ -116,8 +129,7 @@ def main():
 
     # -- individual lines ----------------------------------------------------------------------------
     by_pos = defaultdict(list)
-    assets = {a.id: a for a in db.query(DraftableAsset)}
-    for s in db.query(WeeklyPlayerScore).filter_by(week_id=week.id):
+    for s in week_scores:
         a = assets[s.draftable_asset_id]
         by_pos[draftable_asset_position(a)].append((s.points, draftable_asset_display_name(a), teams_meta[asset_team[a.id]].name))
     print("\nRaw credit by position (all scored assets that week): n / mean / best / worst")
