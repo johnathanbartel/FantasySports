@@ -45,19 +45,23 @@ def main():
     db.add(commissioner)
     db.commit()
 
+    resp = client.post("/sessions", json={"user_id": commissioner.id})
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
     # --- 'dynamic' mode is rejected until multi-season support exists -----
     resp = client.post("/leagues", json={
         "name": "Dynamic Test League", "commissioner_user_id": commissioner.id,
         "universe_codes": ["ncaaf"], "program_size_mode": "dynamic",
-    })
+    }, headers=headers)
     print(f"dynamic mode request: {resp.status_code} {resp.json()}")
     assert resp.status_code == 400, "dynamic mode should be rejected for now"
 
     # --- Create a real league: gets 3 baseline conferences for free -------
     resp = client.post("/leagues", json={
         "name": "Conference Smoke Test League", "commissioner_user_id": commissioner.id,
-        "universe_codes": ["ncaaf"], "size": 4, "draft_rounds": 1,
-    })
+        "universe_codes": ["ncaaf"], "size": 6, "draft_rounds": 1,
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     league = resp.json()
     print(f"\nCreated league {league['id']}, program_size_mode={league['program_size_mode']}")
@@ -74,7 +78,7 @@ def main():
         resp = client.post("/teams", json={
             "league_id": league["id"], "name": f"{size.title()} Program", "is_ai_owned": True,
             "program_size": size,
-        })
+        }, headers=headers)
         assert resp.status_code == 200, resp.text
         team = resp.json()
         teams[size] = team
@@ -93,14 +97,14 @@ def main():
     resp = client.post("/teams", json={
         "league_id": league["id"], "name": "Bad Team", "is_ai_owned": True,
         "owner_user_id": commissioner.id, "program_size": "small",
-    })
+    }, headers=headers)
     print(f"\nInconsistent owner/AI request: {resp.status_code} {resp.json()}")
     assert resp.status_code == 400
 
     # --- Load balancing: a 2nd small-program team joins the same (only) conference ---
     resp = client.post("/teams", json={
         "league_id": league["id"], "name": "Small Program 2", "is_ai_owned": True, "program_size": "small",
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     small2 = resp.json()
     print(f"\n2nd small-program team {small2['id']} conference_id={small2['conference_id']} "
@@ -127,7 +131,7 @@ def main():
     # --- A 3rd small-program team should now load-balance into the NEW small conference ---
     resp = client.post("/teams", json={
         "league_id": league["id"], "name": "Small Program 3", "is_ai_owned": True, "program_size": "small",
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     small3 = resp.json()
     print(f"3rd small-program team {small3['id']} conference_id={small3['conference_id']} "
