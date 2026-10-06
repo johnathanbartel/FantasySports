@@ -123,10 +123,10 @@ def main():
     print(f"Created league {league['id']}: {league['name']}")
 
     team_a = Team(league_id=league["id"], name="Team A", owner_user_id=ref["commissioner"].id)
-    team_b = Team(league_id=league["id"], name="Team B", owner_user_id=ref["commissioner"].id)
+    team_b = Team(league_id=league["id"], name="Team B", is_ai_owned=True)
     db.add_all([team_a, team_b])
     db.commit()
-    print(f"Teams: {team_a.id} ({team_a.name}), {team_b.id} ({team_b.name})")
+    print(f"Teams: {team_a.id} ({team_a.name}), {team_b.id} ({team_b.name}, AI-owned)")
 
     # --- Draft: covers both a player and a defense group ---------------
     resp = client.post("/drafts/start", json={"league_id": league["id"]})
@@ -145,12 +145,18 @@ def main():
     assert resp.status_code == 200, resp.text
     print(f"Pick 1: {resp.json()['display_name']} -> team {resp.json()['team_id']}")
 
-    resp = client.post(
+    # Pick 2: Team B is AI-owned, so manual pick is rejected; autopick acts for it.
+    forbidden = client.post(
         f"/drafts/{draft['id']}/pick",
         json={"draftable_asset_id": ref["db_group_asset"].id},
         headers=headers,
     )
+    assert forbidden.status_code == 403, forbidden.text
+
+    resp = client.post(f"/drafts/{draft['id']}/autopick")
     assert resp.status_code == 200, resp.text
+    assert resp.json()["team_id"] == team_b.id
+    assert resp.json()["is_autopick"] is True
     print(f"Pick 2: {resp.json()['display_name']} -> team {resp.json()['team_id']} "
           f"(a defense group, drafted from the same pool as the QB above)")
 
@@ -163,6 +169,8 @@ def main():
     picks = client.get(f"/drafts/{draft['id']}/picks").json()
     print(f"Full pick history ({len(picks)} picks): "
           f"{[(p['round'], p['pick_number'], p['display_name']) for p in picks]}")
+    assert picks[0]["team_id"] == team_a.id and not picks[0]["is_autopick"]
+    assert picks[1]["team_id"] == team_b.id and picks[1]["is_autopick"]
 
     # --- Lineup ----------------------------------------------------------
     resp = client.put(f"/teams/{team_a.id}/lineup", json={
