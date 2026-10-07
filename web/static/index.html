@@ -65,13 +65,14 @@ const SPORTS = [
     label: 'Football',
     status: 'progress',
     statusLabel: 'In progress',
-    summary: "The NFL universe shares the platform's EPA scoring model with College Football, and the two are planned to combine into a Dual Universe league. Offense attribution is built and validated against real play-by-play; there's no live league or draft board for it yet.",
+    summary: "The NFL universe shares the platform's EPA scoring model with College Football, and the two are planned to combine into a Dual Universe league. You can create an NFL league and set up your team now; the player pool fills once NFL rosters are ingested.",
     features: [
       "NFL offense attribution pipeline, validated against real 2024 week-1 play-by-play",
       "Exact QB/receiver EPA splits from nflfastR's per-play yac_epa (no yards-bucket approximation needed)",
       "Leagues can choose group or individual defensive-player scoring for NFL",
     ],
     links: [
+      { href: '/static/create-league.html?universe=nfl', label: 'Create an NFL league', primary: true },
       { href: '/docs', label: 'API docs' },
     ],
   },

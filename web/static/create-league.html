@@ -55,6 +55,24 @@
         <span class="hint">Dev sign-in (no password yet): enter the numeric user id you're testing as. You'll be signed in as this user.</span>
       </div>
 
+      <div class="field">
+        <label for="universe">Sport</label>
+        <select id="universe" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="ncaaf">College Football</option>
+          <option value="nfl">Football (NFL)</option>
+        </select>
+      </div>
+
+      <div class="field" id="defense-mode-field" style="display:none">
+        <label for="defense-mode">How is defense drafted?</label>
+        <select id="defense-mode" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="group" selected>Position groups (DL / LB / DB units)</option>
+          <option value="team">Whole team defense (one DEF per team)</option>
+          <option value="individual">Individual defenders</option>
+        </select>
+        <span class="hint">Roster size (draft rounds) follows this choice.</span>
+      </div>
+
       <div style="display:flex;gap:var(--space-4)">
         <div class="field" style="flex:1">
           <label for="league-size">League size</label>
@@ -164,6 +182,20 @@ function showError(msg) {
 
 let league = null; // LeagueOut, once step 1 succeeds
 
+const isNfl = () => document.getElementById('universe').value === 'nfl';
+
+function updateUniverse() {
+  const nfl = isNfl();
+  document.getElementById('defense-mode-field').style.display = nfl ? 'flex' : 'none';
+  // NFL has no recruiting-draft pricing data yet: snake only.
+  document.getElementById('choice-recruit').style.display = nfl ? 'none' : '';
+  if (nfl) document.querySelector('input[name=draft-type][value=snake]').checked = true;
+  document.getElementById('draft-rounds').disabled = nfl;
+  document.getElementById('draft-rounds').title = nfl ? 'Set by the NFL roster size for the defense option chosen' : '';
+  document.getElementById('program-size').closest('.field').style.display = nfl ? 'none' : '';
+  updateDraftTypeCards();
+}
+
 function selectedDraftType() {
   return document.querySelector('input[name=draft-type]:checked').value;
 }
@@ -180,7 +212,9 @@ function updateDraftTypeCards() {
     : 'Optional - you can set this later, but teams will see "not yet scheduled" until you do.';
 }
 document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = updateDraftTypeCards);
-updateDraftTypeCards();
+document.getElementById('universe').onchange = updateUniverse;
+if (new URLSearchParams(location.search).get('universe') === 'nfl') document.getElementById('universe').value = 'nfl';
+updateUniverse();
 
 function updateOwnerTypeCards() {
   const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
@@ -208,9 +242,10 @@ document.getElementById('create-league-btn').onclick = async () => {
       body: JSON.stringify({
         name,
         commissioner_user_id: commissionerId,
-        universe_codes: ['ncaaf'], // NCAAF is the only live universe today - see index.html
+        universe_codes: [isNfl() ? 'nfl' : 'ncaaf'],
+        defense_modes: isNfl() ? {nfl: document.getElementById('defense-mode').value} : {},
         size: Number(document.getElementById('league-size').value),
-        draft_rounds: Number(document.getElementById('draft-rounds').value),
+        draft_rounds: isNfl() ? null : Number(document.getElementById('draft-rounds').value),
         program_size_mode: 'team_choice',
         draft_type: draftType,
         draft_scheduled_at: scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
@@ -253,7 +288,9 @@ document.getElementById('create-team-btn').onclick = async () => {
       }),
     });
 
-    if (league.draft_type === 'recruit') {
+    if (isNfl()) {
+      location.href = `/static/league.html?league_id=${league.id}&team_id=${team.id}`;
+    } else if (league.draft_type === 'recruit') {
       location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${team.id}`;
     } else {
       location.href = `/static/roster.html?league_id=${league.id}&team_id=${team.id}`;
