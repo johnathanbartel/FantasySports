@@ -89,6 +89,10 @@ def main():
     db = SessionLocal()
     ref = seed_reference_data(db)
 
+    resp = client.post("/sessions", json={"user_id": ref["commissioner"].id})
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+
     # --- League + teams with different program-size budget tiers -----------
     resp = client.post("/leagues", json={
         "name": "Auction Smoke Test League",
@@ -96,14 +100,14 @@ def main():
         "universe_codes": ["ncaaf"],
         "size": 3,
         "draft_rounds": 2,
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     league = resp.json()
     print(f"Created league {league['id']}: {league['name']}")
 
     team_large = Team(league_id=league["id"], name="Large Program", owner_user_id=ref["commissioner"].id, program_size="large")
-    team_moderate = Team(league_id=league["id"], name="Moderate Program", is_ai_owned=True, program_size="moderate")
-    team_small = Team(league_id=league["id"], name="Small Program", is_ai_owned=True, program_size="small")
+    team_moderate = Team(league_id=league["id"], name="Moderate Program", owner_user_id=ref["commissioner"].id, program_size="moderate")
+    team_small = Team(league_id=league["id"], name="Small Program", owner_user_id=ref["commissioner"].id, program_size="small")
     db.add_all([team_large, team_moderate, team_small])
     db.commit()
     print(
@@ -113,7 +117,7 @@ def main():
     )
 
     # --- Start the auction: budgets snapshotted per program_size -----------
-    resp = client.post("/auctions/start", json={"league_id": league["id"], "round_seconds": 1})
+    resp = client.post("/auctions/start", json={"league_id": league["id"], "round_seconds": 1}, headers=headers)
     assert resp.status_code == 200, resp.text
     auction = resp.json()
     print(f"\nStarted auction {auction['id']}, status={auction['status']}, round_seconds={auction['round_seconds']}")
@@ -131,15 +135,17 @@ def main():
     # --- Round 1: nominate the QB, deliberate tie between two teams --------
     resp = client.post(f"/auctions/{auction['id']}/nominate", json={
         "draftable_asset_id": ref["qb_asset"].id, "nominated_by_team_id": team_large.id,
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     round1 = resp.json()
     print(f"\nRound {round1['round_number']}: {round1['display_name']} nominated by team {team_large.id}, "
           f"window closes in ~{round1['seconds_remaining']:.1f}s")
 
-    client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_moderate.id, "amount": 50})
-    client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_small.id, "amount": 50})
-    resp = client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_large.id, "amount": 20})
+    resp = client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_moderate.id, "amount": 50}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    resp = client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_small.id, "amount": 50}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    resp = client.post(f"/auctions/{auction['id']}/rounds/{round1['id']}/bids", json={"team_id": team_large.id, "amount": 20}, headers=headers)
     assert resp.status_code == 200, resp.text
 
     # Bids stay sealed while the round is open.
@@ -176,7 +182,7 @@ def main():
     next_nominator = [team_large.id, team_moderate.id, team_small.id][auction_state["next_nominator_index"]]
     resp = client.post(f"/auctions/{auction['id']}/nominate", json={
         "draftable_asset_id": ref["db_group_asset"].id, "nominated_by_team_id": next_nominator,
-    })
+    }, headers=headers)
     assert resp.status_code == 200, resp.text
     round2 = resp.json()
     print(f"\nRound {round2['round_number']}: {round2['display_name']} (a defense group) nominated by team "
