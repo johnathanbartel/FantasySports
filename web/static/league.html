@@ -173,7 +173,8 @@ async function renderHome() {
         <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
           <h3 style="margin:0 0 var(--space-2)">Quick links</h3>
           <div style="display:flex;flex-direction:column;gap:6px;font-size:14px">
-            <a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>
+            ${ov.draft_type === 'snake' ? `<a href="/static/draft-board.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Draft board</a>`
+              : `<a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>`}
             <a href="/static/lineup.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Lineup</a>
             ${isCommissioner ? `<a href="/static/commissioner.html?league_id=${LEAGUE_ID}">Commissioner mode</a>` : ''}
           </div>
