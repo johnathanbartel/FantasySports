@@ -26,6 +26,7 @@ from fantasy_sports.platform.db.models.core import (
     RecruitingAward,
     RosterEntry,
     Team,
+    Universe,
     User,
     Week,
 )
@@ -75,6 +76,7 @@ class OverviewOut(BaseModel):
     league_id: int
     name: str
     draft_type: str
+    universe_codes: list[str] = []
     size: int
     roster_size: int
     commissioner_user_id: int
@@ -111,8 +113,12 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         )
         for t in db.query(Team).filter_by(league_id=league_id).order_by(Team.id)
     ]
+    universe_codes = [
+        u.code for u in db.query(Universe).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id)
+        .filter(LeagueUniverse.league_id == league_id).order_by(Universe.code)
+    ]
     return OverviewOut(
-        league_id=league.id, name=league.name, draft_type=league.draft_type, size=league.size,
+        league_id=league.id, name=league.name, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
         roster_size=league.draft_rounds, commissioner_user_id=league.commissioner_user_id,
         commissioner_name=users.get(league.commissioner_user_id), season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),

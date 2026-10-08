@@ -1,4 +1,5 @@
 import datetime
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ from fantasy_sports.platform.recruiting import engine, simulate
 from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 
 router = APIRouter(prefix="/recruiting", tags=["recruiting"])
+logger = logging.getLogger(__name__)
 
 
 class DraftStatus(BaseModel):
@@ -216,9 +218,15 @@ def simulate_draft(league_id: int, db: Session = Depends(get_db), user: User = D
     require_commissioner_mode(db, user)
     try:
         simulate.simulate_draft(db, league_id)
+        db.commit()
     except ValueError as e:
+        db.rollback()
         raise HTTPException(400, str(e))
-    db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("Instant recruiting draft simulation failed for league %s", league_id)
+        reason = str(e).strip() or type(e).__name__
+        raise HTTPException(500, f"Draft simulation failed: {reason}")
     return _status(db, league_id)
 
 

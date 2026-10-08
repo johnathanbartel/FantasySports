@@ -28,6 +28,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -130,6 +131,18 @@ def main():
     check(db.query(RecruitingBidResult).filter_by(draft_id=draft.id).count() > 0, "results snapshots were not recorded")
     print(f"Simulated draft: 20 weeks, {len(awards)} players recruited, roster sizes after AI free agency {sorted(roster.values())}, "
           f"nobody overspent - {time.time() - t0:.0f}s")
+
+    # An unexpected engine/database failure must be visible to the commissioner instead of
+    # returning FastAPI's opaque "Internal Server Error" response. The transaction is rolled
+    # back so a retry starts from a consistent state.
+    failed = client.post("/leagues/sandbox", json={"name": "Failed simulation"}, headers=B).json()
+    with patch("fantasy_sports.api.routers.recruiting.simulate.simulate_draft", side_effect=RuntimeError("test failure")):
+        r = client.post(f"/recruiting/league/{failed['id']}/simulate", headers=B)
+    check(r.status_code == 500 and r.json()["detail"] == "Draft simulation failed: test failure", r.text)
+    db.expire_all()
+    check(db.query(RecruitingDraft).filter_by(league_id=failed["id"]).first() is None,
+          "a failed simulation should roll back its draft transaction")
+    print("Simulation failure: the API returns the underlying reason and rolls back cleanly")
 
     # ---- roster detail / slots / weeks -------------------------------------------------------
     slots = client.get(f"/leagues/{lid}/roster-slots").json()

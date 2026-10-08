@@ -14,6 +14,7 @@ from fantasy_sports.platform.db.models.core import (
     WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
+from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
 
@@ -26,6 +27,13 @@ def create_league(
 ):
     if payload.commissioner_user_id != user.id:
         raise HTTPException(403, "You can only create a league with yourself as commissioner")
+    if "nfl" in payload.universe_codes:
+        # NFL reference data (universe + roster slots) is additive and idempotent;
+        # add it on demand so a fresh database needs no seeding script first.
+        try:
+            seed_nfl_reference_data(db)
+        except RuntimeError as e:
+            raise HTTPException(400, f"NFL reference data conflict: {e}")
     universes = db.query(Universe).filter(Universe.code.in_(payload.universe_codes)).all()
     if len(universes) != len(payload.universe_codes):
         found = {u.code for u in universes}

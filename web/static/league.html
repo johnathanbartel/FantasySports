@@ -612,7 +612,7 @@ async function start() {
   canActForAi = isCommissioner && ent.commissioner_mode;
   $('nav-brand').textContent = ov.name;
   $('league-name').textContent = ov.name;
-  $('kicker').textContent = `College football · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
+  $('kicker').textContent = `${ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
   $('nav-cm').style.display = isCommissioner ? '' : 'none';
   document.title = ov.name;
   const want = params.get('tab');
