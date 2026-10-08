@@ -93,11 +93,27 @@ roster slot definitions exist - no NHL-specific auction work is needed.
 
 ## Data pipeline
 
-1. Pull shot-event data for a recent NHL season (source not yet chosen -
-   candidates: the NHL Stats API and MoneyPuck's published xG dataset).
-   Not implemented in this stand-up - no external ingestion is wired up
-   yet, matching the "no paid or external API calls" constraint on this
-   task.
+MoneyPuck is the selected v1 source. It publishes free season-summary roster
+CSVs and season ZIPs of shot events with a pre-built `xGoal` probability. To
+ingest the 2024-25 season into the normal local runtime database:
+
+```powershell
+$env:DATABASE_URL = "sqlite:///./user_run.db"
+.venv/Scripts/python.exe scripts/ingest_nhl_rosters_and_shots.py --season 2024
+```
+
+The importer is idempotent. It updates changed team/player metadata, creates
+missing draftable player assets, and keys every shot by MoneyPuck season,
+game, and shot ID so a rerun inserts no duplicates. MoneyPuck's shot ZIP does
+not carry game dates, so imported games use the season's week-number-0
+container rather than inventing fantasy-week boundaries. Credit MoneyPuck for
+uses of its data and review its published terms for uses beyond the free
+non-commercial/journalistic allowance.
+
+Pipeline stages:
+
+1. Pull season-correct NHL skater and goalie rosters and the matching
+   MoneyPuck shot-event archive.
 2. Use a pre-built xG field if the source provides one (MoneyPuck does);
    otherwise derive one from shot location/type/strength state, the same
    sequencing the football module used for EPA.
@@ -111,6 +127,5 @@ roster slot definitions exist - no NHL-specific auction work is needed.
 
 Hits/blocks/penalties/faceoff scoring, empty-net and shootout-decision
 edge cases in GSAx, a second starting-goalie slot, individual
-zone-start/quality-of-competition adjustments, public/multi-tenant
-release, and real data ingestion (source not yet chosen or wired up - see
-Data pipeline above).
+zone-start/quality-of-competition adjustments, public/multi-tenant release,
+and ingestion from sources other than MoneyPuck.
