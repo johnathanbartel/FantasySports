@@ -144,8 +144,9 @@ async function refreshLeague() {
     `${teams.length} AI teams · ${status.total_periods} recruiting weeks` +
     (status.status === 'open' ? ` · now in week ${status.current_period}` : '') +
     (status.status === 'closed' ? ` · ${Object.values(rosterSizes).reduce((a, b) => a + b, 0)} players recruited` : '');
-  document.getElementById('sim-btn').disabled = status.status === 'closed';
-  document.getElementById('sim-btn').textContent = status.status === 'closed' ? 'Draft complete' : (status.status === 'open' ? 'Finish the draft instantly' : 'Simulate the recruiting draft');
+  document.getElementById('sim-btn').style.display = status.status === 'closed' ? 'none' : '';
+  document.getElementById('sim-btn').disabled = false;
+  document.getElementById('sim-btn').textContent = status.status === 'open' ? 'Finish the draft instantly' : 'Simulate the recruiting draft';
   document.getElementById('auto-btn').disabled = status.status !== 'closed';
   document.getElementById('week-select').innerHTML = weeks.map(w => `<option value="${w.id}">Week ${w.week_number} (${w.season_year})</option>`).join('');
   document.getElementById('teams-body').innerHTML = teams.map(t => `<tr>

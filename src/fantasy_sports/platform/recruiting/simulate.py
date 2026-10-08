@@ -22,7 +22,7 @@ import random
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.ai import recruiting_ai
-from fantasy_sports.platform.db.models.core import RecruitingDraft, Team
+from fantasy_sports.platform.db.models.core import League, RecruitingDraft, RosterEntry, Team
 from fantasy_sports.platform.recruiting import engine
 
 TICKS_PER_WEEK = 8
@@ -47,4 +47,15 @@ def simulate_draft(
             recruiting_ai.tick(db, draft.id, intensity=1.0, rng=rng)
         engine.process_period_now(db, draft.id)
         db.flush()
+
+    league = db.get(League, league_id)
+    teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
+    incomplete = {}
+    for team in teams:
+        count = db.query(RosterEntry).filter(RosterEntry.team_id == team.id).count()
+        if count != league.draft_rounds:
+            incomplete[team.id] = count
+    if incomplete:
+        roster_counts = ", ".join(f"team {team_id}: {count}/{league.draft_rounds}" for team_id, count in incomplete.items())
+        raise ValueError(f"The draft closed, but not every roster could be filled ({roster_counts})")
     return draft
