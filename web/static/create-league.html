@@ -289,7 +289,7 @@ document.getElementById('create-team-btn').onclick = async () => {
     });
 
     if (isNfl()) {
-      location.href = `/static/league.html?league_id=${league.id}&team_id=${team.id}`;
+      location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${team.id}`;
     } else if (league.draft_type === 'recruit') {
       location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${team.id}`;
     } else {

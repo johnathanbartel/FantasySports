@@ -5,21 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Draft Board</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/session.js"></script>
 <style>body{margin:0}</style>
 </head>
 <body>
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
 
   <div class="nav">
-    <span class="nav-brand">Demo League</span>
+    <span class="nav-brand" id="brand">Draft</span>
     <div style="display:flex;gap:var(--space-4)">
       <a href="/static/index.html">Home</a>
+      <a href="#" id="nav-league">League</a>
       <a href="/static/draft-board.html" aria-current="page">Draft</a>
-      <a href="/static/auction-board.html">Auction</a>
-      <a href="/static/roster.html">Roster</a>
-      <a href="#">Lineup</a>
-      <a href="#">Scores</a>
-      <a href="#">Standings</a>
     </div>
   </div>
 
@@ -33,11 +30,14 @@
       <div style="text-align:right" id="on-clock-panel"></div>
     </div>
 
+    <div id="setup-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)"></div>
+
     <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
 
     <div style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
 
       <div>
+        <input id="search" type="search" placeholder="Search players" style="width:100%;box-sizing:border-box;padding:var(--space-2) var(--space-3);margin-bottom:var(--space-3)">
         <div id="pos-filters" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)"></div>
         <div id="board-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
       </div>
@@ -62,24 +62,19 @@
 // in docs/data_contract.md. No mocked/simulated draft state.
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id') || 1;
-const DRAFT_ID = params.get('draft_id') || 2; // see README: draft 1 is the
-  // fully-completed historical demo draft, draft 2 is a fresh one started
-  // specifically for live pick/autopick demoing (draft 1 has 0 open picks)
+let DRAFT_ID = params.get('draft_id');
+const MAX_ROWS = 150; // the NFL pool is thousands of assets; search narrows it
 
-const POS_FILTERS = ['ALL','QB','RB','WR','TE','PK','DL','LB','DB'];
 let posFilter = 'ALL';
-let teamsById = {}; // team_id -> {id, name, is_ai_owned}
+let searchText = '';
+let league = null;
+let me = null;
+let teamsById = {}; // team_id -> {id, name, is_ai_owned, owner_user_id}
 let board = [];
 let picks = [];
 
-async function api(path, opts) {
-  const res = await fetch(path, opts);
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `${res.status} ${res.statusText}`);
-  }
-  return res.json();
-}
+const api = FSC.api;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 function showError(msg) {
   const el = document.getElementById('error-banner');
@@ -87,76 +82,117 @@ function showError(msg) {
   el.style.display = msg ? 'block' : 'none';
 }
 
+function leagueHref() {
+  return `/static/league.html?league_id=${LEAGUE_ID}${params.get('team_id') ? '&team_id=' + params.get('team_id') : ''}`;
+}
+
 async function loadAll() {
-  const [teams, boardData, picksData] = await Promise.all([
-    api(`/leagues/${LEAGUE_ID}/teams`),
-    api(`/drafts/${DRAFT_ID}/board`),
-    api(`/drafts/${DRAFT_ID}/picks`),
-  ]);
+  me = await FSC.current();
+  league = await api(`/leagues/${LEAGUE_ID}`);
+  document.getElementById('brand').textContent = league.name;
+  document.getElementById('nav-league').href = leagueHref();
+  const teams = await api(`/leagues/${LEAGUE_ID}/teams`).catch(() => []);
   teamsById = Object.fromEntries(teams.map(t => [t.id, t]));
-  board = boardData;
-  picks = picksData;
+  if (!DRAFT_ID) {
+    try { DRAFT_ID = (await api(`/drafts/league/${LEAGUE_ID}`)).id; } catch (e) { DRAFT_ID = null; }
+  }
+  if (!DRAFT_ID) { board = []; picks = []; return renderSetup(teams); }
+  document.getElementById('setup-panel').style.display = 'none';
+  [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]);
   render();
+}
+
+function isCommissioner() { return !!(me && league && me.user_id === league.commissioner_user_id); }
+
+function renderSetup(teams) {
+  document.getElementById('clock-kicker').textContent = 'DRAFT NOT STARTED';
+  document.getElementById('on-clock-panel').innerHTML = '';
+  const panel = document.getElementById('setup-panel');
+  panel.style.display = 'block';
+  const open = league.size - teams.length;
+  panel.innerHTML = `
+    <h3 style="margin:0 0 var(--space-2)">${league.draft_type === 'snake' ? 'Snake draft' : 'Draft'} setup</h3>
+    <p class="muted" style="margin:0 0 var(--space-3)">${teams.length} of ${league.size} teams in the league (${teams.filter(t => t.is_ai_owned).length} AI-owned) · ${league.draft_rounds} rounds.
+      ${open > 0 ? `${open} spot${open === 1 ? '' : 's'} still open.` : 'The league is full.'}</p>
+    ${isCommissioner() ? `<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+      ${open > 0 ? '<button class="btn btn-secondary" id="fill-ai">Fill open spots with AI teams</button>' : ''}
+      <button class="btn btn-primary" id="start-draft" ${teams.length ? '' : 'disabled'}>Start draft</button></div>`
+      : '<p class="muted" style="margin:0">Waiting for the commissioner to start the draft.</p>'}`;
+  const fill = document.getElementById('fill-ai');
+  if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
+  const start = document.getElementById('start-draft');
+  if (start) start.onclick = () => act(() => FSC.post('/drafts/start', {league_id: Number(LEAGUE_ID)}));
+  render();
+}
+
+// One request chain at a time: overlapping picks/autopicks would race for the same asset.
+let busy = false;
+async function act(fn) {
+  if (busy) return;
+  busy = true;
+  showError('');
+  try { await fn(); } catch (e) { showError(e.message); }
+  try { await loadAll(); } catch (e) { showError(e.message); }
+  busy = false;
 }
 
 function onClockPick() {
   return picks.find(p => p.draftable_asset_id === null) || null;
 }
 
-async function makePick(assetId) {
-  showError('');
-  try {
-    await api(`/drafts/${DRAFT_ID}/pick`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({draftable_asset_id: assetId}),
-    });
-    await loadAll();
-  } catch (e) {
-    showError(e.message);
-  }
-}
+function isMyTeam(team) { return !!(team && me && team.owner_user_id === me.user_id); }
 
-async function autopick() {
-  showError('');
-  try {
-    await api(`/drafts/${DRAFT_ID}/autopick`, {method: 'POST'});
-    await loadAll();
-  } catch (e) {
-    showError(e.message);
+const makePick = assetId => act(() => FSC.post(`/drafts/${DRAFT_ID}/pick`, {draftable_asset_id: assetId}));
+const autopick = () => act(() => FSC.post(`/drafts/${DRAFT_ID}/autopick`));
+
+// Autopicks every consecutive AI-owned pick, stopping at the first human team on the clock.
+const runAi = () => act(async () => {
+  let next = onClockPick();
+  while (next && teamsById[next.team_id]?.is_ai_owned) {
+    await FSC.post(`/drafts/${DRAFT_ID}/autopick`);
+    picks = await api(`/drafts/${DRAFT_ID}/picks`);
+    next = onClockPick();
   }
-}
+});
 
 function renderClock() {
   const kicker = document.getElementById('clock-kicker');
   const panel = document.getElementById('on-clock-panel');
+  if (!DRAFT_ID) return;
   const next = onClockPick();
 
   if (!next) {
     kicker.textContent = 'DRAFT COMPLETE';
-    panel.innerHTML = '';
+    panel.innerHTML = `<a class="btn btn-primary" href="${leagueHref()}">Go to league</a>`;
     return;
   }
 
-  kicker.textContent = `ROUND ${next.round} · PICK ${((next.pick_number - 1) % Object.keys(teamsById).length) + 1} OF ${Object.keys(teamsById).length} · OVERALL ${next.pick_number}`;
+  const n = Object.keys(teamsById).length || 1;
+  kicker.textContent = `ROUND ${next.round} · PICK ${((next.pick_number - 1) % n) + 1} OF ${n} · OVERALL ${next.pick_number} OF ${picks.length}`;
   const team = teamsById[next.team_id];
   const teamName = team ? team.name : `Team ${next.team_id}`;
   const isAi = team ? team.is_ai_owned : false;
 
   panel.innerHTML = `
     <div class="card-kicker" style="margin-bottom:2px">On the clock</div>
-    <div style="font-family:var(--font-heading);font-size:22px">${teamName}</div>
-    ${isAi ? '<button class="btn btn-secondary" id="autopick-btn" style="margin-top:var(--space-2)">Autopick</button>' : ''}
+    <div style="font-family:var(--font-heading);font-size:22px">${esc(teamName)}${isMyTeam(team) ? ' (you)' : ''}</div>
+    ${isAi ? `<div style="display:flex;gap:var(--space-2);justify-content:flex-end;margin-top:var(--space-2)">
+      <button class="btn btn-secondary" id="autopick-btn">Autopick</button>
+      <button class="btn btn-primary" id="run-ai-btn">Auto-draft AI teams</button></div>` : ''}
   `;
   if (isAi) {
     document.getElementById('autopick-btn').onclick = autopick;
+    document.getElementById('run-ai-btn').onclick = runAi;
   }
 }
 
 function renderFilters() {
   const el = document.getElementById('pos-filters');
   el.innerHTML = '';
-  POS_FILTERS.forEach(f => {
+  const order = ['QB','RB','WR','TE','K','PK','DL','LB','DB','DEF'];
+  const present = [...new Set(board.map(a => a.position).filter(Boolean))];
+  present.sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
+  ['ALL', ...present].forEach(f => {
     const btn = document.createElement('button');
     btn.className = `btn ${posFilter === f ? 'btn-primary' : 'btn-secondary'}`;
     btn.textContent = f;
@@ -168,26 +204,35 @@ function renderFilters() {
 function renderBoard() {
   const el = document.getElementById('board-list');
   el.innerHTML = '';
-  const draftInProgress = onClockPick() !== null;
-  const filtered = board.filter(a => posFilter === 'ALL' || a.position === posFilter);
+  if (!DRAFT_ID) return;
+  const next = onClockPick();
+  const canPick = !!next && isMyTeam(teamsById[next.team_id]);
+  const q = searchText.trim().toLowerCase();
+  const filtered = board.filter(a => (posFilter === 'ALL' || a.position === posFilter) && (!q || a.display_name.toLowerCase().includes(q)));
 
   if (filtered.length === 0) {
     el.innerHTML = '<p class="text-muted">No draftable assets left at this position.</p>';
     return;
   }
 
-  filtered.forEach(a => {
+  filtered.slice(0, MAX_ROWS).forEach(a => {
     const row = document.createElement('div');
     row.className = 'card elev-sm';
     row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
     row.innerHTML = `
-      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${a.position || '-'}</span>
-      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${a.display_name}</span>
-      <button class="btn btn-primary" ${draftInProgress ? '' : 'disabled'}>Make pick</button>
+      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${esc(a.position || '-')}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${esc(a.display_name)}</span>
+      <button class="btn btn-primary" ${canPick ? '' : 'disabled'} title="${canPick ? '' : 'Only the owner of the team on the clock can pick'}">Make pick</button>
     `;
     row.querySelector('button').onclick = () => makePick(a.draftable_asset_id);
     el.appendChild(row);
   });
+  if (filtered.length > MAX_ROWS) {
+    const more = document.createElement('p');
+    more.className = 'text-muted';
+    more.textContent = `Showing the first ${MAX_ROWS} of ${filtered.length} - search or filter to narrow the list.`;
+    el.appendChild(more);
+  }
 }
 
 function renderPicks() {
@@ -204,8 +249,8 @@ function renderPicks() {
     tr.innerHTML = `
       <td>${p.round}</td>
       <td>${p.pick_number}</td>
-      <td style="font-size:13px">${team ? team.name : p.team_id}</td>
-      <td>${p.display_name}${p.is_autopick ? ' <span class="tag tag-accent-2" style="margin-left:6px;font-size:10px">AUTO</span>' : ''}</td>
+      <td style="font-size:13px">${esc(team ? team.name : p.team_id)}</td>
+      <td>${esc(p.display_name)}${p.is_autopick ? ' <span class="tag tag-accent-2" style="margin-left:6px;font-size:10px">AUTO</span>' : ''}</td>
     `;
     body.appendChild(tr);
   });
@@ -218,6 +263,7 @@ function render() {
   renderPicks();
 }
 
+document.getElementById('search').oninput = e => { searchText = e.target.value; renderBoard(); };
 loadAll().catch(e => showError(`Failed to load draft: ${e.message}`));
 </script>
 </body>

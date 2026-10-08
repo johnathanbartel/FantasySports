@@ -24,6 +24,7 @@ from fantasy_sports.platform.db.models.core import (
 )
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.platform.defense_modes import in_pool, league_modes, league_pool
+from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 
 router = APIRouter(prefix="/drafts", tags=["draft"])
 
@@ -38,6 +39,14 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db)):
     if not teams:
         raise HTTPException(400, "League has no teams yet")
     # TODO: real draft-order randomization/settings. v1 uses team.id order.
+    if db.query(Draft).filter(Draft.league_id == league.id, Draft.status == "in_progress").first():
+        raise HTTPException(409, "This league already has a draft in progress")
+    if not league_pool(db, league.id):
+        raise HTTPException(
+            400,
+            "This league's player pool is empty - ingest the universe's rosters first "
+            "(for NFL: scripts/ingest_nfl_rosters_and_stats.py)",
+        )
 
     draft = Draft(league_id=league.id, status="in_progress", started_at=datetime.datetime.utcnow())
     db.add(draft)
@@ -59,6 +68,15 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(draft)
+    return draft
+
+
+@router.get("/league/{league_id}", response_model=DraftOut)
+def get_league_draft(league_id: int, db: Session = Depends(get_db)):
+    """The league's newest draft, so a page can find it from the league id alone."""
+    draft = db.query(Draft).filter(Draft.league_id == league_id).order_by(Draft.id.desc()).first()
+    if draft is None:
+        raise HTTPException(404, "This league has no draft yet")
     return draft
 
 
@@ -107,17 +125,27 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
             DraftPick.draft_id == draft_id, DraftPick.draftable_asset_id.isnot(None)
         )
     }
-    candidates = league_pool(db, draft.league_id)
+    points = season_points_by_asset(db)  # best last-season scorers first; unscored players A-Z after
+    available = [
+        (a, draftable_asset_display_name(a)) for a in league_pool(db, draft.league_id) if a.id not in already_picked
+    ]
+    available.sort(key=lambda pair: (-points.get(pair[0].id, -1.0), pair[1]))
     return [
         DraftBoardAsset(
             draftable_asset_id=a.id,
             asset_type=a.asset_type,
-            display_name=draftable_asset_display_name(a),
+            display_name=name,
             position=draftable_asset_position(a),
         )
-        for a in candidates
-        if a.id not in already_picked
+        for a, name in available
     ]
+
+
+def _close_if_finished(db: Session, draft_id: int) -> None:
+    if _next_open_pick(db, draft_id) is None:
+        draft = db.get(Draft, draft_id)
+        draft.status = "complete"
+        draft.completed_at = datetime.datetime.utcnow()
 
 
 def _next_open_pick(db: Session, draft_id: int) -> DraftPick | None:
@@ -164,6 +192,8 @@ def make_pick(
     pick.draftable_asset_id = asset.id
     pick.picked_at = datetime.datetime.utcnow()
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=asset.id, acquired_via="draft"))
+    db.flush()
+    _close_if_finished(db, draft_id)
     db.commit()
     db.refresh(pick)
 
@@ -201,6 +231,8 @@ def autopick(draft_id: int, db: Session = Depends(get_db)):
     db.add(
         RosterEntry(team_id=pick.team_id, draftable_asset_id=pick.draftable_asset_id, acquired_via="draft")
     )
+    db.flush()
+    _close_if_finished(db, draft_id)
     db.commit()
     db.refresh(pick)
 
