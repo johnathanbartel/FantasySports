@@ -48,9 +48,12 @@ value created relative to that expectation, not raw counting stats:
   shootout-decision goals, still needs a ruling, same status as football's
   "exact attribution rules still need to be built and validated against
   play-level data" for defensive credit.
-- **Hits, blocked shots, penalties drawn/taken, faceoffs**: out of scope
-  for v1, same as offensive line scoring being out of scope for football
-  v1.
+- **Blocked shots**: the blocker is credited the estimated xG of the attempt
+  he blocked (see "Play-by-play events" below). Extra credit on top of the
+  goal total, reported on its own line.
+- **Hits**: fitted from data; currently worth 0 (see below).
+- **Penalties drawn/taken, faceoffs**: out of scope for v1, same as
+  offensive line scoring being out of scope for football v1.
 
 ## Roster (20 players: 12 starters, 8 bench)
 
@@ -146,16 +149,51 @@ $env:DATABASE_URL = "sqlite:///./copy_of_user_run.db"
 .venv-api/Scripts/python.exe src/fantasy_sports/sports/hockey/scripts/run_game_validation.py
 ```
 
-v1 attribution: a goal is 1.0 to the shooter (assists are not in the source,
-so their share stays with the shooter); a non-goal shot earns nothing; the
-goalie gets xG minus goal on every non-empty-net shot faced. A team's model
-total therefore equals its regulation/overtime goals, and a shootout winner
-shows the expected -1. Stored game scores come from the same shot file, so
-validation checks the arithmetic and accounting, not an independent scoreboard.
+Attribution (`pipeline.process_game`): a goal is always 1.0 in total. With
+NHL assists the shooter gets 1 - xG and the assists share the xG portion (one
+assist takes all of it, two split it 2:1); with no event data the shooter
+gets the whole 1.0. A non-goal shot earns nothing, so a team's shooter+assist
+total equals its regulation/overtime goals and a shootout winner shows the
+expected -1. The goalie gets xG minus goal on every non-empty-net shot faced.
+
+## Play-by-play events (FS-015)
+
+`scripts/ingest_nhl_events.py` loads the NHL's public play-by-play for each
+game into `game_events` (goals with primary/secondary assists, shots on goal,
+misses, blocked shots, hits, giveaways, takeaways, faceoffs; shootout
+attempts are skipped). MoneyPuck game 20001 is NHL game 2024020001
+(season*1,000,000 + id). `--workers N` parallelises the fetch only.
+
+```powershell
+$env:DATABASE_URL = "sqlite:///./copy_of_user_run.db"
+.venv/Scripts/python.exe scripts/ingest_nhl_events.py --season 2024 --cache-dir <dir> --workers 4
+```
+
+- **Independent scoreboard check.** Each game's NHL final score and goal
+  events are compared with the MoneyPuck-derived scores. On 2024-25 the NHL
+  has 7 more goals than the shot file (8,435 vs 8,428; 4 games differ in the
+  final score), all reported by the ingest and left unchanged.
+- **Blocks.** Blocked-shot events record where the block happened (mean 26 ft
+  from the net, vs 34 ft for unblocked attempts), not where the attempt was
+  taken. The estimator therefore adds an assumed 18 ft
+  (`BLOCK_ATTEMPT_OFFSET_FT`) and uses the league goal rate of unblocked
+  attempts in that distance band. The offset is an assumption the data
+  cannot check. At scale 1.0 block credit is about 0.75 goals per team-game
+  (vs 3.0 goals scored); `BLOCK_CREDIT_SCALE` exists to turn it down.
+- **Hits.** `scripts/fit_event_weights.py`: the hitting team's net xG over the
+  next 10 s is below its game baseline (-0.0031 goals, t = -14.5, 63,017
+  hits; hits happen when the opponent has the puck). `HIT_CREDIT` is 0.0.
+- **Not included:** pass-level credit (the NHL publishes no pass events),
+  possession-chain or rebound-creation slices (slice sizes undecided),
+  on-ice defensive metrics (need shift data). Takeaway/giveaway counts are
+  reported only.
+- `event_credits` holds block/hit credit rows (blocked shots are not rows in
+  `shots`); `shot_credits` roles are shooter, primary_assist,
+  secondary_assist, goalie.
 
 ## Out of scope for v1
 
-Hits/blocks/penalties/faceoff scoring, empty-net and shootout-decision
+Penalty and faceoff scoring, empty-net and shootout-decision
 edge cases in GSAx, a second starting-goalie slot, individual
 zone-start/quality-of-competition adjustments, public/multi-tenant release,
 and ingestion from sources other than MoneyPuck.

@@ -67,3 +67,54 @@ class ShotCredit(Base):
     draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
     role: Mapped[str] = mapped_column(String(20))  # shooter/primary_assist/secondary_assist/goalie
     credit_points: Mapped[float] = mapped_column(Float)
+
+
+class GameEvent(Base):
+    """One NHL play-by-play event (FS-015): goals with their assists, shots,
+    blocked shots, hits, giveaways, takeaways, faceoffs. Players are kept both
+    as the source's player id (``*_ref``, always set when the source names
+    someone) and as a draftable asset (null when the id is not in the roster
+    files), so an assist by an unrostered player still counts as an assist.
+
+    Actor columns by event type: goal = scorer / primary assist / secondary
+    assist; blocked-shot = blocker / shooter; hit = hitter / hittee; faceoff =
+    winner / loser; shot-on-goal, missed-shot = shooter; giveaway, takeaway =
+    the player. ``team_id`` is the source's event-owning team."""
+
+    __tablename__ = "game_events"
+    __table_args__ = (UniqueConstraint("source", "external_event_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), index=True)
+    source: Mapped[str] = mapped_column(String(20))  # "nhl_api"
+    external_event_id: Mapped[str] = mapped_column(String(60))
+    event_type: Mapped[str] = mapped_column(String(20))
+    period: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    game_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # (period-1)*1200 + seconds into the period
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("real_teams.id"), nullable=True)
+
+    actor_ref: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    secondary_ref: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tertiary_ref: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    actor_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+    secondary_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+    tertiary_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+
+    x_coord: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y_coord: Mapped[float | None] = mapped_column(Float, nullable=True)
+    zone_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    shot_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+
+class EventCredit(Base):
+    """Credit on a play-by-play event rather than a shot row: blocks and hits
+    (blocked shots are not in ``shots``), and assist credit when a game has
+    events. role is one of blocker/hitter."""
+
+    __tablename__ = "event_credits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("game_events.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    role: Mapped[str] = mapped_column(String(20))
+    credit_points: Mapped[float] = mapped_column(Float)
