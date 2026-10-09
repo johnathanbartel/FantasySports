@@ -42,6 +42,10 @@ class Shot(Base):
     shooting_team_id: Mapped[int | None] = mapped_column(ForeignKey("real_teams.id"), nullable=True)
     goalie_team_id: Mapped[int | None] = mapped_column(ForeignKey("real_teams.id"), nullable=True)
 
+    # Player credit targets (draftable assets); null when the source row names none.
+    shooter_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+    goalie_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+
     pre_shot_xg: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_goal: Mapped[bool] = mapped_column(Boolean, default=False)
     is_empty_net: Mapped[bool] = mapped_column(Boolean, default=False)

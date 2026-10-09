@@ -110,6 +110,19 @@ container rather than inventing fantasy-week boundaries. Credit MoneyPuck for
 uses of its data and review its published terms for uses beyond the free
 non-commercial/journalistic allowance.
 
+Shot rows also carry `shooter_asset_id` and `goalie_asset_id` (MoneyPuck
+`shooterPlayerId` / `goalieIdForShot` mapped through the player's draftable
+asset; null for ids absent from the roster files, which is about 0.1% of
+shots, or for an empty net). Reruns backfill players onto shots that lack
+them. MoneyPuck has no assist columns, so assists are not stored and v1
+attribution folds the assist share into the shooter.
+
+Each game's `home_score`/`away_score` is set from the shot data: goals scored
+in regulation and overtime, plus one for the winner of a shootout (MoneyPuck
+has no shootout shots; a game tied on shot goals must have gone to a shootout
+and `homeTeamWon` names the winner). The 2024 file also contains 86 playoff
+games (`isPlayoffGame`), which the importer does not flag.
+
 Pipeline stages:
 
 1. Pull season-correct NHL skater and goalie rosters and the matching

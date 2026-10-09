@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT / "src"))
 os.environ.setdefault("DATABASE_URL", "sqlite:///./user_run.db")
 
 import requests
-from sqlalchemy import insert
+from sqlalchemy import bindparam, insert, update
 
 from fantasy_sports.platform.db.base import Base
 from fantasy_sports.platform.db.models.core import (
@@ -111,6 +111,9 @@ SHOT_COLUMNS = {
     "xGoal",
     "goal",
     "shotOnEmptyNet",
+    "shooterPlayerId",
+    "goalieIdForShot",
+    "homeTeamWon",
 }
 
 
@@ -351,10 +354,45 @@ def _strength_state(row: dict[str, str]) -> str | None:
     return f"{away}v{home}"
 
 
+def _asset_by_player_ref(db, universe: Universe) -> dict[str, int]:
+    """MoneyPuck playerId -> draftable asset id, for the universe's players."""
+    rows = db.query(Player.external_ref, DraftableAsset.id).join(
+        DraftableAsset, DraftableAsset.player_id == Player.id
+    ).filter(
+        Player.universe_id == universe.id,
+        DraftableAsset.asset_type == "player",
+        Player.external_ref.isnot(None),
+    )
+    return {ref: asset_id for ref, asset_id in rows}
+
+
 def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, season: int):
     existing_shot_ids, games = _existing_shots_and_games(db, season)
+    assets = _asset_by_player_ref(db, universe)
+    needs_players = {
+        external_shot_id: shot_id
+        for external_shot_id, shot_id in db.query(Shot.external_shot_id, Shot.id).filter(
+            Shot.source == "moneypuck",
+            Shot.external_shot_id.like(f"{season}:%"),
+            Shot.shooter_asset_id.is_(None),
+        )
+    }
     games_created = shots_created = source_rows = 0
+    backfilled = unknown_players = 0
+    goals: dict[str, list[int]] = {}  # game ref -> [home goals, away goals]
+    home_won: dict[str, bool] = {}
     pending: list[dict] = []
+    backfill: list[dict] = []
+
+    def player_asset(ref: str) -> int | None:
+        nonlocal unknown_players
+        ref = ref.strip()
+        if not ref or ref in {"0", "0.0"}:
+            return None
+        asset_id = assets.get(ref)
+        if asset_id is None:
+            unknown_players += 1
+        return asset_id
 
     with zipfile.ZipFile(shots_path) as archive:
         text, shots = _shot_reader(archive, season)
@@ -366,13 +404,29 @@ def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, sea
                 if not game_ref or not shot_ref:
                     raise RuntimeError(f"MoneyPuck row {source_rows} has no game_id or shotID")
                 external_shot_id = f"{season}:{game_ref}:{shot_ref}"
+                home_code = row["homeTeamCode"].strip()
+                away_code = row["awayTeamCode"].strip()
+                shooting_code = row["teamCode"].strip()
+
+                tally = goals.setdefault(game_ref, [0, 0])
+                home_won[game_ref] = row["homeTeamWon"].strip() in {"1", "1.0"}
+                if _bool(row["goal"]):
+                    tally[0 if shooting_code == home_code else 1] += 1
+
                 if external_shot_id in existing_shot_ids:
+                    shot_id = needs_players.get(external_shot_id)
+                    if shot_id is not None:
+                        backfill.append({
+                            "b_id": shot_id,
+                            "shooter": player_asset(row["shooterPlayerId"]),
+                            "goalie": player_asset(row["goalieIdForShot"]),
+                        })
+                        if len(backfill) == 5000:
+                            backfilled += _flush_backfill(db, backfill)
                     continue
 
                 game_db_id = games.get(game_ref)
                 if game_db_id is None:
-                    home_code = row["homeTeamCode"].strip()
-                    away_code = row["awayTeamCode"].strip()
                     game = Game(
                         universe_id=universe.id,
                         week_id=week.id,
@@ -386,9 +440,6 @@ def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, sea
                     games[game_ref] = game_db_id
                     games_created += 1
 
-                shooting_code = row["teamCode"].strip()
-                home_code = row["homeTeamCode"].strip()
-                away_code = row["awayTeamCode"].strip()
                 if shooting_code not in {home_code, away_code}:
                     raise RuntimeError(
                         f"Shot {external_shot_id} has shooting team {shooting_code!r} "
@@ -405,6 +456,8 @@ def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, sea
                     "shot_type": row["shotType"].strip().lower() or None,
                     "shooting_team_id": teams[shooting_code].id,
                     "goalie_team_id": teams[defending_code].id,
+                    "shooter_asset_id": player_asset(row["shooterPlayerId"]),
+                    "goalie_asset_id": player_asset(row["goalieIdForShot"]),
                     "pre_shot_xg": _optional_float(row["xGoal"]),
                     "is_goal": _bool(row["goal"]),
                     "is_empty_net": _bool(row["shotOnEmptyNet"]),
@@ -417,14 +470,53 @@ def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, sea
             if pending:
                 db.execute(insert(Shot), pending)
                 shots_created += len(pending)
+            if backfill:
+                backfilled += _flush_backfill(db, backfill)
         finally:
             text.close()
+
+    scores_set = _set_game_scores(db, games, goals, home_won)
     return {
         "source_shots": source_rows,
         "shots_created": shots_created,
+        "shots_backfilled": backfilled,
+        "unknown_players": unknown_players,
         "games": len(games),
         "games_created": games_created,
+        "scores_set": scores_set,
     }
+
+
+def _flush_backfill(db, rows: list[dict]) -> int:
+    statement = update(Shot).where(Shot.id == bindparam("b_id")).values(
+        shooter_asset_id=bindparam("shooter"),
+        goalie_asset_id=bindparam("goalie"),
+    )
+    db.connection().execute(statement, rows)
+    count = len(rows)
+    rows.clear()
+    return count
+
+
+def _set_game_scores(db, games: dict[str, int], goals, home_won) -> int:
+    """Final score = shot-level goals (regulation + overtime), plus one for the
+    winner of a shootout. MoneyPuck carries no shootout shots, but a game tied
+    on shot goals can only have ended in a shootout, and homeTeamWon names the
+    winner. Playoff games cannot tie, so they never get the +1."""
+    changed = 0
+    for game_ref, game_db_id in games.items():
+        home, away = goals.get(game_ref, (0, 0))
+        if home == away:
+            if home_won.get(game_ref):
+                home += 1
+            else:
+                away += 1
+        game = db.get(Game, game_db_id)
+        if game.home_score != home or game.away_score != away:
+            game.home_score, game.away_score = home, away
+            changed += 1
+    db.flush()
+    return changed
 
 
 def ingest(season: int) -> dict[str, int]:
@@ -478,8 +570,11 @@ def main() -> None:
     )
     print(
         f"Shots: {result['source_shots']} source rows, "
-        f"{result['shots_created']} new shots; "
-        f"{result['games']} games ({result['games_created']} new)"
+        f"{result['shots_created']} new shots, "
+        f"{result['shots_backfilled']} backfilled with players "
+        f"({result['unknown_players']} player ids not in the roster files); "
+        f"{result['games']} games ({result['games_created']} new, "
+        f"{result['scores_set']} scores set or changed)"
     )
     print(
         f"Reference data: {result['slots_created']} new roster slots, "
