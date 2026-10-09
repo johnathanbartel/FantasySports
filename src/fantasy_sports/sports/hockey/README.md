@@ -136,6 +136,23 @@ Pipeline stages:
    goals scored/allowed that game - the same reality-check step as the
    football module's step 5.
 
+Stages 3-5 live in `pipeline.py` (pure functions) and
+`scripts/run_game_validation.py`, which scores every game and compares each
+team's model total with its real goals (dry run by default; `--write`
+replaces the `shot_credits` rows, so point `DATABASE_URL` at a copy first):
+
+```powershell
+$env:DATABASE_URL = "sqlite:///./copy_of_user_run.db"
+.venv-api/Scripts/python.exe src/fantasy_sports/sports/hockey/scripts/run_game_validation.py
+```
+
+v1 attribution: a goal is 1.0 to the shooter (assists are not in the source,
+so their share stays with the shooter); a non-goal shot earns nothing; the
+goalie gets xG minus goal on every non-empty-net shot faced. A team's model
+total therefore equals its regulation/overtime goals, and a shootout winner
+shows the expected -1. Stored game scores come from the same shot file, so
+validation checks the arithmetic and accounting, not an independent scoreboard.
+
 ## Out of scope for v1
 
 Hits/blocks/penalties/faceoff scoring, empty-net and shootout-decision
