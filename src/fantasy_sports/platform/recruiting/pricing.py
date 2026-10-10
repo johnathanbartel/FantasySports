@@ -44,6 +44,7 @@ import random
 import statistics
 from collections import defaultdict
 
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.calendar import last_points_season
@@ -78,6 +79,12 @@ def season_points_by_asset(db: Session, season: int | None = None) -> dict[int, 
     """asset_id -> the player's ESPN-standard points for the season (default: the newest
     season ingested - the last completed one). Only players with a stat line appear;
     defense groups never do."""
+    # A sport-only deployment can legitimately omit the college-football
+    # season-points table. NHL snake drafts still need an alphabetical board
+    # until hockey projections are available, so treat that schema shape the
+    # same as a database with no prior-season points rather than raising 500.
+    if not inspect(db.get_bind()).has_table(PlayerSeasonPoints.__tablename__):
+        return {}
     season = season if season is not None else last_points_season(db)
     if season is None:
         return {}
