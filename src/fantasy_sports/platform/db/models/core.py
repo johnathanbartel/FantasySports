@@ -175,8 +175,8 @@ class Team(Base):
     __tablename__ = "teams"
     __table_args__ = (
         CheckConstraint(
-            "(owner_user_id IS NOT NULL AND is_ai_owned = 0) OR "
-            "(owner_user_id IS NULL AND is_ai_owned = 1)",
+            "(owner_user_id IS NOT NULL AND is_ai_owned IS FALSE) OR "
+            "(owner_user_id IS NULL AND is_ai_owned IS TRUE)",
             name="ck_team_owner_xor_ai",
         ),
         CheckConstraint(

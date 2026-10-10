@@ -147,7 +147,7 @@ def upgrade() -> None:
     sa.Column('is_ai_owned', sa.Boolean(), nullable=False),
     sa.Column('personality_profile', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.CheckConstraint('(owner_user_id IS NOT NULL AND is_ai_owned = 0) OR (owner_user_id IS NULL AND is_ai_owned = 1)', name='ck_team_owner_xor_ai'),
+    sa.CheckConstraint('(owner_user_id IS NOT NULL AND is_ai_owned IS FALSE) OR (owner_user_id IS NULL AND is_ai_owned IS TRUE)', name='ck_team_owner_xor_ai'),
     sa.ForeignKeyConstraint(['league_id'], ['leagues.id'], ),
     sa.ForeignKeyConstraint(['owner_user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id')
