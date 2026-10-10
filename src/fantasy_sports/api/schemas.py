@@ -45,6 +45,9 @@ class LeagueCreateRequest(BaseModel):
     # The pause between periods (results screen, no bidding). 20 seconds by
     # design; only settable so tests don't have to wait it out.
     recruiting_buffer_seconds: int = 20
+    # NHL only: consecutive daily games against the same opponent.
+    # None lets the API apply the NHL default without changing other sports.
+    series_length_days: int | None = None
 
 
 class LeagueOut(ORMModel):
@@ -57,6 +60,7 @@ class LeagueOut(ORMModel):
     program_size_mode: str
     draft_type: str
     draft_scheduled_at: datetime.datetime | None
+    series_length_days: int | None
 
 
 class ConferenceOut(BaseModel):

@@ -27,6 +27,8 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     LineupEntry,
     Game,
     WeeklyMatchup,
+    LeagueSeries,
+    SeriesDailyGame,
     WeeklyTeamScore,
 )
 from fantasy_sports.sports.football.models import (  # noqa: F401

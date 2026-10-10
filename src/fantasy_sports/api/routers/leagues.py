@@ -28,6 +28,15 @@ def create_league(
 ):
     if payload.commissioner_user_id != user.id:
         raise HTTPException(403, "You can only create a league with yourself as commissioner")
+    has_nhl = "nhl" in payload.universe_codes
+    if has_nhl:
+        series_length_days = 7 if payload.series_length_days is None else payload.series_length_days
+        if series_length_days not in (5, 7, 10):
+            raise HTTPException(400, "NHL series length must be 5, 7, or 10 days")
+    else:
+        if payload.series_length_days is not None:
+            raise HTTPException(400, "series_length_days is only available for NHL leagues")
+        series_length_days = None
     if "nfl" in payload.universe_codes:
         # NFL reference data (universe + roster slots) is additive and idempotent;
         # add it on demand so a fresh database needs no seeding script first.
@@ -90,6 +99,7 @@ def create_league(
         program_size_mode=payload.program_size_mode,
         draft_type=payload.draft_type,
         draft_scheduled_at=payload.draft_scheduled_at,
+        series_length_days=series_length_days,
     )
     db.add(league)
     db.flush()  # assigns league.id without committing yet

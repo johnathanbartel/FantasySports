@@ -23,6 +23,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -85,6 +86,10 @@ class League(Base):
             "program_size_mode IN ('team_choice', 'dynamic')", name="ck_league_program_size_mode"
         ),
         CheckConstraint("draft_type IN ('recruit', 'snake')", name="ck_league_draft_type"),
+        CheckConstraint(
+            "series_length_days IS NULL OR series_length_days IN (5, 7, 10)",
+            name="ck_league_series_length_days",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -114,10 +119,14 @@ class League(Base):
     # may not have picked a time yet, and because "recruit" leagues start
     # their recruiting period on demand instead of at a fixed time.
     draft_scheduled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # NHL leagues play repeated daily games against the same opponent. Null
+    # keeps football and other universes on their existing weekly format.
+    series_length_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
     teams: Mapped[list["Team"]] = relationship(back_populates="league")
+    series: Mapped[list["LeagueSeries"]] = relationship(back_populates="league")
 
 
 class LeagueUniverse(Base):
@@ -521,6 +530,110 @@ class WeeklyMatchup(Base):
     team_a_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     team_b_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     winner_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+
+
+class LeagueSeries(Base):
+    """A multi-day fantasy matchup between the same two league teams."""
+
+    __tablename__ = "league_series"
+    __table_args__ = (
+        UniqueConstraint(
+            "league_id", "team_a_id", "team_b_id", "start_date",
+            name="uq_league_series_teams_start",
+        ),
+        CheckConstraint("team_a_id <> team_b_id", name="ck_league_series_distinct_teams"),
+        CheckConstraint("end_date >= start_date", name="ck_league_series_date_order"),
+        CheckConstraint("total_days IN (5, 7, 10)", name="ck_league_series_total_days"),
+        CheckConstraint("team_a_wins >= 0", name="ck_league_series_team_a_wins"),
+        CheckConstraint("team_b_wins >= 0", name="ck_league_series_team_b_wins"),
+        CheckConstraint(
+            "team_a_wins + team_b_wins <= total_days",
+            name="ck_league_series_wins_within_total",
+        ),
+        CheckConstraint(
+            "status IN ('SCHEDULED', 'IN_PROGRESS', 'FINAL')",
+            name="ck_league_series_status",
+        ),
+        Index("ix_league_series_league_start_date", "league_id", "start_date"),
+        Index("ix_league_series_team_a_id", "team_a_id"),
+        Index("ix_league_series_team_b_id", "team_b_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    team_a_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    team_b_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    start_date: Mapped[datetime.date] = mapped_column()
+    end_date: Mapped[datetime.date] = mapped_column()
+    total_days: Mapped[int] = mapped_column(Integer, default=7)
+    team_a_wins: Mapped[int] = mapped_column(Integer, default=0)
+    team_b_wins: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="SCHEDULED")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    league: Mapped["League"] = relationship(back_populates="series")
+    team_a: Mapped["Team"] = relationship(foreign_keys=[team_a_id])
+    team_b: Mapped["Team"] = relationship(foreign_keys=[team_b_id])
+    daily_games: Mapped[list["SeriesDailyGame"]] = relationship(back_populates="series")
+
+
+class SeriesDailyGame(Base):
+    """One independently scored calendar day within a league series."""
+
+    __tablename__ = "series_daily_games"
+    __table_args__ = (
+        UniqueConstraint("series_id", "calendar_date", name="uq_series_daily_game_date"),
+        UniqueConstraint(
+            "calendar_date", "home_team_id", "away_team_id",
+            name="uq_series_daily_game_teams_date",
+        ),
+        CheckConstraint("home_team_id <> away_team_id", name="ck_series_daily_game_distinct_teams"),
+        CheckConstraint(
+            "game_score_rating BETWEEN 0 AND 100",
+            name="ck_series_daily_game_score_rating",
+        ),
+        CheckConstraint("home_score >= 0", name="ck_series_daily_game_home_score"),
+        CheckConstraint("away_score >= 0", name="ck_series_daily_game_away_score"),
+        CheckConstraint(
+            "current_period BETWEEN 0 AND 3",
+            name="ck_series_daily_game_current_period",
+        ),
+        CheckConstraint(
+            "seconds_remaining BETWEEN 0 AND 1200",
+            name="ck_series_daily_game_seconds_remaining",
+        ),
+        CheckConstraint(
+            "status IN ('SCHEDULED', 'LIVE_SIMULATING', 'FINAL')",
+            name="ck_series_daily_game_status",
+        ),
+        Index("ix_series_daily_games_calendar_status", "calendar_date", "status"),
+        Index("ix_series_daily_games_home_team_id", "home_team_id"),
+        Index("ix_series_daily_games_away_team_id", "away_team_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[int] = mapped_column(ForeignKey("league_series.id"))
+    calendar_date: Mapped[datetime.date] = mapped_column()
+    is_matchup_day: Mapped[bool] = mapped_column(Boolean, default=True)
+    game_score_rating: Mapped[int] = mapped_column(Integer, default=50)
+    home_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    away_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    home_score: Mapped[int] = mapped_column(Integer, default=0)
+    away_score: Mapped[int] = mapped_column(Integer, default=0)
+    current_period: Mapped[int] = mapped_column(Integer, default=0)
+    seconds_remaining: Mapped[int] = mapped_column(Integer, default=1200)
+    status: Mapped[str] = mapped_column(String(20), default="SCHEDULED")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    series: Mapped["LeagueSeries"] = relationship(back_populates="daily_games")
+    home_team: Mapped["Team"] = relationship(foreign_keys=[home_team_id])
+    away_team: Mapped["Team"] = relationship(foreign_keys=[away_team_id])
 
 
 class WeeklyTeamScore(Base):

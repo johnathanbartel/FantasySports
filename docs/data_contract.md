@@ -17,7 +17,7 @@ Two families of tables: **sport-agnostic** (leagues, teams, rosters, draft, cale
 |---|---|---|---|
 | `users` | A person using the platform | email, display_name | owns leagues, owns teams |
 | `universes` | Reference list of league contexts | sport, level, code ("ncaaf"/"nfl") | referenced by leagues, players, real teams |
-| `leagues` | A fantasy league | name, size (default 12), draft_rounds (default 20), salary_cap_enabled (placeholder, unused), program_size_mode ("team_choice"/"dynamic" — "dynamic" stubbed, rejected at creation), draft_type ("recruit"/"snake", default "snake"), draft_scheduled_at (nullable, "snake" leagues only) | has teams, has one or more universes, has conferences |
+| `leagues` | A fantasy league | name, size (default 12), draft_rounds (default 20), salary_cap_enabled (placeholder, unused), program_size_mode ("team_choice"/"dynamic" — "dynamic" stubbed, rejected at creation), draft_type ("recruit"/"snake", default "snake"), draft_scheduled_at (nullable, "snake" leagues only), series_length_days (nullable; NHL: 5/7/10, default 7) | has teams, has one or more universes, has conferences and multi-day series |
 | `league_universes` | Which universe(s) a league covers | — | join table; 2 rows = Dual Universe |
 | `conferences` | Groups a league's teams by program_size tier | league_id, program_size, name | every league starts with 3 (one per tier); grows one full tier-set at a time |
 | `teams` | A fantasy team within a league | name, owner_user_id (null if AI-owned), is_ai_owned, program_size ("large"/"moderate"/"small" — sets auction starting budget + conference + season_goal, default "small"), conference_id, personality_profile (JSON, AI trait hook — trait system itself not built) | belongs to a league and a conference; owned by a user OR AI |
@@ -38,8 +38,16 @@ Two families of tables: **sport-agnostic** (leagues, teams, rosters, draft, cale
 | `games` | Real-world schedule | home/away real_team_id, scores, status | scopes plays |
 | `weekly_matchups` | Team vs. team for a week | team_a/b_id, team_a/b_score, winner_team_id | drives standings |
 | `weekly_team_scores` | A team's total for a week | total_points | sum of that team's active lineup's player scores |
+| `league_series` | One 5-, 7-, or 10-day fantasy matchup between the same two teams | league_id, team_a/b_id, start/end_date, total_days, team_a/b_wins, status, timestamps | belongs to a league; has daily games |
+| `series_daily_games` | One independently scored calendar day within a league series | calendar_date, is_matchup_day, game_score_rating, home/away team and score, current_period, seconds_remaining, status, timestamps | belongs to one league_series; one row per series/date |
 
 **Standings are not a stored table** — computed on read from `weekly_matchups` (wins/losses/points for/against), so they can never drift out of sync with the games that produced them.
+
+### NHL series compatibility
+
+NHL leagues replace disconnected weekly matchups with a fixed opponent series lasting 5, 7, or 10 days. `POST /leagues` accepts `series_length_days` for any league containing the `nhl` universe and defaults it to 7; the selected value is returned in `LeagueOut`. The column is nullable so existing non-NHL leagues and all weekly football behavior remain unchanged. Supplying the setting for a league without NHL is rejected rather than silently changing that league's format. During migration, existing NHL leagues receive the 7-day default and all other existing leagues remain null.
+
+`league_series.status` is `SCHEDULED`, `IN_PROGRESS`, or `FINAL`. `series_daily_games.status` is `SCHEDULED`, `LIVE_SIMULATING`, or `FINAL`; its score, three-period clock, and 0–100 game-score rating are persisted independently for each day. Database checks enforce valid lengths, status values, score/rating/clock ranges, distinct opponents, and date ordering. Uniqueness on `(series_id, calendar_date)` prevents two games for the same series teams on one date, with an additional team/date uniqueness constraint guarding exact duplicate fixtures. These tables are persistence only: schedule generation, simulation/scoring, and series standings calculation are not implemented here, and `weekly_matchups` is unchanged.
 
 ## Football-specific tables
 
