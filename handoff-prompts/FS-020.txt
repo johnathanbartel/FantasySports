@@ -1,0 +1,34 @@
+Ticket: FS-020
+Task: NHL series foundation schema and league settings
+
+GOAL
+Add the sport-agnostic persistence required for 5-, 7-, or 10-day NHL series and their daily games. NHL defaults to 7 days; existing leagues and non-NHL behavior remain unchanged.
+
+WORKING DIRECTORY AND BRANCH
+Work from `C:\Users\johna\Fantasy Sports Company`. Start from the latest branch containing `docs/hockey_spec.md`, then create `handoff/codex-hockey-series-schema`.
+
+FILES IN SCOPE
+`src/fantasy_sports/platform/db/models/core.py`, `src/fantasy_sports/platform/db/models/__init__.py`, `src/fantasy_sports/api/schemas.py`, `src/fantasy_sports/api/routers/leagues.py`, one new Alembic revision based on current head `b7c3e9a1d4f8`, `docs/data_contract.md`, and a new offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, all files under `src/fantasy_sports/sports/`, `src/fantasy_sports/platform/scoring.py`, and `src/fantasy_sports/platform/scoring_scale.py`.
+
+BACKGROUND
+The current schema has weekly football matchups but no NHL series/daily-game records. The approved contract is in `docs/hockey_spec.md` sections 2 and 10. Preserve existing endpoints and defaults.
+
+STEPS
+1. Model league series settings without overloading football constants.
+2. Add `LeagueSeries` and `SeriesDailyGame` ORM models with portable SQLite/PostgreSQL constraints, indexes, relationships, timestamps/statuses, scores, period clock, and uniqueness that prevents duplicate team/date games.
+3. Add the matching migration with a complete downgrade.
+4. Extend NHL league creation input/output for allowed series lengths 5, 7, or 10, defaulting to 7.
+5. Document the tables and compatibility behavior.
+6. Add a throwaway-database API verification script covering valid/invalid settings and schema round-trip.
+
+HOW TO VERIFY
+Run `.\.venv-api\Scripts\python.exe -m alembic heads` and confirm one head. Run the new verification script and `.\.venv-api\Scripts\python.exe scripts/seed_hockey_smoke_test.py`; both must exit 0. Run `git diff --check`.
+
+BOUNDARIES
+Do not generate schedules, calculate standings, implement simulation/scoring, or change existing weekly matchup behavior. Do not call external APIs or install packages.
+
+REPORT BACK
+Report branch, commit, changed files, migration revision/down_revision, commands and outputs, and remaining risks. Include `git diff --stat <base>...HEAD`.

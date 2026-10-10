@@ -1,0 +1,29 @@
+Ticket: FS-030
+Task: Slow/asynchronous snake draft controls
+
+GOAL
+Extend snake drafts with configurable per-pick durations, pause/resume, overnight pause windows, deadlines, and deterministic autopick while preserving current live timed behavior.
+
+WORKING DIRECTORY AND BRANCH
+Start from the latest integration branch and create `handoff/codex-async-snake-draft`.
+
+FILES IN SCOPE
+Draft models/migration, `src/fantasy_sports/api/routers/draft.py`, schemas, `web/static/draft-board.html`, docs, and a dedicated offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, scoring/attribution code, auction/recruiting behavior unless a shared additive helper is essential.
+
+BACKGROUND
+The draft must support seconds-per-pick live mode and hours-per-pick asynchronous mode. Commissioner pause and configured overnight pauses must freeze remaining time rather than consume it.
+
+STEPS
+Add explicit draft clock configuration/state, authoritative server deadline calculations, pause/resume authorization, overdue autopick processing, UI status/countdown, and restart-safe tests using injected time.
+
+HOW TO VERIFY
+Run the new async-draft verification, `scripts/seed_hockey_smoke_test.py`, `scripts/seed_smoke_test.py`, and `git diff --check`. Test pause boundaries, overnight window, restart, double processing, and existing live draft.
+
+BOUNDARIES
+No background scheduler dependency, push notifications, AI commentary, or external services.
+
+REPORT BACK
+Report branch/commit, clock rules, routes, commands/results, and diff stat.

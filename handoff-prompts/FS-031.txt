@@ -1,0 +1,29 @@
+Ticket: FS-031
+Task: Draft broadcast room and deterministic commentary
+
+GOAL
+Turn completed picks into accessible visual/audio announcements and useful deterministic pick analysis without requiring an external AI service.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-030 and create `handoff/codex-draft-broadcast-room`.
+
+FILES IN SCOPE
+Draft-board frontend, a provider-neutral commentary interface under platform/API AI modules, API schemas/router additions, docs, and offline verification.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, scoring/attribution code, external APIs, credentials, Spotify, and video/audio chat.
+
+BACKGROUND
+Use browser-native optional speech synthesis and visual announcements. Commentary can use draft round, position depth, projection/rank data already stored, and roster need. It must label unavailable inputs and avoid fabricated statistics.
+
+STEPS
+Add a versioned pick-announcement event, deterministic commentary templates, mute/replay controls, screen-reader live-region behavior, reconnect/backfill, and tests for duplicate events and absent projections.
+
+HOW TO VERIFY
+Run the new broadcast verification, async-draft verification, hockey smoke test, and `git diff --check`; record manual muted/audio and keyboard checks.
+
+BOUNDARIES
+No external model calls or copyrighted audio assets. The interface may permit a future provider but ships deterministic and local.
+
+REPORT BACK
+Report branch/commit, event contract, fallbacks, commands/results, and diff stat.

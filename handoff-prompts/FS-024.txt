@@ -1,0 +1,33 @@
+Ticket: FS-024
+Task: NHL series standings, rivalry history, and Game Score
+
+GOAL
+Derive series W/L standings, daily W/L and goal differential tiebreakers, persistent head-to-head history, and a transparent 0-100 Game Score.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-021 and create `handoff/codex-hockey-series-standings`.
+
+FILES IN SCOPE
+New platform standings/rivalry modules, narrowly required core models/migration, API schemas/router, docs, and an offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, sport scoring/attribution modules, `platform/scoring.py`, and `platform/scoring_scale.py`.
+
+BACKGROUND
+Primary standings rank series wins/losses; daily record and goal differential are secondary. Game Score is published one week ahead and uses division margin, playoff-cutoff proximity, rivalry intensity, and weeks remaining. The formula must be deterministic and explainable.
+
+STEPS
+1. Derive standings from final series/daily games rather than duplicating mutable totals unless a justified snapshot is needed.
+2. Add persistent rivalry aggregates or an efficient derived query with season-safe identifiers.
+3. Implement and document a bounded, monotonic 0-100 formula with component breakdown.
+4. Expose standings, rivalry, and per-game Game Score APIs.
+5. Test opening week, late-season leverage, ties, incomplete games, and repeat reads.
+
+HOW TO VERIFY
+Run the new standings/Game Score verification, series-schedule verification, and `git diff --check`. Passing includes exact standings tie-outs from seeded daily results and scores always within 0-100.
+
+BOUNDARIES
+No fantasy scoring changes, predictions, or external data. Do not claim the initial formula is proprietary ML.
+
+REPORT BACK
+Report formula, tie-break ordering, branch/commit, commands/results, and diff stat.

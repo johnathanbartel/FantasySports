@@ -1,0 +1,29 @@
+Ticket: FS-032
+Task: Disabled external media provider seams for draft rooms
+
+GOAL
+Create secure, disabled-by-default provider interfaces for future AI commentary, shared music, and video/audio chat without selecting vendors or making external calls.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-031 and create `handoff/codex-draft-media-provider-seams`.
+
+FILES IN SCOPE
+Provider interfaces/config validation, capability/status API, draft-room disabled-state UI, security/privacy documentation, and offline fake-provider tests.
+
+FILES OFF-LIMITS
+`.env`, secrets, real provider SDKs, package manifests without approval, external network calls, scoring code, and production enablement.
+
+BACKGROUND
+Vendor, credentials, privacy, moderation, playback entitlement, and cost decisions are intentionally deferred. This build must make later integration bounded without pretending services are available.
+
+STEPS
+Define narrow provider protocols and capability flags, safe disabled defaults, fake in-memory providers for tests, clear UI states, and a decision checklist. Fail closed when configuration is incomplete.
+
+HOW TO VERIFY
+Run the new fake-provider verification, broadcast verification, and `git diff --check`. Confirm no secrets, vendor packages, or outbound requests were added.
+
+BOUNDARIES
+Stop if asked to choose/activate a vendor without explicit owner decisions and approval for external API use.
+
+REPORT BACK
+Report branch/commit, interfaces, deferred decisions, commands/results, and diff stat.

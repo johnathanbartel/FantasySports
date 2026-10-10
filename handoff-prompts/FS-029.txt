@@ -1,0 +1,29 @@
+Ticket: FS-029
+Task: NHL off-day banking UI
+
+GOAL
+Add clear banking alerts, recommendation details, accept/choose-another actions, and banked-credit indicators to the series viewer.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-023 and FS-028 and create `handoff/codex-hockey-banking-ui`.
+
+FILES IN SCOPE
+`web/static/` and narrow response-shape fixes in the FS-028 router.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, migrations, scoring/attribution code, and recommendation math.
+
+BACKGROUND
+The UI must distinguish earned, available, assigned, auto-assigned, expired, and capped credits. It must show why a game was recommended without overstating missing probability inputs.
+
+STEPS
+Implement alerts, recommendation card, alternative-game picker, confirmation/error states, series-tab badges, and accessibility/mobile behavior. Add fixture coverage for all states and double-submit prevention.
+
+HOW TO VERIFY
+Run the new frontend verification, FS-028 banking verification, and `git diff --check`; record manual responsive and keyboard checks.
+
+BOUNDARIES
+No scoring/recommendation calculations in JavaScript and no external notifications.
+
+REPORT BACK
+Report branch/commit, flows checked, commands/results, and diff stat.

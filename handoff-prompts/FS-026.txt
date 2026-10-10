@@ -1,0 +1,34 @@
+Ticket: FS-026
+Task: NHL xG/GSAx scoring, score normalization, variance, and monotonic inversion
+
+GOAL
+Implement and validate the protected hockey scoring adapter that converts NHL shot/credit inputs into tied-out player points and progressive simulator events.
+
+WORKING DIRECTORY AND BRANCH
+CLAUDE CODE ONLY. Start from merged FS-025 and create `handoff/claude-hockey-simulator-scoring`.
+
+FILES IN SCOPE
+`src/fantasy_sports/sports/hockey/`, narrowly required simulator adapter interfaces, hockey-specific models/migrations, docs, and dedicated offline verification/audit scripts.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, unrelated sport modules, and frontend files. Avoid changing shared scoring modules unless the owner explicitly expands scope.
+
+BACKGROUND
+Repository rules reserve scoring and attribution for Claude Code. Requirements: goals total 1.0; assisted-goal xG splits 2:1 across primary/secondary assists; blocked shots credit prevented xG; goalie GSAx is pre-shot xG minus goal indicator; team/player values tie out; normalized scoreboard preserves competitive ordering; bounded randomness permits close underdog upsets; negative events invert to opponent-positive events; displayed scores never decrease.
+
+STEPS
+1. Audit existing hockey models/pipeline and state explicit assumptions.
+2. Implement deterministic seeded attribution and tie-outs before normalization.
+3. Implement a documented bounded normalization/error model with reproducible seed support.
+4. Map negative credits to opponent-positive narrative events without changing net margin accounting.
+5. Produce period events conforming to FS-025.
+6. Add extensive synthetic audits for goals, assists, blocks, saves, goals against, empty-net exclusions, ties, outliers, and reproducibility.
+
+HOW TO VERIFY
+Run all new hockey scoring/audit scripts, `scripts/seed_hockey_smoke_test.py`, affected mock scripts, `python -m py_compile` on changed modules, and `git diff --check`. Passing requires exact stated tie-outs and deterministic seeded replays.
+
+BOUNDARIES
+No live external data calls, no undocumented tuning, and no UI. Stop and report if source-event semantics are insufficient rather than guessing.
+
+REPORT BACK
+Report formulas, invariants, fixtures, branch/commit, exact commands/results, audit output, and diff stat.

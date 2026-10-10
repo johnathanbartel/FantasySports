@@ -1,0 +1,33 @@
+Ticket: FS-021
+Task: NHL multi-day series schedule engine and APIs
+
+GOAL
+Generate deterministic 5-, 7-, or 10-day head-to-head series and their daily game calendar for an NHL league, without changing football scheduling.
+
+WORKING DIRECTORY AND BRANCH
+Work from the repo root. Start from the merged FS-020 branch and create `handoff/codex-hockey-series-schedule`.
+
+FILES IN SCOPE
+New modules under `src/fantasy_sports/platform/` for series scheduling, a focused API router under `src/fantasy_sports/api/routers/`, router wiring in `src/fantasy_sports/api/main.py`, API schemas, `docs/data_contract.md`, and a new offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, `src/fantasy_sports/sports/`, `platform/scoring.py`, and `platform/scoring_scale.py`.
+
+BACKGROUND
+FS-020 supplies league-series and daily-game tables. Series preserve one opponent across all days. Default length is 7; 5 and 10 are allowed. Existing `platform/schedule.py` is football-oriented, so avoid breaking or silently reusing incompatible rules.
+
+STEPS
+1. Implement round-robin series generation for even league sizes with explicit validation for unsupported shapes.
+2. Create daily-game rows across each series date range and make regeneration idempotent or explicitly replace-only.
+3. Add commissioner-authorized schedule creation and read APIs plus team schedule reads.
+4. Return calendar date, opponent, home/away, series status, daily-game status, and off-day marker inputs without computing real NHL slate counts.
+5. Add deterministic tests for a 12-team league and for duplicate generation.
+
+HOW TO VERIFY
+Run the new series-schedule verification script, `scripts/seed_hockey_smoke_test.py`, and `git diff --check`. Passing means every team has one opponent per series, no duplicate team/date games exist, and repeated generation follows the documented contract.
+
+BOUNDARIES
+No standings, Game Score, NHL data ingestion, scoring, or UI work. No external requests.
+
+REPORT BACK
+Report branch/commit, routes added, scheduling invariants, commands/results, and diff stat.

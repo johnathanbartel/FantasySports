@@ -1,0 +1,29 @@
+Ticket: FS-033
+Task: Weekly salary-cap redraft backend
+
+GOAL
+Implement weekly private head-to-head salary-cap roster contests as an explicit league mode, with auditable cap adjustments and no wagering mechanics.
+
+WORKING DIRECTORY AND BRANCH
+CLAUDE CODE recommended because pricing/projection inputs may intersect scoring. Start from merged FS-020 and FS-026 and create `handoff/claude-hockey-weekly-redraft`.
+
+FILES IN SCOPE
+League-mode/schema migration, platform weekly-contest service, API schemas/router, projection/pricing adapters as allowed, docs, and offline verification.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, sportsbook/betting features, payments, external APIs, and unrelated league modes.
+
+BACKGROUND
+Teams build a fresh roster each week under a cap and face one private-league opponent. The exact prior-finish cap adjustment formula is a product decision; implement only after it is recorded in the ticket/decision doc, or use a neutral fixed cap and report the blocker.
+
+STEPS
+Model weekly contests and immutable submitted rosters, enforce salary/position/ownership/deadline constraints, pair private opponents, expose CRUD/submit/read APIs, and audit cap math and replay safety.
+
+HOW TO VERIFY
+Run a dedicated end-to-end weekly-redraft verification, NHL scoring verification, hockey smoke test, and `git diff --check`. Include rejection tests for cap overflow, duplicate player, invalid positions, and late edits.
+
+BOUNDARIES
+No cash prizes, entry fees, odds, sportsbook language, or external provider calls. Do not guess the dynamic-cap formula.
+
+REPORT BACK
+Report branch/commit, recorded formula decision, invariants, commands/results, and diff stat.

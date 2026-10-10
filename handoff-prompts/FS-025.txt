@@ -1,0 +1,33 @@
+Ticket: FS-025
+Task: Progressive simulator state and event contract
+
+GOAL
+Implement a sport-agnostic progressive game state machine that can reveal immutable events across three periods without containing hockey scoring math.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-020 and FS-021 and create `handoff/codex-progressive-simulator-core`.
+
+FILES IN SCOPE
+New platform simulator modules, core event/state models and migration if required, API schemas/router, docs, and an offline synthetic-event verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, all sport-specific scoring/attribution code, `platform/scoring.py`, and `platform/scoring_scale.py`.
+
+BACKGROUND
+The platform needs scheduled, live, final, and independently revealed states; period/clock, shots, monotonic team scores, ticker events, and immutable event ordering. FS-026 will later supply hockey-valued events.
+
+STEPS
+1. Define a versioned input/output contract for simulator events and snapshots.
+2. Persist or deterministically derive the revealed cursor per game and per user.
+3. Enforce monotonic clocks/event order and non-decreasing displayed scores.
+4. Add endpoints for current state, event polling, watch/reveal, skip-to-box-score, and final snapshot.
+5. Verify with synthetic events only, including idempotent polling and independent user reveals.
+
+HOW TO VERIFY
+Run the new simulator-core verification, existing smoke tests affected by router/model changes, and `git diff --check`.
+
+BOUNDARIES
+Do not invent xG, GSAx, normalization, randomness, or hockey attribution. Those belong exclusively to FS-026/Claude Code.
+
+REPORT BACK
+Report the versioned contract, state transitions, branch/commit, verification results, and diff stat.

@@ -1,0 +1,33 @@
+Ticket: FS-027
+Task: NHL live simulator, replay, and box-score frontend
+
+GOAL
+Render the FS-025/FS-026 progressive game contract as an accessible live three-period experience with ticker, scoreboard, shots, replay, spoiler veil, and skip-to-box-score.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-023, FS-025, and FS-026 and create `handoff/codex-hockey-simulator-ui`.
+
+FILES IN SCOPE
+`web/static/` and narrowly required read-only API response fixes; add static fixture/browser verification.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, migrations, and all scoring/attribution algorithms.
+
+BACKGROUND
+The UI must use actual API events. It may use CSS/SVG/canvas for presentation, but cannot recalculate outcomes. Users independently choose replay or immediate box score.
+
+STEPS
+1. Add period/clock, scores, shots, event ticker, final state, and reconnect behavior.
+2. Add spoiler veil and independent watch/skip controls.
+3. Add a skippable approximately 75-second replay mode driven by immutable events, with reduced-motion and instant-reveal accessibility.
+4. Render the attribution box score and data provenance/error states.
+5. Test scheduled, live, final-hidden, replayed, skipped, and disconnected states.
+
+HOW TO VERIFY
+Run the frontend fixture verification, simulator-core and hockey-scoring verification scripts, `scripts/seed_hockey_smoke_test.py`, and `git diff --check`. Record manual desktop/mobile/reduced-motion checks.
+
+BOUNDARIES
+Do not alter formulas, outcomes, or event ordering. Do not use external media.
+
+REPORT BACK
+Report branch/commit, states tested, commands/results, screenshots if available, and diff stat.

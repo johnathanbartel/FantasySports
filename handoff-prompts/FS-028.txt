@@ -1,0 +1,33 @@
+Ticket: FS-028
+Task: NHL off-day credit banking backend
+
+GOAL
+Persist off-day player credits and safely assign at most one credit capped at 1.50 points to an eligible upcoming series game, with a documented recommendation and 24-hour fallback.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-021 and FS-026 and create `handoff/codex-hockey-off-day-banking`.
+
+FILES IN SCOPE
+Core/platform banking models and migration, service, API schemas/router, docs, and an offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, sport scoring/attribution modules, and frontend files.
+
+BACKGROUND
+Scored credits originate from FS-026 and must not be recomputed here. Recommendations compare eligible games using projected margin, opponent strength, and win-probability swing; if those inputs are unavailable, return an explicit neutral deterministic recommendation rather than fabricated precision.
+
+STEPS
+1. Add idempotent credit ingestion keyed to source player/date/event or score record.
+2. Implement available/assigned/expired state transitions, ownership checks, eligible-window validation, one-credit-per-game, and 1.50 cap.
+3. Implement explainable recommendation output and explicit confidence/input availability.
+4. Implement a callable 24-hour fallback processor; do not require a new scheduler dependency.
+5. Add APIs for list, recommend, assign, and fallback processing where authorization is appropriate.
+
+HOW TO VERIFY
+Run the new banking verification plus schedule/scoring regression scripts and `git diff --check`. Test duplicate ingestion, cap, reassignment rejection, authorization, and fallback idempotency.
+
+BOUNDARIES
+Do not change scoring values or make external calls. Do not invent a background job platform.
+
+REPORT BACK
+Report branch/commit, constraints, recommendation behavior, commands/results, and diff stat.

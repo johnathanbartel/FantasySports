@@ -1,0 +1,33 @@
+Ticket: FS-034
+Task: NHL series end-to-end hardening and deployment gate
+
+GOAL
+Verify the complete shipped NHL series flow from league creation through draft, pecking order, schedule, scoring, progressive reveal, standings, and optional banking, then fix only integration defects found within the completed design.
+
+WORKING DIRECTORY AND BRANCH
+CLAUDE CODE recommended for cross-cutting integration and any scoring-adjacent fixes. Start from the integration branch containing every ticket selected for release and create `handoff/claude-hockey-series-e2e`.
+
+FILES IN SCOPE
+New end-to-end/audit scripts, narrowly required integration fixes, docs/runbook, and deployment checklist. List intended files before editing.
+
+FILES OFF-LIMITS
+`.env`, production databases, credentials, unapproved external APIs, unrelated sports/features, and feature redesigns.
+
+BACKGROUND
+The release gate must work offline on a throwaway database first. The repo has a single Alembic head as of this plan (`b7c3e9a1d4f8`); confirm rather than assume. Vercel/production actions require owner confirmation under repository rules.
+
+STEPS
+1. Build one deterministic 12-team, 24-round NHL scenario with one human and 11 AI teams.
+2. Exercise schedule/series generation, full pecking orders, at least one scored/revealed series, standings tie-out, and banking if included in release.
+3. Audit authorization, idempotency, PostgreSQL portability, empty/missing-table behavior, and frontend API errors.
+4. Run all NHL verification scripts and relevant shared smoke tests.
+5. Produce a go/no-go checklist with explicit deferred features.
+
+HOW TO VERIFY
+Run `python -m alembic heads` (one head), every NHL-specific verification script, `scripts/seed_smoke_test.py`, `scripts/seed_hockey_smoke_test.py`, affected mock scripts, `python -m py_compile` for changed modules, and `git diff --check`. Do not deploy during this ticket without a new explicit confirmation.
+
+BOUNDARIES
+Do not hide failures with mocks, mutate production data, or expand scope. Route scoring defects to Claude Code and stop on unresolved tie-out failures.
+
+REPORT BACK
+Report branch/commit, full command matrix, pass/fail results, defects fixed, deferred items, deployment impact, and diff stat.

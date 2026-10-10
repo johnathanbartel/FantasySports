@@ -1,0 +1,33 @@
+Ticket: FS-022
+Task: NHL pecking-order persistence, resolution, and APIs
+
+GOAL
+Implement the 24-player four-line pecking order and deterministic daily starter selection: C/G vertical depth and pooled top-two W/D depth.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-020 and create `handoff/codex-hockey-pecking-order`.
+
+FILES IN SCOPE
+Core ORM/migration only if FS-020 did not already add the pecking-order table; otherwise platform lineup modules, roster/API schemas and routers, docs, and a new offline verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, sport scoring/attribution modules, `platform/scoring.py`, and `platform/scoring_scale.py`.
+
+BACKGROUND
+An NHL roster has C1-C4, W1-W8, D1-D8, and G1-G4. A daily lineup dresses the highest-priority active C, the top two active W, the top two active D, and the highest-priority active confirmed starting goalie. Activity/goalie confirmation must be passed as data, not fetched externally.
+
+STEPS
+1. Persist ordered player priorities with uniqueness and ownership validation.
+2. Add read and reorder APIs; updates must be atomic and reject missing, duplicate, ineligible, or foreign-roster assets.
+3. Implement a pure resolver accepting scheduled-player IDs and confirmed-goalie IDs.
+4. Return resolved starters and explicit vacancy reasons.
+5. Verify all position paths, reordering, authorization, and incomplete rosters.
+
+HOW TO VERIFY
+Run the new pecking-order verification script, `scripts/seed_hockey_smoke_test.py`, and `git diff --check`. Passing includes exactly 1 C, 2 W, 2 D, and 1 G when eligible inputs are available.
+
+BOUNDARIES
+Do not infer active players from live NHL services. Do not calculate fantasy scores or modify protected scoring code.
+
+REPORT BACK
+Report branch/commit, API contract, resolver rules, verification results, and diff stat.

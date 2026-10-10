@@ -1,0 +1,33 @@
+Ticket: FS-023
+Task: NHL schedule and lineup viewer UI
+
+GOAL
+Build the three-zone responsive UI: four-line pecking order, seven-day series tabs, and a matchup-panel shell backed by real FS-021/FS-022 APIs.
+
+WORKING DIRECTORY AND BRANCH
+Start from merged FS-021 and FS-022 and create `handoff/codex-hockey-series-viewer`.
+
+FILES IN SCOPE
+`web/static/` HTML/CSS/JS, narrowly required read-only API response adjustments, and a browser-independent frontend verification script.
+
+FILES OFF-LIMITS
+`.env`, `*.db`, migrations, sport scoring/attribution modules, and existing non-NHL UI behavior unless shared styling requires an additive change.
+
+BACKGROUND
+Follow `docs/hockey_spec.md` section 9. The main panel is a truthful scheduled/empty state until simulator tickets ship. Mobile must retain access to all three zones.
+
+STEPS
+1. Add league-aware navigation into the NHL schedule viewer.
+2. Render four depth lines with active/idle/confirmed-goalie states and accessible reorder controls; HTML drag-and-drop cannot be the only input method.
+3. Render series-day tabs with date, opponent, logo fallback, status, and Game Score placeholder.
+4. Render an explicit simulator-not-ready panel without fabricated live data.
+5. Add loading, empty, error, keyboard, and narrow-screen states.
+
+HOW TO VERIFY
+Run the dedicated static/API fixture verification, `scripts/seed_hockey_smoke_test.py`, and `git diff --check`. Manually document desktop and narrow-width checks.
+
+BOUNDARIES
+No canvas simulator, scoring math, external assets, or provider calls.
+
+REPORT BACK
+Report branch/commit, pages changed, user flows verified, commands/results, screenshots if produced, and diff stat.
