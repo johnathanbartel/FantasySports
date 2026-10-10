@@ -21,13 +21,21 @@ if not DATABASE_URL:
 elif DATABASE_URL.startswith("postgres://"):
     # SQLAlchemy 2 expects the canonical dialect name. Some hosted Postgres
     # integrations still publish the legacy URI scheme.
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgres://", "postgresql+psycopg2://", 1
+    )
 elif DATABASE_URL.startswith("postgresql+psycopg://"):
     # Neon's Vercel integration currently emits a Psycopg 3 URL. The API
     # environment uses the stable psycopg2 binary driver, so normalize the
     # dialect explicitly instead of depending on an undeclared driver.
     DATABASE_URL = DATABASE_URL.replace(
         "postgresql+psycopg://", "postgresql+psycopg2://", 1
+    )
+elif DATABASE_URL.startswith("postgresql://"):
+    # SQLAlchemy 2.1 defaults plain PostgreSQL URLs to Psycopg 3. Pin the
+    # declared driver so hosted URLs work consistently across SQLAlchemy 2.x.
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql://", "postgresql+psycopg2://", 1
     )
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
