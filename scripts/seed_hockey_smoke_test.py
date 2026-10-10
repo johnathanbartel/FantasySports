@@ -35,13 +35,12 @@ from fastapi.testclient import TestClient
 from fantasy_sports.api.main import app
 from fantasy_sports.platform.db.base import Base
 from fantasy_sports.platform.db.session import SessionLocal, engine
+from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
     Player,
     RealTeam,
-    RosterSlotDefinition,
     Team,
-    Universe,
     User,
 )
 
@@ -53,29 +52,9 @@ from fantasy_sports.sports.hockey.models import Shot, ShotCredit  # noqa: F401
 Base.metadata.create_all(bind=engine)
 client = TestClient(app)
 
-# Roster slots from src/fantasy_sports/sports/hockey/README.md's roster table.
-ROSTER_SLOTS = [
-    ("C", ["C"], 2, True),
-    ("LW", ["LW"], 2, True),
-    ("RW", ["RW"], 2, True),
-    ("D", ["D"], 4, True),
-    ("UTIL", ["C", "LW", "RW", "D"], 1, True),
-    ("G", ["G"], 1, True),
-    ("BENCH", ["C", "LW", "RW", "D", "G"], 8, False),
-]
-
-
 def seed_reference_data(db):
     """Reference/admin data - not something a user action creates."""
-    nhl = Universe(sport="hockey", level="pro", code="nhl", display_name="NHL")
-    db.add(nhl)
-    db.flush()
-
-    for slot_code, eligible, count, is_starter in ROSTER_SLOTS:
-        db.add(RosterSlotDefinition(
-            universe_id=nhl.id, slot_code=slot_code, eligible_positions=eligible,
-            slot_count=count, is_starter=is_starter,
-        ))
+    nhl, _ = seed_hockey_reference_data(db)
 
     bruins = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
     leafs = RealTeam(universe_id=nhl.id, name="Toronto Maple Leafs", external_ref="TOR")

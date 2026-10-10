@@ -50,9 +50,9 @@
       </div>
 
       <div class="field">
-        <label for="commissioner-id">Your user ID (commissioner)</label>
-        <input type="number" id="commissioner-id" min="1" value="1">
-        <span class="hint">Dev sign-in (no password yet): enter the numeric user id you're testing as. You'll be signed in as this user.</span>
+        <label for="commissioner-name">Your name</label>
+        <input type="text" id="commissioner-name" maxlength="100" placeholder="e.g. Alex" value="Commissioner">
+        <span class="hint">Used for this prototype session and as the league commissioner name.</span>
       </div>
 
       <div class="field">
@@ -60,6 +60,7 @@
         <select id="universe" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
           <option value="ncaaf">College Football</option>
           <option value="nfl">Football (NFL)</option>
+          <option value="nhl">Hockey (NHL)</option>
         </select>
       </div>
 
@@ -156,11 +157,6 @@
         </div>
       </div>
 
-      <div class="field" id="owner-id-field">
-        <label for="owner-id">Your user ID</label>
-        <input type="number" id="owner-id" min="1" value="1">
-      </div>
-
       <div style="display:flex;gap:var(--space-3)">
         <button class="btn btn-secondary" id="back-btn">Back</button>
         <button class="btn btn-primary" style="flex:1" id="create-team-btn">Create team</button>
@@ -181,18 +177,22 @@ function showError(msg) {
 }
 
 let league = null; // LeagueOut, once step 1 succeeds
+let leagueUser = null;
 
 const isNfl = () => document.getElementById('universe').value === 'nfl';
+const isNhl = () => document.getElementById('universe').value === 'nhl';
+const isProSport = () => isNfl() || isNhl();
 
 function updateUniverse() {
   const nfl = isNfl();
+  const pro = isProSport();
   document.getElementById('defense-mode-field').style.display = nfl ? 'flex' : 'none';
-  // NFL has no recruiting-draft pricing data yet: snake only.
-  document.getElementById('choice-recruit').style.display = nfl ? 'none' : '';
-  if (nfl) document.querySelector('input[name=draft-type][value=snake]').checked = true;
-  document.getElementById('draft-rounds').disabled = nfl;
-  document.getElementById('draft-rounds').title = nfl ? 'Set by the NFL roster size for the defense option chosen' : '';
-  document.getElementById('program-size').closest('.field').style.display = nfl ? 'none' : '';
+  // Pro leagues have no recruiting-draft pricing data yet: snake only.
+  document.getElementById('choice-recruit').style.display = pro ? 'none' : '';
+  if (pro) document.querySelector('input[name=draft-type][value=snake]').checked = true;
+  document.getElementById('draft-rounds').disabled = pro;
+  document.getElementById('draft-rounds').title = pro ? 'Set by the selected sport roster size' : '';
+  document.getElementById('program-size').closest('.field').style.display = pro ? 'none' : '';
   updateDraftTypeCards();
 }
 
@@ -213,14 +213,14 @@ function updateDraftTypeCards() {
 }
 document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = updateDraftTypeCards);
 document.getElementById('universe').onchange = updateUniverse;
-if (new URLSearchParams(location.search).get('universe') === 'nfl') document.getElementById('universe').value = 'nfl';
+const requestedUniverse = new URLSearchParams(location.search).get('universe');
+if (['nfl', 'nhl'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
 updateUniverse();
 
 function updateOwnerTypeCards() {
   const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
   document.getElementById('choice-human').classList.toggle('selected', isHuman);
   document.getElementById('choice-ai').classList.toggle('selected', !isHuman);
-  document.getElementById('owner-id-field').style.display = isHuman ? 'flex' : 'none';
 }
 document.querySelectorAll('input[name=owner-type]').forEach(r => r.onchange = updateOwnerTypeCards);
 updateOwnerTypeCards();
@@ -234,18 +234,22 @@ document.getElementById('create-league-btn').onclick = async () => {
   const scheduledRaw = document.getElementById('draft-scheduled-at').value;
 
   try {
-    const commissionerId = Number(document.getElementById('commissioner-id').value);
-    await FSC.signIn(commissionerId);
-    document.getElementById('owner-id').value = commissionerId;
+    leagueUser = await FSC.current();
+    if (!leagueUser) {
+      const commissionerName = document.getElementById('commissioner-name').value.trim();
+      if (!commissionerName) return showError('Your name is required.');
+      leagueUser = await FSC.createGuest(commissionerName);
+    }
+    const commissionerId = leagueUser.user_id;
     league = await api('/leagues', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         name,
         commissioner_user_id: commissionerId,
-        universe_codes: [isNfl() ? 'nfl' : 'ncaaf'],
+        universe_codes: [document.getElementById('universe').value],
         defense_modes: isNfl() ? {nfl: document.getElementById('defense-mode').value} : {},
         size: Number(document.getElementById('league-size').value),
-        draft_rounds: isNfl() ? null : Number(document.getElementById('draft-rounds').value),
+        draft_rounds: isProSport() ? null : Number(document.getElementById('draft-rounds').value),
         program_size_mode: 'team_choice',
         draft_type: draftType,
         draft_scheduled_at: scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
@@ -283,12 +287,12 @@ document.getElementById('create-team-btn').onclick = async () => {
         league_id: league.id,
         name,
         program_size: document.getElementById('program-size').value,
-        owner_user_id: isHuman ? Number(document.getElementById('owner-id').value) : null,
+        owner_user_id: isHuman ? leagueUser.user_id : null,
         is_ai_owned: !isHuman,
       }),
     });
 
-    if (isNfl()) {
+    if (isProSport()) {
       location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${team.id}`;
     } else if (league.draft_type === 'recruit') {
       location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${team.id}`;

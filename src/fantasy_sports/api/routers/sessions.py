@@ -1,5 +1,7 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import create_session, current_user
@@ -11,6 +13,10 @@ router = APIRouter(tags=["sessions"])
 
 class SessionRequest(BaseModel):
     user_id: int
+
+
+class GuestSessionRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
 
 
 class SessionOut(BaseModel):
@@ -31,6 +37,27 @@ def login(payload: SessionRequest, db: Session = Depends(get_db)):
     user = db.get(User, payload.user_id)
     if user is None:
         raise HTTPException(404, "No such user")
+    session = create_session(db, user.id)
+    return SessionOut(token=session.token, user_id=user.id, display_name=user.display_name)
+
+
+@router.post("/sessions/guest", response_model=SessionOut)
+def guest_login(payload: GuestSessionRequest, db: Session = Depends(get_db)):
+    """Create a lightweight commissioner identity for the public prototype.
+
+    This is intentionally not presented as durable account authentication;
+    it gives a fresh deployment a usable first-run path without seeded users.
+    """
+    display_name = payload.display_name.strip()
+    if not display_name:
+        raise HTTPException(400, "Display name is required")
+    user = User(
+        email=f"guest-{uuid.uuid4().hex}@users.invalid",
+        display_name=display_name,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     session = create_session(db, user.id)
     return SessionOut(token=session.token, user_id=user.id, display_name=user.display_name)
 

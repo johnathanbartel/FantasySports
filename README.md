@@ -119,6 +119,13 @@ Run the NHL stand-up smoke test (nhl universe, roster slot definitions, draft ro
 .venv-api\Scripts\python.exe scripts/seed_hockey_smoke_test.py
 ```
 
+Run the empty-database NHL league-creation smoke test (guest commissioner,
+on-demand NHL reference data, six-position lineup, and team creation):
+
+```powershell
+.venv-api\Scripts\python.exe scripts/seed_hockey_league_creation_smoke_test.py
+```
+
 To reset and seed the local demo league with real CFBD roster and game data:
 
 ```powershell

@@ -14,6 +14,7 @@ from fantasy_sports.platform.db.models.core import (
     WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
+from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
@@ -34,6 +35,14 @@ def create_league(
             seed_nfl_reference_data(db)
         except RuntimeError as e:
             raise HTTPException(400, f"NFL reference data conflict: {e}")
+    if "nhl" in payload.universe_codes:
+        # NHL reference data is also safe to create on demand.  Real teams and
+        # players remain a separate ingestion concern; this establishes the
+        # universe and its six-position lineup so league creation can proceed.
+        try:
+            seed_hockey_reference_data(db)
+        except RuntimeError as e:
+            raise HTTPException(400, f"NHL reference data conflict: {e}")
     universes = db.query(Universe).filter(Universe.code.in_(payload.universe_codes)).all()
     if len(universes) != len(payload.universe_codes):
         found = {u.code for u in universes}

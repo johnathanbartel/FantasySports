@@ -32,11 +32,22 @@ const FSC = (() => {
     return data;
   }
 
+  async function createGuest(displayName) {
+    const s = await fetch('/sessions/guest', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({display_name: displayName}),
+    });
+    if (!s.ok) throw new Error((await s.json().catch(() => ({}))).detail || 'Could not start a guest session');
+    const data = await s.json();
+    write(data);
+    return data;
+  }
+
   // Returns the stored session if its token is still valid, else null.
   async function current() {
     if (!read()) return null;
     try { await api('/sessions/me'); return read(); } catch (e) { return null; }
   }
 
-  return {api, post, signIn, current, user: read};
+  return {api, post, signIn, createGuest, current, user: read};
 })();
