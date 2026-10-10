@@ -8,10 +8,10 @@ and hockey ``shots`` table.
 Run from the repository root with the data-pipeline environment:
 
     $env:DATABASE_URL = "sqlite:///./user_run.db"
-    .venv/Scripts/python.exe scripts/ingest_nhl_rosters_and_shots.py --season 2024
+    .venv/Scripts/python.exe scripts/ingest_nhl_rosters_and_shots.py --season 2026 --rosters-only
 
-MoneyPuck names a season by its starting year, so ``--season 2024`` means the
-2024-25 NHL season. The operation is idempotent: roster records are updated
+MoneyPuck names a season by its starting year, so ``--season 2026`` means the
+2026-27 NHL season. The operation is idempotent: roster records are updated
 only when source fields change, and shots use a stable
 ``season:game_id:shotID`` source key. Existing shot rows are never duplicated.
 
@@ -33,6 +33,7 @@ import os
 import sys
 import tempfile
 import zipfile
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,13 +167,18 @@ def _shot_reader(archive: zipfile.ZipFile, season: int):
     return text, reader
 
 
-def _source_files(season: int, directory: Path) -> tuple[Path, Path, Path]:
+def _source_files(
+    season: int, directory: Path, *, rosters_only: bool = False
+) -> tuple[Path, Path, Path | None]:
     skaters = directory / f"skaters_{season}.csv"
     goalies = directory / f"goalies_{season}.csv"
     shots = directory / f"shots_{season}.zip"
     _download(f"{DOWNLOAD_ROOT}/{season}/regular/skaters.csv", skaters)
     _download(f"{DOWNLOAD_ROOT}/{season}/regular/goalies.csv", goalies)
-    _download(SHOT_URL.format(season=season), shots)
+    if not rosters_only:
+        _download(SHOT_URL.format(season=season), shots)
+    else:
+        shots = None
     return skaters, goalies, shots
 
 
@@ -257,6 +263,13 @@ def _sync_players(db, universe: Universe, teams, rosters) -> dict[str, int]:
             asset_type="player",
         ) if player_id is not None
     }
+    current_player_refs = {row["playerId"].strip() for row in rosters}
+    deactivated = 0
+    for player_ref, player in players.items():
+        if player_ref not in current_player_refs and player.active:
+            player.active = False
+            deactivated += 1
+
     created = updated = assets_created = 0
     for row in rosters:
         player_ref = row["playerId"].strip()
@@ -296,6 +309,7 @@ def _sync_players(db, universe: Universe, teams, rosters) -> dict[str, int]:
         "players": len(rosters),
         "players_created": created,
         "players_updated": updated,
+        "players_deactivated": deactivated,
         "assets_created": assets_created,
     }
 
@@ -519,22 +533,33 @@ def _set_game_scores(db, games: dict[str, int], goals, home_won) -> int:
     return changed
 
 
-def ingest(season: int) -> dict[str, int]:
+def ingest(season: int, *, rosters_only: bool = False) -> dict[str, int]:
     Base.metadata.create_all(bind=engine)
     with tempfile.TemporaryDirectory(prefix="nhl-moneypuck-") as temporary:
-        skaters_path, goalies_path, shots_path = _source_files(season, Path(temporary))
+        skaters_path, goalies_path, shots_path = _source_files(
+            season, Path(temporary), rosters_only=rosters_only
+        )
         rosters = _read_roster(skaters_path) + _read_roster(goalies_path)
         player_ids = [row["playerId"] for row in rosters]
         if len(player_ids) != len(set(player_ids)):
             raise RuntimeError(f"MoneyPuck {season} roster contains duplicate player ids")
-        codes = _team_codes(rosters, shots_path, season)
+        codes = (
+            {row["team"].strip() for row in rosters if row["team"].strip()}
+            if shots_path is None
+            else _team_codes(rosters, shots_path, season)
+        )
+        unknown = codes - set(TEAM_NAMES)
+        if unknown:
+            raise RuntimeError(f"Unrecognized MoneyPuck team code(s): {sorted(unknown)}")
 
         with SessionLocal() as db:
             universe, slots_created = _seed_reference_data(db)
             teams, teams_created, teams_updated = _sync_teams(db, universe, codes)
             result = _sync_players(db, universe, teams, rosters)
-            week, weeks_created = _season_week(db, universe, season)
-            result.update(_sync_shots(db, universe, teams, week, shots_path, season))
+            weeks_created = 0
+            if shots_path is not None:
+                week, weeks_created = _season_week(db, universe, season)
+                result.update(_sync_shots(db, universe, teams, week, shots_path, season))
             result.update({
                 "slots_created": slots_created,
                 "teams": len(teams),
@@ -547,12 +572,22 @@ def ingest(season: int) -> dict[str, int]:
 
 
 def main() -> None:
+    today = date.today()
+    current_season = today.year if today.month >= 10 else today.year - 1
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--season",
         type=int,
-        default=2024,
-        help="NHL season starting year (2024 means 2024-25)",
+        default=current_season,
+        help=(
+            "NHL season starting year (2026 means 2026-27); defaults to the "
+            "current NHL season"
+        ),
+    )
+    parser.add_argument(
+        "--rosters-only",
+        action="store_true",
+        help="Refresh teams, players, and draftable assets without downloading shot data",
     )
     args = parser.parse_args()
     if args.season < 2007:
@@ -560,22 +595,24 @@ def main() -> None:
 
     print(f"Database: {DATABASE_URL}")
     print(f"Source: MoneyPuck {args.season}-{str(args.season + 1)[-2:]}")
-    result = ingest(args.season)
+    result = ingest(args.season, rosters_only=args.rosters_only)
     print(
         f"Rosters: {result['teams']} teams "
         f"({result['teams_created']} new, {result['teams_updated']} updated), "
         f"{result['players']} players "
         f"({result['players_created']} new, {result['players_updated']} updated), "
+        f"{result['players_deactivated']} no longer current, "
         f"{result['assets_created']} new draftable assets"
     )
-    print(
-        f"Shots: {result['source_shots']} source rows, "
-        f"{result['shots_created']} new shots, "
-        f"{result['shots_backfilled']} backfilled with players "
-        f"({result['unknown_players']} player ids not in the roster files); "
-        f"{result['games']} games ({result['games_created']} new, "
-        f"{result['scores_set']} scores set or changed)"
-    )
+    if not args.rosters_only:
+        print(
+            f"Shots: {result['source_shots']} source rows, "
+            f"{result['shots_created']} new shots, "
+            f"{result['shots_backfilled']} backfilled with players "
+            f"({result['unknown_players']} player ids not in the roster files); "
+            f"{result['games']} games ({result['games_created']} new, "
+            f"{result['scores_set']} scores set or changed)"
+        )
     print(
         f"Reference data: {result['slots_created']} new roster slots, "
         f"{result['weeks_created']} new season containers"

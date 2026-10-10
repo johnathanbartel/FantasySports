@@ -23,10 +23,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-os.environ["DATABASE_URL"] = "sqlite:///./hockey_smoke_test.db"
+db_path = Path(os.environ.get("HOCKEY_SMOKE_DB", "hockey_smoke_test.db"))
+os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 
 # Fresh DB file every run.
-db_path = Path("hockey_smoke_test.db")
 if db_path.exists():
     db_path.unlink()
 
@@ -67,6 +67,13 @@ def seed_reference_data(db):
         Player(universe_id=nhl.id, real_team_id=bruins.id, full_name="Jeremy Swayman", position="G"),
         Player(universe_id=nhl.id, real_team_id=leafs.id, full_name="Auston Matthews", position="C"),
         Player(universe_id=nhl.id, real_team_id=leafs.id, full_name="William Nylander", position="RW"),
+        Player(
+            universe_id=nhl.id,
+            real_team_id=leafs.id,
+            full_name="Outdated Roster Player",
+            position="C",
+            active=False,
+        ),
     ]
     db.add_all(players)
     db.flush()
@@ -119,6 +126,7 @@ def main():
 
     board = client.get(f"/drafts/{draft['id']}/board").json()
     print(f"Draft board: {[b['display_name'] for b in board]}")
+    assert "Outdated Roster Player" not in {b["display_name"] for b in board}
 
     matthews = ref["assets_by_name"]["Auston Matthews"]
     swayman = ref["assets_by_name"]["Jeremy Swayman"]

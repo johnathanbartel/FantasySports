@@ -16,9 +16,15 @@ offer individual defense are never filtered.
 
 from __future__ import annotations
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform.db.models.core import DraftableAsset, LeagueUniverse, RosterSlotDefinition
+from fantasy_sports.platform.db.models.core import (
+    DraftableAsset,
+    LeagueUniverse,
+    Player,
+    RosterSlotDefinition,
+)
 
 DEFENSE_MODES = ("group", "individual", "team")
 
@@ -65,7 +71,15 @@ def in_pool(asset: DraftableAsset, modes: dict[int, str]) -> bool:
 
 
 def league_pool(db: Session, league_id: int) -> list[DraftableAsset]:
-    """Every draftable asset of the league's universes that matches its defense mode."""
+    """Every active draftable asset matching the league's universes and defense mode."""
     modes = league_modes(db, league_id)
-    assets = db.query(DraftableAsset).filter(DraftableAsset.universe_id.in_(list(modes) or [0])).all()
+    assets = (
+        db.query(DraftableAsset)
+        .outerjoin(Player, Player.id == DraftableAsset.player_id)
+        .filter(
+            DraftableAsset.universe_id.in_(list(modes) or [0]),
+            or_(DraftableAsset.player_id.is_(None), Player.active.is_(True)),
+        )
+        .all()
+    )
     return [a for a in assets if in_pool(a, modes)]
