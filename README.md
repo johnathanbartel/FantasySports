@@ -56,6 +56,30 @@ The API and web UI run in the same process. Open the API documentation at
 `http://127.0.0.1:8000/docs` or the current draft board at
 `http://127.0.0.1:8000/static/draft-board.html`.
 
+## Vercel deployment
+
+Vercel loads the root `app.py` entrypoint and serves the FastAPI application as
+one Python function. The existing `web/static` mount remains part of that app.
+
+Production requires a persistent Postgres database. Add `DATABASE_URL` (or
+`POSTGRES_URL`) to the Vercel project for Production and Preview; the app
+intentionally refuses to use SQLite when `VERCEL` is set because function-local
+files are ephemeral. Before sending production traffic to a new database, run
+the migrations from a trusted workstation:
+
+```powershell
+$env:DATABASE_URL = "<production-postgres-url>"
+.venv-api\Scripts\python.exe -m alembic upgrade head
+```
+
+The bundled frontend is same-origin and needs no CORS configuration. If a
+separate frontend must call the API, set `CORS_ALLOWED_ORIGINS` to a
+comma-separated allowlist of exact origins.
+
+Then import the Git repository in Vercel or deploy it with Vercel CLI 48.1.8 or
+newer. Confirm `/health`, `/static/index.html`, and one database-backed endpoint
+after deployment. Do not run the data-ingestion scripts from a Vercel Function.
+
 Football ingestion currently needs its separate legacy-compatible environment
 because `cfbd` pins Pydantic below version 2:
 
