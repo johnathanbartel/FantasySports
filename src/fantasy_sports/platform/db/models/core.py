@@ -988,3 +988,50 @@ class SimulatorReveal(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class BankedCredit(Base):
+    """A rostered NHL player's off-day credit, banked for a later series game (docs/hockey_spec.md 5.2;
+    rules in platform/banking.py). The points are scored upstream (FS-026) and only stored here; a credit
+    is assigned to at most one game, and a game takes at most one credit per team."""
+
+    __tablename__ = "off_day_banked_credits"
+    __table_args__ = (
+        UniqueConstraint("league_id", "source_key", name="uq_banked_credit_source"),
+        UniqueConstraint("assigned_daily_game_id", "team_id", name="uq_banked_credit_game_team"),
+        CheckConstraint("credit_points > 0", name="ck_banked_credit_points"),
+        CheckConstraint(
+            "applied_points IS NULL OR (applied_points > 0 AND applied_points <= 1.5)",
+            name="ck_banked_credit_applied",
+        ),
+        CheckConstraint("status IN ('AVAILABLE', 'ASSIGNED', 'EXPIRED')", name="ck_banked_credit_status"),
+        CheckConstraint(
+            "assignment_mode IS NULL OR assignment_mode IN ('MANUAL', 'AUTO')", name="ck_banked_credit_mode"
+        ),
+        CheckConstraint(
+            "(status = 'ASSIGNED' AND assigned_daily_game_id IS NOT NULL AND applied_points IS NOT NULL) OR "
+            "(status <> 'ASSIGNED' AND assigned_daily_game_id IS NULL AND applied_points IS NULL)",
+            name="ck_banked_credit_assignment",
+        ),
+        Index("ix_banked_credit_team_status", "team_id", "status"),
+        Index("ix_banked_credit_league_status", "league_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    source_calendar_date: Mapped[datetime.date] = mapped_column()
+    source_key: Mapped[str] = mapped_column(String(120))
+    credit_points: Mapped[float] = mapped_column(Float)
+    applied_points: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="AVAILABLE")
+    status_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    assigned_daily_game_id: Mapped[int | None] = mapped_column(ForeignKey("series_daily_games.id"), nullable=True)
+    assignment_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    assigned_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    expired_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+    assigned_game: Mapped["SeriesDailyGame | None"] = relationship()

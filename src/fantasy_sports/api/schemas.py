@@ -559,3 +559,66 @@ class SimFinalOut(BaseModel):
     event_count: int
     scoring_events: list[SimEventOut]
     provenance: dict
+
+
+# --- NHL off-day banking (FS-028) -------------------------------------------
+
+class BankedCreditOut(BaseModel):
+    id: int
+    league_id: int
+    team_id: int
+    draftable_asset_id: int
+    player_name: str
+    source_calendar_date: datetime.date
+    credit_points: float
+    applied_points: float | None
+    capped: bool
+    status: str  # AVAILABLE / ASSIGNED / EXPIRED
+    status_reason: str | None
+    assignment_mode: str | None  # MANUAL / AUTO
+    assigned_daily_game_id: int | None
+    assigned_at: datetime.datetime | None
+    created_at: datetime.datetime
+    fallback_at: datetime.datetime
+    window_end: datetime.date
+
+
+class BankedCreditsOut(BaseModel):
+    team_id: int
+    cap: float
+    fallback_hours: int
+    credits: list[BankedCreditOut]
+
+
+class BankGameOptionOut(BaseModel):
+    daily_game_id: int
+    calendar_date: datetime.date
+    opponent_id: int
+    opponent_name: str
+    home_away: str
+    game_score: int
+    opponent_strength: dict | None
+    projected_margin: float | None
+    win_probability_swing: float | None
+    rank: int
+
+
+class BankRecommendationOut(BaseModel):
+    credit: BankedCreditOut
+    recommended_game_id: int | None
+    confidence: str  # FULL / PARTIAL / NEUTRAL / NONE
+    basis: str
+    reasons: list[str]
+    inputs_available: dict
+    options: list[BankGameOptionOut]
+
+
+class BankAssignRequest(BaseModel):
+    daily_game_id: int
+
+
+class BankFallbackOut(BaseModel):
+    processed_at: datetime.datetime
+    assigned: list[dict]
+    expired: list[int]
+    waiting: int
