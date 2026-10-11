@@ -145,7 +145,7 @@ function renderSetup(teams) {
       ${open > 0 ? `${open} spot${open === 1 ? '' : 's'} still open.` : 'The league is full.'}</p>
     ${isCommissioner() ? `${clockFormHtml()}<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
       ${open > 0 ? '<button class="btn btn-secondary" id="fill-ai">Fill open spots with AI teams</button>' : ''}
-      <button class="btn btn-primary" id="start-draft" ${teams.length ? '' : 'disabled'}>Start draft</button></div>`
+      <button class="btn btn-primary" id="start-draft" ${teams.length && open <= 0 ? '' : 'disabled'} ${open > 0 ? 'title="Fill every open spot before starting the draft"' : ''}>Start draft</button></div>`
       : '<p class="muted" style="margin:0">Waiting for the commissioner to start the draft.</p>'}`;
   const fill = document.getElementById('fill-ai');
   if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
@@ -166,7 +166,7 @@ function clockFormHtml() {
   return `<fieldset style="border:1px solid var(--color-divider);padding:var(--space-3);margin:0 0 var(--space-3)">
     <legend>Pick clock</legend>
     <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end">
-      <label>Mode<br><select id="clk-mode"><option value="none">No clock (manual picks)</option><option value="live">Live: seconds per pick</option><option value="slow">Slow: hours per pick</option></select></label>
+      <label>Mode<br><select id="clk-mode"><option value="live" selected>Live: seconds per pick</option><option value="none">No clock (manual picks)</option><option value="slow">Slow: hours per pick</option></select></label>
       <label id="clk-val-wrap" hidden>Time per pick<br><input id="clk-val" type="number" min="1" step="any" value="60" style="width:100px"> <span id="clk-unit">seconds</span></label>
       <label><input type="checkbox" id="clk-night"> Pause overnight</label>
     </div>
@@ -351,11 +351,16 @@ let clock = null, clockFetchedAt = 0, clockPoll = null, tickTimer = null, proces
 function renderClockLine() {
   const panel = document.getElementById('on-clock-panel');
   let line = document.getElementById('clock-line');
-  if (!clock || clock.clock_status === 'untimed' || clock.clock_status === 'complete' || !onClockPick()) {
+  if (!clock || clock.clock_status === 'complete' || !onClockPick()) {
     if (line) line.remove();
     return;
   }
   if (!line) { line = document.createElement('div'); line.id = 'clock-line'; line.style.marginTop = 'var(--space-3)'; panel.appendChild(line); }
+  if (clock.clock_status === 'untimed') {
+    line.innerHTML = `<div class="card-kicker" style="margin-bottom:2px">Pick clock</div>
+      <div class="text-muted" style="font-size:13px">No pick clock - this draft was started without one, so picks wait for the team on the clock.</div>`;
+    return;
+  }
   const left = DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt);
   line.innerHTML = `
     <div class="card-kicker" style="margin-bottom:2px">Time left</div>

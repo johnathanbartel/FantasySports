@@ -60,6 +60,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
+from fantasy_sports.platform.league_fill import assert_league_full
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
     League,
@@ -149,6 +150,7 @@ def open_draft(
         raise ValueError("This league's recruiting draft has already started")
     if db.query(Team).filter(Team.league_id == league_id).count() == 0:
         raise ValueError("League has no teams yet")
+    assert_league_full(db, league)
 
     draft = RecruitingDraft(
         league_id=league_id, status="open", started_at=now,
@@ -182,6 +184,10 @@ def sync(db: Session, league_id: int, now: datetime.datetime | None = None) -> R
         scheduled = league.draft_scheduled_at if league else None
         if scheduled is None or now < scheduled.replace(tzinfo=None):
             return None
+        try:
+            assert_league_full(db, league)
+        except ValueError:
+            return None   # an unfilled league waits: its scheduled start doesn't open the draft
         draft = open_draft(db, league_id, now)
     while draft.status == "open" and period_end(draft, draft.periods_processed + 1) <= now:
         _process_period(db, draft, at=period_end(draft, draft.periods_processed + 1))

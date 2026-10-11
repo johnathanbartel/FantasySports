@@ -1,6 +1,8 @@
+import datetime
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
@@ -10,8 +12,8 @@ from fantasy_sports.api.schemas import (
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    Conference, League, LeagueUniverse, RecruitingSettings, RosterSlotDefinition, Team, Universe, User, Week,
-    WeeklyMatchup,
+    AuctionDraft, Conference, Draft, League, LeagueUniverse, RecruitingDraft, RecruitingSettings,
+    RosterSlotDefinition, Team, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
@@ -134,6 +136,63 @@ def my_leagues(db: Session = Depends(get_db), user: User = Depends(current_user)
         (League.commissioner_user_id == user.id) | (League.id.in_(owned or {0}))
     ).order_by(League.id.desc()).all()
     return rows
+
+
+class DashboardLeague(BaseModel):
+    league_id: int
+    name: str
+    sports: list[str]           # universe codes: ncaaf / nfl / nhl ...
+    draft_type: str
+    size: int
+    teams_filled: int
+    is_commissioner: bool
+    my_team_ids: list[int]
+    my_team_names: list[str]
+    draft_state: str            # not_started / in_progress / complete
+    draft_scheduled_at: datetime.datetime | None
+
+
+def _draft_state(db: Session, league: League) -> str:
+    """not_started / in_progress / complete across snake, auction and recruiting drafts."""
+    statuses = [d.status for d in db.query(Draft).filter(Draft.league_id == league.id)]
+    statuses += [d.status for d in db.query(AuctionDraft).filter(AuctionDraft.league_id == league.id)]
+    statuses += [d.status for d in db.query(RecruitingDraft).filter(RecruitingDraft.league_id == league.id)]
+    if not statuses:
+        return "not_started"
+    return "complete" if all(s in ("complete", "closed") for s in statuses) else "in_progress"
+
+
+@router.get("/mine/dashboard", response_model=list[DashboardLeague])
+def my_dashboard(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every league the caller commissions or has a team in, across all sports, with the facts the site dashboard
+    shows: sport(s), how full the league is, the caller's team(s), and where its draft stands."""
+    my_teams = db.query(Team).filter(Team.owner_user_id == user.id).order_by(Team.id).all()
+    leagues = db.query(League).filter(
+        (League.commissioner_user_id == user.id) | (League.id.in_({t.league_id for t in my_teams} or {0}))
+    ).order_by(League.id.desc()).all()
+    ids = [lg.id for lg in leagues] or [0]
+    sports: dict[int, list[str]] = defaultdict(list)
+    for league_id, code in (
+        db.query(LeagueUniverse.league_id, Universe.code)
+        .join(Universe, Universe.id == LeagueUniverse.universe_id)
+        .filter(LeagueUniverse.league_id.in_(ids)).order_by(Universe.code)
+    ):
+        sports[league_id].append(code)
+    filled: dict[int, int] = defaultdict(int)
+    for (league_id,) in db.query(Team.league_id).filter(Team.league_id.in_(ids)):
+        filled[league_id] += 1
+    mine: dict[int, list[Team]] = defaultdict(list)
+    for t in my_teams:
+        mine[t.league_id].append(t)
+    return [
+        DashboardLeague(
+            league_id=lg.id, name=lg.name, sports=sports[lg.id], draft_type=lg.draft_type, size=lg.size,
+            teams_filled=filled[lg.id], is_commissioner=lg.commissioner_user_id == user.id,
+            my_team_ids=[t.id for t in mine[lg.id]], my_team_names=[t.name for t in mine[lg.id]],
+            draft_state=_draft_state(db, lg), draft_scheduled_at=lg.draft_scheduled_at,
+        )
+        for lg in leagues
+    ]
 
 
 @router.post("/sandbox", response_model=LeagueOut)

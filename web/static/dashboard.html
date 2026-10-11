@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Leagues - Fantasy Sports Company</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>body{margin:0}</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav">
+    <span class="nav-brand">Fantasy Sports Company</span>
+    <div style="display:flex;gap:var(--space-4)">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html" aria-current="page">My leagues</a>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+    <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)">Dashboard</div>
+      <h1 style="margin:0 0 var(--space-2)">My leagues</h1>
+      <p class="text-muted" style="max-width:640px;margin:0">Every league you commission or play in, across all sports.</p>
+    </div>
+
+    <div id="error-banner" role="alert" style="display:none;margin-bottom:var(--space-4)"></div>
+    <div id="signin-box" style="display:none;gap:var(--space-3);align-items:center;margin-bottom:var(--space-4)">
+      <select id="signin-select"></select>
+      <button class="btn btn-primary" id="signin-btn">Sign in</button>
+    </div>
+
+    <div id="sport-filter" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-5)"></div>
+    <div id="leagues" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--space-4)"></div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football', nhl: 'Hockey', nba: 'Basketball', mlb: 'Baseball'};
+const sportLabel = code => SPORT_LABELS[code] || String(code).toUpperCase();
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DRAFT_LABELS = {not_started: 'Draft not started', in_progress: 'Draft in progress', complete: 'Draft complete'};
+
+let all = [];
+let filter = 'ALL';
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function leagueHref(l) {
+  const team = l.my_team_ids[0];
+  return `/static/league.html?league_id=${l.league_id}${team ? '&team_id=' + team : ''}`;
+}
+
+function draftHref(l) {
+  const team = l.my_team_ids[0];
+  const q = `league_id=${l.league_id}${team ? '&team_id=' + team : ''}`;
+  if (l.draft_type === 'snake') return `/static/draft-board.html?${q}`;
+  return leagueHref(l);
+}
+
+function renderFilter() {
+  const codes = [...new Set(all.flatMap(l => l.sports))].sort();
+  const el = document.getElementById('sport-filter');
+  el.innerHTML = '';
+  if (codes.length < 2) return;
+  ['ALL', ...codes].forEach(c => {
+    const b = document.createElement('button');
+    b.className = `btn ${filter === c ? 'btn-primary' : 'btn-secondary'}`;
+    b.textContent = c === 'ALL' ? 'All sports' : sportLabel(c);
+    b.onclick = () => { filter = c; render(); };
+    el.appendChild(b);
+  });
+}
+
+function card(l) {
+  const full = l.teams_filled >= l.size;
+  const role = [l.is_commissioner ? 'Commissioner' : null, l.my_team_names.length ? l.my_team_names.map(esc).join(', ') : null]
+    .filter(Boolean).join(' · ');
+  const draftTag = l.draft_state === 'complete' ? 'tag-neutral' : l.draft_state === 'in_progress' ? 'tag-accent' : 'tag-accent-2';
+  const sched = l.draft_state === 'not_started' && l.draft_scheduled_at
+    ? `<div class="text-muted" style="font-size:12px">Scheduled ${esc(new Date(l.draft_scheduled_at + 'Z').toLocaleString())}</div>` : '';
+  const draftBtn = l.draft_state === 'complete' ? ''
+    : `<a class="btn btn-secondary" href="${draftHref(l)}">${l.draft_state === 'in_progress' ? 'Draft room' : (l.is_commissioner ? 'Set up draft' : 'Draft')}</a>`;
+  return `<div class="card elev-sm" style="padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
+    <div style="display:flex;justify-content:space-between;gap:var(--space-2);align-items:baseline">
+      <h3 style="margin:0">${esc(l.name)}</h3>
+      <span class="tag tag-neutral">${l.sports.map(sportLabel).map(esc).join(' + ') || '—'}</span>
+    </div>
+    <div class="text-muted" style="font-size:13px">${role || '—'}</div>
+    <div style="font-size:14px">${l.teams_filled} of ${l.size} teams${full ? '' : ' · <strong>not full</strong>'}</div>
+    <div><span class="tag ${draftTag}">${DRAFT_LABELS[l.draft_state] || esc(l.draft_state)}</span></div>
+    ${sched}
+    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+      <a class="btn btn-primary" href="${leagueHref(l)}">Open league</a>${draftBtn}
+    </div>
+  </div>`;
+}
+
+function render() {
+  renderFilter();
+  const shown = filter === 'ALL' ? all : all.filter(l => l.sports.includes(filter));
+  const el = document.getElementById('leagues');
+  el.innerHTML = shown.length ? shown.map(card).join('')
+    : `<p class="text-muted">You're not in any leagues yet. <a href="/static/create-league.html">Create one</a>.</p>`;
+}
+
+async function start() {
+  const session = await FSC.current();
+  if (!session) {
+    document.getElementById('signin-box').style.display = 'flex';
+    const users = await fetch('/users').then(r => r.json()).catch(() => []);
+    document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
+    document.getElementById('signin-btn').onclick = async () => { await FSC.signIn(Number(document.getElementById('signin-select').value)); location.reload(); };
+    showError('Sign in to see your leagues.');
+    return;
+  }
+  try { all = await FSC.api('/leagues/mine/dashboard'); } catch (e) { showError(e.message); return; }
+  render();
+}
+start();
+</script>
+</body>
+</html>
