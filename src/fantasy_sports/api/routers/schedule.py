@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.platform import rankings, schedule, scoring, season
+from fantasy_sports.platform.league_features import is_college
 from fantasy_sports.platform.db.models.core import MatchupRequest, Team, User, Week, WeeklyMatchup
 from fantasy_sports.platform.db.session import get_db
 
@@ -35,6 +36,11 @@ def _can_manage(db: Session, user: User | None, team_id: int) -> bool:
         return False
 
 
+def _require_self_scheduling(db: Session, league_id: int) -> None:
+    if not is_college(db, league_id):
+        raise HTTPException(400, "Only college leagues let teams set their own schedules")
+
+
 def _req_out(db: Session, r: MatchupRequest) -> dict:
     return {"id": r.id, "week_id": r.week_id, "from_team_id": r.from_team_id, "from_team_name": db.get(Team, r.from_team_id).name,
             "to_team_id": r.to_team_id, "to_team_name": db.get(Team, r.to_team_id).name, "offer_amount": r.offer_amount,
@@ -59,7 +65,7 @@ def team_schedule(team_id: int, db: Session = Depends(get_db), user: User | None
     if team is None:
         raise HTTPException(404, "Team not found")
     mine = _can_manage(db, user, team_id)
-    stage_open = schedule.stage_status(db, team.league_id) == "open"
+    stage_open = schedule.stage_status(db, team.league_id) == "open" and is_college(db, team.league_id)
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=team.league_id)}
     weeks = []
     for w in schedule.regular_weeks(db, team.league_id):
@@ -85,6 +91,7 @@ def team_schedule(team_id: int, db: Session = Depends(get_db), user: User | None
 @router.post("/teams/{team_id}/schedule/requests")
 def create_request(team_id: int, payload: RequestCreate, db: Session = Depends(get_db), user: User = Depends(current_user)):
     team = assert_can_manage_team(db, user, team_id)
+    _require_self_scheduling(db, team.league_id)
     try:
         req = schedule.request_matchup(db, team, payload.week_id, payload.to_team_id, payload.offer_amount)
     except ValueError as e:
@@ -104,6 +111,7 @@ def _request(db: Session, request_id: int) -> MatchupRequest:
 def withdraw_request(request_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     req = _request(db, request_id)
     assert_can_manage_team(db, user, req.from_team_id)
+    _require_self_scheduling(db, db.get(Team, req.from_team_id).league_id)
     try:
         schedule.withdraw_request(db, req)
     except ValueError as e:
@@ -117,6 +125,7 @@ def respond_to_request(request_id: int, payload: RespondBody, db: Session = Depe
     """The receiving team accepts or declines. Accepting moves the cash and rewires the two teams' weeks."""
     req = _request(db, request_id)
     assert_can_manage_team(db, user, req.to_team_id)
+    _require_self_scheduling(db, db.get(Team, req.to_team_id).league_id)
     try:
         schedule.respond(db, req, payload.accept)
     except ValueError as e:
@@ -129,6 +138,7 @@ def respond_to_request(request_id: int, payload: RespondBody, db: Session = Depe
 def close_schedule_stage(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Commissioner action: AI teams answer their requests, everything else still open is declined, and the stage closes."""
     assert_commissioner(db, user, league_id)
+    _require_self_scheduling(db, league_id)
     if schedule.stage_status(db, league_id) != "open":
         raise HTTPException(400, "The schedule stage is already closed")
     result = schedule.close_stage(db, league_id)
@@ -153,4 +163,6 @@ def league_rankings(league_id: int, db: Session = Depends(get_db)):
     """The simple ranking (by projected remaining EPA credit) and the AI voter poll built from it."""
     if not db.query(Team).filter_by(league_id=league_id).count():
         raise HTTPException(404, "League not found or has no teams")
+    if not is_college(db, league_id):
+        raise HTTPException(400, "Rankings are only available for college leagues")
     return rankings.poll(db, league_id)

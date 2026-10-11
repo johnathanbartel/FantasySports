@@ -68,6 +68,7 @@
 
 <script src="/static/session.js"></script>
 <script src="/static/roster-lines.js"></script>
+<script src="/static/roster-grid.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -75,11 +76,16 @@ const api = FSC.api;
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const POS_LABEL = {PK: 'K'};
 let LAST = 'last season';   // the year the fantasy points are from (set from /config)
-const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'PK', 'DL', 'LB', 'DB'];
+const FOOTBALL_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'PK', 'DL', 'LB', 'DB'];
+const HOCKEY_POSITIONS = ['C', 'LW', 'RW', 'D', 'G'];
+let POSITIONS = FOOTBALL_POSITIONS;   // set from the league's universe in refreshOverview()
+const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
-const TABS = [['home', 'Home'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
+const ALL_TABS = [['home', 'Home'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
+// Rankings exist only for college leagues (College Football / College Basketball) to start.
+const tabList = () => ALL_TABS.filter(([id]) => id !== 'rankings' || (ov && ov.has_rankings));
 
 let me = null, ov = null, canActForAi = false, isCommissioner = false;
 let tab = 'home';
@@ -101,7 +107,7 @@ const activeTeam = () => teamsById[activeTeamId];
 const posTag = (p) => `<span class="tag tag-neutral" style="min-width:34px;justify-content:center">${POS_LABEL[p] || p || '-'}</span>`;
 
 function renderTabs() {
-  $('tabs').innerHTML = TABS.map(([id, label]) => `<button class="tab${tab === id ? ' on' : ''}" data-tab="${id}">${label}</button>`).join('');
+  $('tabs').innerHTML = tabList().map(([id, label]) => `<button class="tab${tab === id ? ' on' : ''}" data-tab="${id}">${label}</button>`).join('');
   $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => go(b.dataset.tab));
 }
 
@@ -122,6 +128,7 @@ async function go(id, extra = {}) {
 async function refreshOverview() {
   ov = await api(`/leagues/${LEAGUE_ID}/overview`);
   teamsById = Object.fromEntries(ov.teams.map(t => [t.id, t]));
+  POSITIONS = isHockey() ? HOCKEY_POSITIONS : FOOTBALL_POSITIONS;
 }
 
 function draftLine() {
@@ -229,9 +236,74 @@ function ensureActiveTeam() {
   }
 }
 
+// ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
+let gridGroups = [], gridSel = null;
+
+async function renderHockeyRoster() {
+  const t = activeTeam();
+  const po = await api(`/teams/${t.id}/pecking-order`);
+  gridGroups = po.groups; gridSel = null;
+  paintHockeyRoster();
+}
+
+function paintHockeyRoster() {
+  const t = activeTeam(), can = canManage(t);
+  const grid = RosterGrid.build(gridGroups);
+  const total = gridGroups.reduce((n, g) => n + g.ranked.length + g.unranked.length, 0);
+  const counts = Object.fromEntries(gridGroups.map(g => [g.position_group, g.ranked.length + g.unranked.length]));
+  const isSel = (g, rank, pid) => gridSel && gridSel.group === g && (pid != null ? gridSel.playerId === pid : gridSel.rank === rank);
+  const target = (g) => gridSel && gridSel.group === g;
+  const cellBtn = (c) => {
+    const p = c.player, sel = isSel(c.group, c.rank, null);
+    const border = sel ? '2px solid var(--color-accent)' : target(c.group) ? '2px dashed var(--color-accent)' : '1px solid var(--color-divider)';
+    const label = p ? `${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}` : '<span class="muted">Open</span>';
+    return `<button type="button" class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can && (p || gridSel) ? '' : 'disabled'} aria-pressed="${sel}"
+      style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);background:var(--color-surface, transparent);color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:38px">${label}</button>`;
+  };
+  const reserveBtn = (g, p) => {
+    const sel = isSel(g, null, p.player_id);
+    return `<button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
+      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer">${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}</span></button>`;
+  };
+  const reserveGroups = ['C', 'W', 'D', 'G'].filter(g => grid.reserves[g].length);
+  $('content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div><div class="card-kicker">NHL ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
+      <div>${teamPicker('team-pick')}</div></div>
+    <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      ${statCard('Roster', total, '')}${['C', 'W', 'D', 'G'].map(g => statCard(g, counts[g] || 0, '')).join('')}</div>
+    <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-4 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
+    <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
+      <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
+        ${[1, 2, 3, 4].map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
+        ${grid.rows.map(r => `<tr><th scope="row" style="vertical-align:middle">${r.label}</th>${r.cells.map(c => `<td style="padding:4px">${cellBtn(c)}</td>`).join('')}</tr>`).join('')}
+      </tbody></table></div>
+    ${reserveGroups.length ? `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)"><h4 style="margin:0 0 var(--space-2)">Not on a line</h4>
+      ${reserveGroups.map(g => `<div style="margin-bottom:var(--space-2)"><span class="tag tag-neutral" style="margin-right:var(--space-2)">${g}</span>${grid.reserves[g].map(p => reserveBtn(g, p)).join(' ')}</div>`).join('')}</div>` : ''}`;
+  $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('roster'); };
+  document.querySelectorAll('.gcell').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, rank: Number(b.dataset.rank)}));
+  document.querySelectorAll('.gres').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, playerId: Number(b.dataset.pid)}));
+  bindNav();
+}
+
+async function pickGrid(sel) {
+  showError('');
+  const sameAs = gridSel && gridSel.group === sel.group && gridSel.rank === sel.rank && gridSel.playerId === sel.playerId;
+  if (!gridSel || sameAs) { gridSel = sameAs ? null : sel; return paintHockeyRoster(); }
+  const r = RosterGrid.swap(gridGroups, gridSel, sel);
+  if (r.error) { showError(r.error); gridSel = null; return paintHockeyRoster(); }
+  try {
+    const out = await api(`/teams/${activeTeam().id}/pecking-order`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({assignments: {[r.group]: r.ids}})});
+    gridGroups = out.groups;
+  } catch (e) { showError(e.message); }
+  gridSel = null;
+  paintHockeyRoster();
+}
+
 async function renderRoster() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
+  if (isHockey()) return renderHockeyRoster();
   const roster = await api(`/teams/${t.id}/roster`);
   const lines = ov.draft_type === 'snake' ? await api(`/teams/${t.id}/lines`).catch(() => null) : null;   // snake leagues: show it by lineup slot
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
@@ -383,9 +455,16 @@ async function renderSchedule() {
     api(`/leagues/${LEAGUE_ID}/schedule/state`), api(`/leagues/${LEAGUE_ID}/matchups`), api(`/leagues/${LEAGUE_ID}/championships`)]);
   const managed = ov.teams.filter(canManage);
   if (view.schedTeam === undefined || !managed.some(t => t.id === view.schedTeam)) view.schedTeam = (managed.find(t => !t.is_ai_owned) || managed[0])?.id ?? null;
-  const mySchedule = view.schedTeam ? await api(`/teams/${view.schedTeam}/schedule`) : null;
+  const mySchedule = view.schedTeam && ov.teams_set_schedule ? await api(`/teams/${view.schedTeam}/schedule`) : null;
 
-  const banner = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
+  const selfSchedule = ov.teams_set_schedule;
+  const banner = !selfSchedule ? `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
+    <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center">
+      <div><div class="card-kicker">Schedule</div><strong>${isHockey() ? 'Series schedule' : state.has_schedule ? 'Set by the league' : 'No schedule yet'}</strong>
+        <div class="muted" style="font-size:13px;margin-top:2px">Only college leagues let teams arrange their own opponents. In this league the schedule is set for you.
+          ${isHockey() ? `<a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${myTeam() ? '&team_id=' + myTeam().id : ''}">Open the series schedule &amp; lineup</a>.` : ''}</div></div>
+      ${isCommissioner && !state.has_schedule && !isHockey() ? '<button class="btn btn-primary" id="mk-sched">Create schedule</button>' : ''}</div></div>` :
+  `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
     <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center">
       <div><div class="card-kicker">Preseason schedule stage</div>
         <strong>${!state.has_schedule ? 'No schedule yet' : state.status === 'open' ? 'Open - teams can still arrange different opponents' : 'Closed - the schedule is set'}</strong>
@@ -397,7 +476,7 @@ async function renderSchedule() {
 
   const nameCell = (id) => tn(id);
   let mine = '';
-  if (mySchedule && state.has_schedule) {
+  if (selfSchedule && mySchedule && state.has_schedule) {
     const t = teamsById[view.schedTeam];
     mine = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4);overflow-x:auto">
       <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:baseline">
@@ -448,7 +527,7 @@ async function renderSchedule() {
     board = '<p class="muted">No games to show yet.</p>';
   }
 
-  const champBox = `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin:var(--space-4) 0">
+  const champBox = !selfSchedule ? '' : `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin:var(--space-4) 0">
     <h3 style="margin:0 0 var(--space-2)">Week ${state.championship_week}: conference championships</h3>
     ${champ.ready ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--space-2)">${champ.games.map(g => `<div><span class="muted" style="font-size:12px">${esc(ov.teams.find(t => t.conference_id === g.conference_id)?.conference_name || '')}</span><br>${tn(g.team_a_id, g.team_a_name)} vs ${tn(g.team_b_id, g.team_b_name)}</div>`).join('')}</div>
         ${champ.byes.length ? `<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">Bye - season over: ${champ.byes.map(b => tn(b.team_id, b.team_name)).join(', ')}</p>` : ''}`
@@ -617,11 +696,11 @@ async function start() {
   canActForAi = isCommissioner && ent.commissioner_mode;
   $('nav-brand').textContent = ov.name;
   $('league-name').textContent = ov.name;
-  $('kicker').textContent = `${ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
+  $('kicker').textContent = `${isHockey() ? 'NHL' : ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
   $('nav-cm').style.display = isCommissioner ? '' : 'none';
   document.title = ov.name;
   const want = params.get('tab');
-  await go(TABS.some(([id]) => id === want) ? want : 'home');
+  await go(tabList().some(([id]) => id === want) ? want : 'home');
 }
 start().catch(e => showError(`Failed to load: ${e.message}`));
 </script>

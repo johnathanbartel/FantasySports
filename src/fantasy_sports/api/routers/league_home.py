@@ -15,6 +15,7 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
 from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
+from fantasy_sports.platform.league_features import is_college
 from fantasy_sports.platform.db.models.core import (
     Conference,
     DefenseGroup,
@@ -87,6 +88,8 @@ class OverviewOut(BaseModel):
     free_agency_open: bool
     ai_teams_with_open_spots: int
     teams: list[TeamSummary]
+    has_rankings: bool = False          # College Football / College Basketball only, to start
+    teams_set_schedule: bool = False    # likewise: only college teams negotiate their own schedules
 
 
 @router.get("/leagues/{league_id}/overview", response_model=OverviewOut)
@@ -102,7 +105,8 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     team_ids = [t.id for t in db.query(Team).filter_by(league_id=league_id)]
     for r in db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids or [0])):
         counts[r.team_id] = counts.get(r.team_id, 0) + 1
-    poll_ranks = rankings.poll_ranks(db, league_id) if team_ids else {}
+    college = is_college(db, league_id)
+    poll_ranks = rankings.poll_ranks(db, league_id) if team_ids and college else {}
     teams = [
         TeamSummary(
             id=t.id, name=t.name, program_size=t.program_size, is_ai_owned=t.is_ai_owned,
@@ -123,6 +127,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         commissioner_name=users.get(league.commissioner_user_id), season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
+        has_rankings=college, teams_set_schedule=college,
     )
 
 

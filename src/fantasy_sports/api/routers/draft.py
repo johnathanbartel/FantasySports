@@ -15,7 +15,7 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import draft_clock
+from fantasy_sports.platform import draft_clock, pecking_order
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_fill import assert_league_full
@@ -209,6 +209,7 @@ def _fill_with_best_available(db: Session, draft: Draft, pick: DraftPick, picked
     pick.is_autopick = True
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=pick.draftable_asset_id, acquired_via="draft"))
     db.flush()
+    pecking_order.rank_new_player(db, db.get(Team, pick.team_id), pick.draftable_asset_id)
     _close_if_finished(db, draft.id)
 
 
@@ -369,6 +370,7 @@ def make_pick(
     pick.picked_at = now
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=asset.id, acquired_via="draft"))
     db.flush()
+    pecking_order.rank_new_player(db, team_on_clock, asset.id)
     _close_if_finished(db, draft_id)
     if draft.status == "in_progress":
         draft_clock.begin_pick(draft, now)

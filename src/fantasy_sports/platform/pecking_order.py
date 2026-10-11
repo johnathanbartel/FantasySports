@@ -138,3 +138,24 @@ def replace_groups(db: Session, team: Team, assignments: dict[str, list[int]]) -
             db.add(TeamPeckingOrder(team_id=team.id, position_group=group, priority=rank,
                                     draftable_asset_id=roster[pid][0]))
     db.flush()
+
+
+def rank_new_player(db: Session, team: Team, asset_id: int) -> bool:
+    """Puts a newly rostered NHL player at the end of his group's ranking, if the group has room and he is not already
+    ranked, so a drafted team's lines fill in as it drafts. Returns whether he was ranked. Does nothing for a
+    non-NHL team or a non-player asset. Flushes, does not commit."""
+    try:
+        assert_hockey_team(db, team)
+    except ValueError:
+        return False
+    roster = roster_players(db, team.id)
+    entry = next(((pid, pl) for pid, (aid, pl) in roster.items() if aid == asset_id), None)
+    group = GROUP_BY_POSITION.get(entry[1].position) if entry else None
+    if group is None:
+        return False
+    existing = db.query(TeamPeckingOrder).filter_by(team_id=team.id, position_group=group).count()
+    if existing >= DEPTH[group] or db.query(TeamPeckingOrder).filter_by(team_id=team.id, draftable_asset_id=asset_id).first():
+        return False
+    db.add(TeamPeckingOrder(team_id=team.id, position_group=group, priority=existing + 1, draftable_asset_id=asset_id))
+    db.flush()
+    return True
