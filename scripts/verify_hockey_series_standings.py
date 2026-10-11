@@ -128,7 +128,7 @@ def main() -> None:
 
         # Opening state: nothing final -> all zeros, one shared rank, no rivalry history.
         st = client.get(f"{base}/series-standings").json()
-        check(st["tiebreak_order"].startswith("series_wins desc"), "tie-break order is published")
+        check(st["tiebreak_order"].startswith("series_wins desc, series_losses asc, goal_diff desc, h2h_wins desc"), "tie-break order is published")
         check(all(r["rank"] == 1 and r["series_wins"] == 0 and r["goal_diff"] == 0 for r in st["standings"]),
               "opening standings: all zero, shared rank 1")
         check(client.get(f"{base}/rivalries").json()["rivalries"] == [], "no rivalry history before any final game")
@@ -183,26 +183,48 @@ def main() -> None:
 
         # Ranking order and tie-break keys.
         order = st["standings"]
-        keys = [(-r["series_wins"], r["series_losses"], -r["daily_wins"], -r["goal_diff"], -r["goals_for"]) for r in order]
+        keys = [(-r["series_wins"], r["series_losses"], -r["goal_diff"]) for r in order]
         check(keys == sorted(keys), "rows are ordered by the published tie-break keys")
-        for prev, cur, pk, ck in zip(order, order[1:], keys, keys[1:]):
-            check((pk == ck) == (prev["rank"] == cur["rank"]) or cur["rank"] > prev["rank"] or pk == ck,
-                  "equal keys share a rank; otherwise rank increases")
         check(order[0]["rank"] == 1 and all(a["rank"] <= b["rank"] for a, b in zip(order, order[1:])), "ranks never decrease")
+        check(all("h2h_wins" in r for r in order), "head-to-head wins are exposed")
 
-        # Tie-break layering on a synthetic standing set (pure function).
+        # Tie-break layering on synthetic results (pure function): W-L, goal diff, h2h, goals for.
         from fantasy_sports.platform.series_standings import GameRecord, SeriesRecord, compute_standings
         d = datetime.date(2026, 1, 1)
-        s1, s2 = SeriesRecord(1, 1, 2, d, 5), SeriesRecord(2, 3, 4, d, 5)
+
+        def one(sid, home, away, hs, as_, days=1):
+            return SeriesRecord(sid, home, away, d, days), GameRecord(sid, d, home, away, hs, as_, True)
+
+        # Goals for: teams 1 and 3 both win 1-0 in series with equal goal diff (+7), but 3 scores more.
+        s1 = SeriesRecord(1, 1, 2, d, 5)
+        s2 = SeriesRecord(2, 3, 4, d, 5)
         gs = []
-        for i in range(5):  # series 1: team 1 wins 3-2; series 2: team 3 wins 3-2; goals differ
+        for i in range(5):
             day = d + datetime.timedelta(days=i)
-            gs.append(GameRecord(1, day, 1, 2, 3 if i < 3 else 0, 0 if i < 3 else 1, True))
-            gs.append(GameRecord(2, day, 3, 4, 2 if i < 3 else 0, 1 if i < 3 else 1, True))
+            win = i < 3
+            gs.append(GameRecord(1, day, 1, 2, 3 if win else 0, 0 if win else 1, True))
+            gs.append(GameRecord(2, day, 3, 4, 4 if win else 0, 1 if win else 1, True))
         tab = compute_standings([1, 2, 3, 4], [s1, s2], gs)
-        check([r.team_id for r in tab] == [1, 3, 4, 2] or [r.team_id for r in tab] == [1, 3, 2, 4],
-              "series winners rank above series losers; goal differential then orders the winners")
-        check(tab[0].team_id == 1 and tab[0].goal_diff > tab[1].goal_diff, "goal differential breaks a series-and-daily tie")
+        check([r.team_id for r in tab] == [3, 1, 4, 2] and tab[0].goal_diff == tab[1].goal_diff == 7,
+              "equal W-L and goal diff fall through to goals for")
+        check(len({r.rank for r in tab}) == 4, "goals for separates the ranks")
+
+        # Head-to-head: teams 1 and 2 are 1-1 with equal goal diff and goals for; 1 beat 2.
+        r1, g1 = one(1, 1, 2, 2, 1)  # 1 beats 2
+        r2, g2 = one(2, 3, 1, 2, 1)  # 3 beats 1
+        r3, g3 = one(3, 2, 4, 2, 1)  # 2 beats 4
+        tab = compute_standings([1, 2, 3, 4], [r1, r2, r3], [g1, g2, g3])
+        by = {r.team_id: r for r in tab}
+        check(by[1].goal_diff == by[2].goal_diff == 0 and by[1].goals_for == by[2].goals_for == 3,
+              "teams 1 and 2 are level on W-L, goal diff and goals for")
+        check([r.team_id for r in tab] == [3, 1, 2, 4] and by[1].h2h_wins == 1 and by[2].h2h_wins == 0
+              and by[1].rank == 2 and by[2].rank == 3, "head-to-head series victory breaks the tie")
+        # Fully level teams share a rank; team id only orders them.
+        t1, h1 = one(1, 1, 2, 1, 0)
+        t2, h2 = one(2, 3, 4, 1, 0)
+        tab = compute_standings([1, 2, 3, 4], [t1, t2], [h1, h2])
+        check([r.team_id for r in tab][:2] == [1, 3] and tab[0].rank == tab[1].rank == 1 and tab[2].rank == 3,
+              "fully level teams share a rank, ordered by team id")
 
         # Repeat reads are identical, and the data endpoint doesn't write.
         check(client.get(f"{base}/series-standings").json() == st, "repeat standings reads are identical")

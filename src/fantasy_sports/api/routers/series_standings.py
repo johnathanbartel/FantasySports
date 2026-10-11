@@ -38,7 +38,7 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
         SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], series_wins=r.series_wins,
                           series_losses=r.series_losses, series_ties=r.series_ties, daily_wins=r.daily_wins,
                           daily_losses=r.daily_losses, daily_ties=r.daily_ties, goals_for=r.goals_for,
-                          goals_against=r.goals_against, goal_diff=r.goal_diff) for r in rows])
+                          goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins) for r in rows])
 
 
 def _rivalry_out(league_id: int, p: series_standings.PairRecord) -> RivalryOut:

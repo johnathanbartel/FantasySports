@@ -8,8 +8,10 @@ Rules:
   * Only FINAL daily games count. A game with equal scores is a daily tie (neither W nor L).
   * A series is decided only when every one of its games is FINAL (and, with as_of, dated on or before it).
     More daily wins than the opponent = series win for that side; equal daily wins = series tie.
-  * Ranking (best first): series wins desc, series losses asc, daily wins desc, goal differential desc,
-    goals for desc, team id asc. Teams equal on every key except team id share a rank (id only orders them).
+  * Ranking (best first): series W-L record (series wins desc, then series losses asc), goal differential
+    desc, head-to-head series victories desc, goals for desc, goals against asc, team id asc. Head-to-head
+    victories count only series won against the other teams tied on the earlier keys. Teams equal on every
+    key except team id share a rank (id only orders them).
   * Rivalry pairs are keyed (league_id, low team id, high team id). Team ids are league-scoped, so two
     seasons/leagues never collide; a cross-season franchise key does not exist in the schema yet.
 """
@@ -21,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.db.models.core import LeagueSeries, SeriesDailyGame, Team
 
-RANK_KEYS = "series_wins desc, series_losses asc, daily_wins desc, goal_diff desc, goals_for desc, team_id asc"
+RANK_KEYS = "series_wins desc, series_losses asc, goal_diff desc, h2h_wins desc, goals_for desc, goals_against asc, team_id asc"
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,7 @@ class TeamStanding:
     daily_ties: int = 0
     goals_for: int = 0
     goals_against: int = 0
+    h2h_wins: int = 0  # series won against the other teams tied with this one on W-L and goal differential
     rank: int = 0
 
     @property
@@ -62,7 +65,7 @@ class TeamStanding:
         return self.goals_for - self.goals_against
 
     def sort_key(self) -> tuple:
-        return (-self.series_wins, self.series_losses, -self.daily_wins, -self.goal_diff, -self.goals_for)
+        return (-self.series_wins, self.series_losses, -self.goal_diff, -self.h2h_wins, -self.goals_for, self.goals_against)
 
 
 @dataclass
@@ -146,6 +149,7 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
             else:
                 r.daily_ties += 1
     decided = decided_series(series, games, as_of)
+    series_results: list[tuple[int, int]] = []  # (winner, loser)
     for s in series:
         result = decided.get(s.series_id)
         if result is None:
@@ -158,10 +162,19 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
                     r.series_ties += 1
         else:
             win, lose = (ra, rb) if a > b else (rb, ra)
+            series_results.append((win.team_id if win else None, lose.team_id if lose else None))
             if win:
                 win.series_wins += 1
             if lose:
                 lose.series_losses += 1
+    buckets: dict[tuple, list[TeamStanding]] = {}
+    for r in rows.values():
+        buckets.setdefault((-r.series_wins, r.series_losses, -r.goal_diff), []).append(r)
+    for members in buckets.values():
+        ids = {m.team_id for m in members}
+        for w, l in series_results:
+            if w in ids and l in ids:
+                rows[w].h2h_wins += 1
     ordered = sorted(rows.values(), key=lambda r: (*r.sort_key(), r.team_id))
     prev_key, prev_rank = None, 0
     for i, r in enumerate(ordered, start=1):

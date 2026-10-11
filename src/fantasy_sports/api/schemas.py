@@ -430,6 +430,7 @@ class SeriesStandingOut(BaseModel):
     goals_for: int
     goals_against: int
     goal_diff: int
+    h2h_wins: int
 
 
 class SeriesStandingsOut(BaseModel):
