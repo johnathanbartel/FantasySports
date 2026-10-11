@@ -176,6 +176,7 @@ async function renderHome() {
             ${ov.draft_type === 'snake' ? `<a href="/static/draft-board.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Draft board</a>`
               : `<a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>`}
             <a href="/static/lineup.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Lineup</a>
+            ${(ov.universe_codes || []).includes('nhl') ? `<a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Schedule &amp; lineup (series)</a>` : ''}
             ${isCommissioner ? `<a href="/static/commissioner.html?league_id=${LEAGUE_ID}">Commissioner mode</a>` : ''}
           </div>
         </div>
