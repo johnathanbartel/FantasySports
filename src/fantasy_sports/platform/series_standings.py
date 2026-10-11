@@ -5,13 +5,15 @@ Everything here is derived on read from series_daily_games; no totals are stored
 drift. league_series.team_a_wins/team_b_wins are NOT consulted.
 
 Rules:
-  * Only FINAL daily games count. A game with equal scores is a daily tie (neither W nor L).
-  * A series is decided only when every one of its games is FINAL (and, with as_of, dated on or before it).
-    More daily wins than the opponent = series win for that side; equal daily wins = series tie.
-  * Ranking (best first): series W-L record (series wins desc, then series losses asc), goal differential
-    desc, head-to-head series victories desc, goals for desc, goals against asc, team id asc. Head-to-head
-    victories count only series won against the other teams tied on the earlier keys. Teams equal on every
-    key except team id share a rank (id only orders them).
+  * Every day is an individual game. Regular-season standings count daily games only; who wins a multi-day
+    series does not matter until the playoffs, so series results never enter the standings.
+  * Only FINAL daily games count. A game with equal scores is a tie (neither W nor L).
+  * Ranking (best first): W-L record (wins desc, then losses asc), goal differential desc, head-to-head
+    victories desc, goals for desc, goals against asc, team id asc. Head-to-head victories are daily wins
+    over the other teams tied on W-L and goal differential. Teams equal on every key except team id share a
+    rank (id only orders them).
+  * Series results are still derived for rivalry history (a series is decided when all its games are FINAL
+    and the side with more daily wins takes it; equal wins is a tie) but are informational only.
   * Rivalry pairs are keyed (league_id, low team id, high team id). Team ids are league-scoped, so two
     seasons/leagues never collide; a cross-season franchise key does not exist in the schema yet.
 """
@@ -23,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.db.models.core import LeagueSeries, SeriesDailyGame, Team
 
-RANK_KEYS = "series_wins desc, series_losses asc, goal_diff desc, h2h_wins desc, goals_for desc, goals_against asc, team_id asc"
+RANK_KEYS = "wins desc, losses asc, goal_diff desc, h2h_wins desc, goals_for desc, goals_against asc, team_id asc"
 
 
 @dataclass(frozen=True)
@@ -49,15 +51,12 @@ class SeriesRecord:
 @dataclass
 class TeamStanding:
     team_id: int
-    series_wins: int = 0
-    series_losses: int = 0
-    series_ties: int = 0
-    daily_wins: int = 0
-    daily_losses: int = 0
-    daily_ties: int = 0
+    wins: int = 0
+    losses: int = 0
+    ties: int = 0
     goals_for: int = 0
     goals_against: int = 0
-    h2h_wins: int = 0  # series won against the other teams tied with this one on W-L and goal differential
+    h2h_wins: int = 0  # wins over the other teams tied with this one on W-L and goal differential
     rank: int = 0
 
     @property
@@ -65,7 +64,7 @@ class TeamStanding:
         return self.goals_for - self.goals_against
 
     def sort_key(self) -> tuple:
-        return (-self.series_wins, self.series_losses, -self.goal_diff, -self.h2h_wins, -self.goals_for, self.goals_against)
+        return (-self.wins, self.losses, -self.goal_diff, -self.h2h_wins, -self.goals_for, self.goals_against)
 
 
 @dataclass
@@ -135,6 +134,7 @@ def _winner(g: GameRecord) -> int | None:
 def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: list[GameRecord],
                       as_of: datetime.date | None = None) -> list[TeamStanding]:
     rows = {t: TeamStanding(t) for t in team_ids}
+    results: list[tuple[int, int]] = []  # (winner, loser) per decided game
     for g in _counted(games, as_of):
         for tid, gf, ga in ((g.home_team_id, g.home_score, g.away_score), (g.away_team_id, g.away_score, g.home_score)):
             r = rows.get(tid)
@@ -143,36 +143,22 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
             r.goals_for += gf
             r.goals_against += ga
             if gf > ga:
-                r.daily_wins += 1
+                r.wins += 1
             elif gf < ga:
-                r.daily_losses += 1
+                r.losses += 1
             else:
-                r.daily_ties += 1
-    decided = decided_series(series, games, as_of)
-    series_results: list[tuple[int, int]] = []  # (winner, loser)
-    for s in series:
-        result = decided.get(s.series_id)
-        if result is None:
-            continue
-        a, b = result
-        ra, rb = rows.get(s.team_a_id), rows.get(s.team_b_id)
-        if a == b:
-            for r in (ra, rb):
-                if r:
-                    r.series_ties += 1
-        else:
-            win, lose = (ra, rb) if a > b else (rb, ra)
-            series_results.append((win.team_id if win else None, lose.team_id if lose else None))
-            if win:
-                win.series_wins += 1
-            if lose:
-                lose.series_losses += 1
+                r.ties += 1
+        w = _winner(g)
+        if w is not None:
+            results.append((w, g.away_team_id if w == g.home_team_id else g.home_team_id))
     buckets: dict[tuple, list[TeamStanding]] = {}
     for r in rows.values():
-        buckets.setdefault((-r.series_wins, r.series_losses, -r.goal_diff), []).append(r)
+        buckets.setdefault((r.wins, r.losses, r.goal_diff), []).append(r)
     for members in buckets.values():
         ids = {m.team_id for m in members}
-        for w, l in series_results:
+        if len(ids) < 2:
+            continue
+        for w, l in results:
             if w in ids and l in ids:
                 rows[w].h2h_wins += 1
     ordered = sorted(rows.values(), key=lambda r: (*r.sort_key(), r.team_id))

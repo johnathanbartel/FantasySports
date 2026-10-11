@@ -35,9 +35,8 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
     rows = series_standings.compute_standings(team_ids, series, games, as_of)
     return SeriesStandingsOut(league_id=league_id, as_of=as_of, tiebreak_order=series_standings.RANK_KEYS, standings=[
-        SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], series_wins=r.series_wins,
-                          series_losses=r.series_losses, series_ties=r.series_ties, daily_wins=r.daily_wins,
-                          daily_losses=r.daily_losses, daily_ties=r.daily_ties, goals_for=r.goals_for,
+        SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], wins=r.wins, losses=r.losses,
+                          ties=r.ties, goals_for=r.goals_for,
                           goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins) for r in rows])
 
 

@@ -421,12 +421,9 @@ class SeriesStandingOut(BaseModel):
     rank: int
     team_id: int
     team_name: str
-    series_wins: int
-    series_losses: int
-    series_ties: int
-    daily_wins: int
-    daily_losses: int
-    daily_ties: int
+    wins: int
+    losses: int
+    ties: int
     goals_for: int
     goals_against: int
     goal_diff: int

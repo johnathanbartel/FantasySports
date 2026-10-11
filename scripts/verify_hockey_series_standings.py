@@ -31,32 +31,19 @@ def check(condition: bool, message: str) -> None:
     print(f"ok  {message}")
 
 
-def brute_standings(games: list[dict], series: list[dict], teams: list[int]) -> dict[int, dict]:
-    """Independent tally from plain dicts: final games only; a series counts only when all its games are final."""
-    t = {i: dict(sw=0, sl=0, st=0, dw=0, dl=0, dt=0, gf=0, ga=0) for i in teams}
-    wins = defaultdict(lambda: defaultdict(int))
-    final_count = defaultdict(int)
+def brute_standings(games: list[dict], teams: list[int]) -> dict[int, dict]:
+    """Independent tally from plain dicts: final games only, each day its own game. Series never count."""
+    t = {i: dict(w=0, l=0, t=0, gf=0, ga=0) for i in teams}
     for g in games:
         if g["status"] != "FINAL":
             continue
-        final_count[g["series_id"]] += 1
         h, a, hs, as_ = g["home"], g["away"], g["hs"], g["as"]
         t[h]["gf"] += hs; t[h]["ga"] += as_; t[a]["gf"] += as_; t[a]["ga"] += hs
         if hs == as_:
-            t[h]["dt"] += 1; t[a]["dt"] += 1
+            t[h]["t"] += 1; t[a]["t"] += 1
         else:
             w, l = (h, a) if hs > as_ else (a, h)
-            t[w]["dw"] += 1; t[l]["dl"] += 1
-            wins[g["series_id"]][w] += 1
-    for s in series:
-        if final_count[s["id"]] != s["days"]:
-            continue
-        wa, wb = wins[s["id"]][s["a"]], wins[s["id"]][s["b"]]
-        if wa == wb:
-            t[s["a"]]["st"] += 1; t[s["b"]]["st"] += 1
-        else:
-            w, l = (s["a"], s["b"]) if wa > wb else (s["b"], s["a"])
-            t[w]["sw"] += 1; t[l]["sl"] += 1
+            t[w]["w"] += 1; t[l]["l"] += 1
     return t
 
 
@@ -128,8 +115,8 @@ def main() -> None:
 
         # Opening state: nothing final -> all zeros, one shared rank, no rivalry history.
         st = client.get(f"{base}/series-standings").json()
-        check(st["tiebreak_order"].startswith("series_wins desc, series_losses asc, goal_diff desc, h2h_wins desc"), "tie-break order is published")
-        check(all(r["rank"] == 1 and r["series_wins"] == 0 and r["goal_diff"] == 0 for r in st["standings"]),
+        check(st["tiebreak_order"].startswith("wins desc, losses asc, goal_diff desc, h2h_wins desc"), "tie-break order is published")
+        check(all(r["rank"] == 1 and r["wins"] == 0 and r["goal_diff"] == 0 for r in st["standings"]),
               "opening standings: all zero, shared rank 1")
         check(client.get(f"{base}/rivalries").json()["rivalries"] == [], "no rivalry history before any final game")
         check(client.get(f"/leagues/{lid['football']}/series-standings").status_code == 400, "non-NHL league rejected")
@@ -165,30 +152,29 @@ def main() -> None:
             db.commit()
 
         steams, sseries, sgames = load(lid["small"])
-        expected = brute_standings(sgames, sseries, steams)
+        expected = brute_standings(sgames, steams)
         st = client.get(f"{base}/series-standings").json()
         got = {r["team_id"]: r for r in st["standings"]}
         for tid, e in expected.items():
             r = got[tid]
-            check((r["series_wins"], r["series_losses"], r["series_ties"], r["daily_wins"], r["daily_losses"], r["daily_ties"],
-                   r["goals_for"], r["goals_against"]) == (e["sw"], e["sl"], e["st"], e["dw"], e["dl"], e["dt"], e["gf"], e["ga"]),
-                  f"team {tid}: standings tie out to the brute-force tally")
-        check(sum(r["series_ties"] for r in got.values()) >= 2, "a tied series (2-2 plus a daily tie) is a series tie for both teams")
-        check(sum(r["daily_ties"] for r in got.values()) >= 2, "equal-score games are daily ties")
+            check((r["wins"], r["losses"], r["ties"], r["goals_for"], r["goals_against"]) ==
+                  (e["w"], e["l"], e["t"], e["gf"], e["ga"]), f"team {tid}: standings tie out to the brute-force daily tally")
+        check(not any(k.startswith("series") for k in st["standings"][0]), "standings carry no series wins/losses")
+        check(sum(r["ties"] for r in got.values()) >= 2, "equal-score games are ties, not W or L")
         check(sum(r["goals_for"] for r in got.values()) == sum(r["goals_against"] for r in got.values()),
               "league goals for equal goals against")
         incomplete = [g for g in sgames if g["status"] != "FINAL"]
-        check(len(incomplete) > 0 and all(r["daily_wins"] + r["daily_losses"] + r["daily_ties"] <= 15 for r in got.values()),
+        check(len(incomplete) > 0 and all(r["wins"] + r["losses"] + r["ties"] <= 15 for r in got.values()),
               "non-final games are excluded from the tallies")
 
         # Ranking order and tie-break keys.
         order = st["standings"]
-        keys = [(-r["series_wins"], r["series_losses"], -r["goal_diff"]) for r in order]
+        keys = [(-r["wins"], r["losses"], -r["goal_diff"]) for r in order]
         check(keys == sorted(keys), "rows are ordered by the published tie-break keys")
         check(order[0]["rank"] == 1 and all(a["rank"] <= b["rank"] for a, b in zip(order, order[1:])), "ranks never decrease")
         check(all("h2h_wins" in r for r in order), "head-to-head wins are exposed")
 
-        # Tie-break layering on synthetic results (pure function): W-L, goal diff, h2h, goals for.
+        # Tie-break layering on synthetic daily results (pure function): W-L, goal diff, h2h, goals for.
         from fantasy_sports.platform.series_standings import GameRecord, SeriesRecord, compute_standings
         d = datetime.date(2026, 1, 1)
 
@@ -218,7 +204,7 @@ def main() -> None:
         check(by[1].goal_diff == by[2].goal_diff == 0 and by[1].goals_for == by[2].goals_for == 3,
               "teams 1 and 2 are level on W-L, goal diff and goals for")
         check([r.team_id for r in tab] == [3, 1, 2, 4] and by[1].h2h_wins == 1 and by[2].h2h_wins == 0
-              and by[1].rank == 2 and by[2].rank == 3, "head-to-head series victory breaks the tie")
+              and by[1].rank == 2 and by[2].rank == 3, "head-to-head win breaks the tie")
         # Fully level teams share a rank; team id only orders them.
         t1, h1 = one(1, 1, 2, 1, 0)
         t2, h2 = one(2, 3, 4, 1, 0)
@@ -229,10 +215,8 @@ def main() -> None:
         # Repeat reads are identical, and the data endpoint doesn't write.
         check(client.get(f"{base}/series-standings").json() == st, "repeat standings reads are identical")
         as_of = client.get(f"{base}/series-standings", params={"as_of": first_cycle[1].isoformat()}).json()
-        check(sum(r["daily_wins"] + r["daily_losses"] + r["daily_ties"] for r in as_of["standings"]) == 2 * 2 * 2,
+        check(sum(r["wins"] + r["losses"] + r["ties"] for r in as_of["standings"]) == 2 * 2 * 2,
               "as_of limits the tally to games on or before that date (2 days x 2 games x 2 teams)")
-        check(all(r["series_wins"] + r["series_losses"] + r["series_ties"] == 0 for r in as_of["standings"]),
-              "no series is decided by as_of before its last game")
 
         # Rivalry history.
         riv = client.get(f"{base}/rivalries").json()["rivalries"]
@@ -313,10 +297,10 @@ def main() -> None:
                     g.home_score, g.away_score, g.status = rng.randint(0, 6), rng.randint(0, 6), "FINAL"
             db.commit()
         bteams, bseries, bgames = load(lid["big"])
-        bexp = brute_standings(bgames, bseries, bteams)
+        bexp = brute_standings(bgames, bteams)
         bst = client.get(f"/leagues/{lid['big']}/series-standings").json()["standings"]
-        check(all((r["series_wins"], r["series_losses"], r["series_ties"], r["daily_wins"], r["goal_diff"]) ==
-                  (bexp[r["team_id"]]["sw"], bexp[r["team_id"]]["sl"], bexp[r["team_id"]]["st"], bexp[r["team_id"]]["dw"],
+        check(all((r["wins"], r["losses"], r["ties"], r["goal_diff"]) ==
+                  (bexp[r["team_id"]]["w"], bexp[r["team_id"]]["l"], bexp[r["team_id"]]["t"],
                    bexp[r["team_id"]]["gf"] - bexp[r["team_id"]]["ga"]) for r in bst),
               "12-team standings tie out to the brute-force tally")
         bsc = client.get(f"/leagues/{lid['big']}/game-scores").json()["games"]

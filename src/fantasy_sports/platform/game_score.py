@@ -9,8 +9,10 @@ games are final the rating never changes, so repeat reads agree.
 Components, each in [0, 1] (A and B are the two teams; groups are conferences, or the whole league if
 teams have none):
 
-  margin    1 / (1 + |series wins A - series wins B|)            closer in the standings -> higher
-  cutoff    mean over A, B of 1 / (1 + |series wins - line|)     nearer the playoff line -> higher
+  margin    1 / (1 + |wins A - wins B| / L)                      closer in the standings -> higher
+  cutoff    mean over A, B of 1 / (1 + |wins - line| / L)        nearer the playoff line -> higher
+            wins are daily-game wins (every day is its own game); L = series length in days, so a gap of
+            one series' worth of games halves the component
             line = midpoint of the last team in and first team out (top max(1, size // 2) make it);
             0 when there is no race (everyone qualifies)
   rivalry   n / (n + RIVALRY_HALF_LIFE) * (1 - |w_A - w_B| / n)   n = prior head-to-head daily games, w = daily
@@ -57,7 +59,7 @@ def _cutoff_line(group: list[TeamStanding]) -> float | None:
     spots = max(1, len(group) // 2)
     if spots >= len(group):
         return None
-    return (group[spots - 1].series_wins + group[spots].series_wins) / 2
+    return (group[spots - 1].wins + group[spots].wins) / 2
 
 
 def rivalry_intensity(pair: PairRecord | None) -> float:
@@ -81,6 +83,7 @@ def rate_league(team_ids: list[int], series: list[SeriesRecord], games: list[Gam
     total = len(round_starts)
     cache: dict[datetime.date, tuple[dict, dict]] = {}
     out: dict[tuple[int, datetime.date], GameScore] = {}
+    unit = max((s.total_days for s in series), default=1)
     for g in (targets if targets is not None else games):
         s = series_by_id[g.series_id]
         as_of = as_of_override or g.calendar_date - datetime.timedelta(days=PUBLISH_LEAD_DAYS)
@@ -91,11 +94,11 @@ def rate_league(team_ids: list[int], series: list[SeriesRecord], games: list[Gam
                             {gid: (grp, _cutoff_line(grp)) for gid, grp in groups.items()}, compute_pair_records(series, games, as_of))
         by_team, group_info, pairs = cache[as_of]
         a, b = by_team[s.team_a_id], by_team[s.team_b_id]
-        margin = 1 / (1 + abs(a.series_wins - b.series_wins))
+        margin = 1 / (1 + abs(a.wins - b.wins) / unit)
         prox = []
         for st in (a, b):
             _, line = group_info[group_of.get(st.team_id)]
-            prox.append(0.0 if line is None else 1 / (1 + abs(st.series_wins - line)))
+            prox.append(0.0 if line is None else 1 / (1 + abs(st.wins - line) / unit))
         cutoff = sum(prox) / 2
         rivalry = rivalry_intensity(pairs.get((min(s.team_a_id, s.team_b_id), max(s.team_a_id, s.team_b_id))))
         remaining = sum(1 for d in round_starts if d > s.start_date)
