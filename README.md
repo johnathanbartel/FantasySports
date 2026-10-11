@@ -65,7 +65,8 @@ Production requires a persistent Postgres database. Add `DATABASE_URL` (or
 `POSTGRES_URL`) to the Vercel project for Production and Preview; the app
 intentionally refuses to use SQLite when `VERCEL` is set because function-local
 files are ephemeral. Before sending production traffic to a new database, run
-the migrations from a trusted workstation:
+the migrations from a trusted workstation. Do the same before deploying any change that adds a
+migration, or the deployed app returns 500s on the missing columns (deploys do not run migrations):
 
 ```powershell
 $env:DATABASE_URL = "<production-postgres-url>"
