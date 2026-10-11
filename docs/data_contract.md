@@ -154,3 +154,15 @@ Explicitly stubbed (endpoints exist and respond, but don't enforce yet — noted
 **New consequence worth resolving before lineup-legality validation gets built:** adding an 11th starter without shrinking `BENCH` (still `slot_count=10`) means the slot definitions now want 21 total roster spots (11 starters + 10 bench), while the roster itself is still 20 players (`draft_rounds` is unchanged at 20). Nothing breaks today since legality isn't enforced, but once it is, this needs a decision: shrink `BENCH` to 9, or grow the roster past 20.
 
 Out of scope per the original brief: salary-cap draft logic (field exists, unused), sim-recap animation data, Dual Universe crossover mechanics, baseball's locked-rotation tables.
+
+### NHL series schedule
+
+Routes (NHL leagues only; football weekly scheduling in `platform/schedule.py` is untouched):
+
+- `POST /leagues/{id}/series-schedule` - commissioner only. Body: `start_date` (required), `cycles` (1-4, default 1), `replace` (default false). Returns the full schedule.
+- `GET /leagues/{id}/series-schedule` - every series with its daily games, ordered by date.
+- `GET /teams/{id}/series-schedule` - that team's series in date order: opponent, series status, and per-day `calendar_date`, `home_away`, `status`, and `is_matchup_day`.
+
+Rules (`platform/series_schedule.py`): the league must contain the `nhl` universe and have an even team count of at least 2 (otherwise 400). Teams sorted by id are paired by the circle method, giving N-1 rounds per cycle; each round is one series of `series_length_days` (5, 7, or 10) consecutive dates and rounds run back to back, so every team has exactly one opponent per series and one game on every date. Extra cycles repeat the pairings with `team_a`/`team_b` swapped on odd cycles. `team_a` is home on days 1, 3, 5... and `team_b` on days 2, 4.... Every daily game is created `SCHEDULED` with `is_matchup_day=true`; real NHL slates are not consulted, so `is_matchup_day` is only the input a later step uses for off-day marking.
+
+Regeneration is replace-only: a second `POST` returns 400 unless `replace=true`, and even then returns 400 once any series is not `SCHEDULED` or any game is not `SCHEDULED` with a 0-0 score. Replacing deletes and recreates all rows, and identical inputs produce identical rows.

@@ -311,3 +311,62 @@ class MatchupOut(ORMModel):
     team_a_score: float | None
     team_b_score: float | None
     winner_team_id: int | None
+
+
+class SeriesScheduleCreateRequest(BaseModel):
+    start_date: datetime.date
+    cycles: int = 1
+    replace: bool = False
+
+
+class SeriesDailyGameOut(ORMModel):
+    id: int
+    series_id: int
+    calendar_date: datetime.date
+    is_matchup_day: bool
+    home_team_id: int
+    away_team_id: int
+    status: str
+
+
+class LeagueSeriesOut(ORMModel):
+    id: int
+    league_id: int
+    team_a_id: int
+    team_b_id: int
+    start_date: datetime.date
+    end_date: datetime.date
+    total_days: int
+    status: str
+    daily_games: list[SeriesDailyGameOut]
+
+
+class SeriesScheduleOut(BaseModel):
+    league_id: int
+    series_length_days: int
+    series: list[LeagueSeriesOut]
+
+
+class TeamSeriesGameOut(BaseModel):
+    daily_game_id: int
+    calendar_date: datetime.date
+    is_matchup_day: bool
+    home_away: str
+    status: str
+
+
+class TeamSeriesOut(BaseModel):
+    series_id: int
+    opponent_id: int
+    opponent_name: str
+    start_date: datetime.date
+    end_date: datetime.date
+    total_days: int
+    status: str
+    games: list[TeamSeriesGameOut]
+
+
+class TeamSeriesScheduleOut(BaseModel):
+    team_id: int
+    league_id: int
+    series: list[TeamSeriesOut]
