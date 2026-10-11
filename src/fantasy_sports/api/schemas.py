@@ -482,10 +482,21 @@ class GameScoresOut(BaseModel):
 
 # --- Progressive simulator (FS-025) -----------------------------------------
 
+class SimTeamOut(BaseModel):
+    id: int
+    name: str
+
+
 class SimStateOut(BaseModel):
-    """The viewer's scoreboard. Everything but the lifecycle fields is null while the viewer is behind the veil."""
+    """The viewer's scoreboard. Everything but the lifecycle and identity fields is null while the viewer is behind
+    the veil. Team names and the date are not spoilers."""
     contract_version: str
     daily_game_id: int
+    league_id: int | None = None
+    series_id: int | None = None
+    calendar_date: datetime.date | None = None
+    home_team: SimTeamOut | None = None
+    away_team: SimTeamOut | None = None
     published: bool
     status: str  # SCHEDULED / LIVE / FINAL
     veiled: bool

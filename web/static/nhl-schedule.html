@@ -319,10 +319,12 @@ function renderPanel() {
     ? `<h3 style="margin:0">${esc(t.label)} · off day</h3><p class="muted">${esc(team.name)} don't play on this day of the series.</p>`
     : `<h3 style="margin:0">${esc(t.label)} · ${esc(team.name)} ${t.homeAway === 'home' ? 'vs' : '@'} ${esc(t.opponent)}</h3>
        <p class="muted">${esc(statusLabel(t.status))} · ${t.homeAway === 'home' ? 'Home' : 'Away'}</p>`;
-  $('panel').innerHTML = `${head}
+  const open = !t.off && t.dailyGameId
+    ? `<p><a class="btn btn-primary" id="open-game" href="/static/nhl-game.html?daily_game_id=${t.dailyGameId}&league_id=${LEAGUE_ID}&team_id=${teamId}">Open game (watch or box score)</a></p>` : '';
+  $('panel').innerHTML = `${head}${open}
     <div class="panel-state" id="sim-not-ready">
-      <h3>Simulator not ready</h3>
-      <p class="muted" style="margin:0 auto;max-width:44ch">The game simulator hasn't shipped yet, so there is no period clock, scoreboard, shot count or play-by-play to show. Nothing on this panel is simulated or made up; scores and the ticker will appear here once games run.</p>
+      <h3>No score on this panel</h3>
+      <p class="muted" style="margin:0 auto;max-width:44ch">This panel never shows a score on its own. Open the game to watch it or jump to the box score; if no simulation has been published for the day, the game page says so. Nothing here is simulated or made up.</p>
     </div>`;
 }
 

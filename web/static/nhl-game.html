@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NHL Game</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .wrap{max-width:1080px;margin:0 auto;padding:var(--space-6) var(--space-4)}
+  .banner{display:none;padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)}
+  .banner.err{background:var(--color-accent-2-100);color:var(--color-accent-2-800)}
+  .banner.warn{background:#fff6dc;color:#5c4500}
+  .muted{color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+  .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .state-card{text-align:center;padding:var(--space-8) var(--space-4)}
+  .state-card h2{margin:0 0 var(--space-2)}
+  .state-card p{margin:0 auto var(--space-3);max-width:52ch}
+  .actions{display:flex;gap:var(--space-2);justify-content:center;flex-wrap:wrap;margin-top:var(--space-3)}
+  .why{display:block;font-size:12px;margin-top:4px}
+  .veil{background:repeating-linear-gradient(135deg,var(--color-surface),var(--color-surface) 12px,var(--color-neutral-100) 12px,var(--color-neutral-100) 24px)}
+
+  .board{display:grid;grid-template-columns:1fr auto 1fr;gap:var(--space-4);align-items:center;padding:var(--space-4)}
+  .team{min-width:0}
+  .team.home{text-align:right}
+  .team-name{font-family:var(--font-heading);font-size:20px;overflow-wrap:anywhere}
+  .team-shots{font-size:13px}
+  .score{font-family:var(--font-heading);font-size:64px;line-height:1;font-variant-numeric:tabular-nums}
+  .mid{text-align:center}
+  .clock{font-size:15px;font-weight:600}
+  .state-card .status-chip{align-self:center}
+  .status-chip{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--color-neutral-200);margin-bottom:6px}
+  .status-chip.live{background:#ffdede;color:#8a0010}
+  .status-chip.final{background:var(--color-accent-100);color:var(--color-accent-800)}
+  .periods{display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin:0 var(--space-4) var(--space-3)}
+  .seg{height:6px;background:var(--color-neutral-300);position:relative;overflow:hidden}
+  .seg>i{position:absolute;inset:0 auto 0 0;background:var(--color-accent);width:0}
+  .score.pop{animation:pop .5s ease-out}
+  @keyframes pop{0%{transform:scale(1.25)}100%{transform:scale(1)}}
+  @media (prefers-reduced-motion:reduce){.score.pop{animation:none}}
+  .reduced .score.pop{animation:none}
+
+  .cols{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:var(--space-6);align-items:start;margin-top:var(--space-4)}
+  .ticker{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:520px;overflow:auto}
+  .ev{display:grid;grid-template-columns:76px 1fr;gap:var(--space-2);padding:8px 10px;border-left:3px solid var(--color-divider);background:var(--color-bg)}
+  .ev .t{font-size:12px;font-variant-numeric:tabular-nums}
+  .ev.goal{border-left-color:var(--color-accent);background:var(--color-accent-100)}
+  .ev.goal.away{border-left-color:var(--color-accent-2);background:var(--color-accent-2-100)}
+  .ev.boundary{opacity:.75;font-style:italic}
+  .controls{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center;margin:var(--space-3) 0}
+  .progress{height:6px;background:var(--color-neutral-300);margin:0 0 var(--space-2)}
+  .progress>i{display:block;height:100%;background:var(--color-accent);width:0}
+  .tbl-wrap{overflow-x:auto}
+  .table td.num,.table th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .neg{color:var(--color-accent-2-700)}
+  details.prov{margin-top:var(--space-4)}
+  details.prov summary{cursor:pointer;font-weight:600}
+  .toggle{display:flex;gap:6px;align-items:center;font-size:13px}
+  button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,#board-h:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
+  @media (max-width:720px){
+    .wrap{padding:var(--space-4) 16px}
+    .board{grid-template-columns:1fr 1fr;grid-template-areas:"mid mid" "away home"}
+    .team.away{grid-area:away}
+    .team.home{grid-area:home}
+    .mid{grid-area:mid}
+    .score{font-size:48px}
+    .cols{grid-template-columns:1fr}
+    .nav{flex-wrap:wrap;gap:var(--space-2)}
+  }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+  <div class="nav">
+    <span class="nav-brand" id="nav-brand">NHL</span>
+    <div style="display:flex;gap:var(--space-4);flex-wrap:wrap">
+      <a href="/static/index.html">Home</a>
+      <a href="#" id="nav-league">League home</a>
+      <a href="#" id="nav-schedule">Schedule &amp; lineup</a>
+      <a href="#" aria-current="page">Game</a>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <div class="card-kicker" id="kicker">&nbsp;</div>
+    <h1 id="title" style="margin:0 0 var(--space-4)">Game</h1>
+
+    <div id="error-banner" class="banner err" role="alert"></div>
+    <div id="conn-banner" class="banner warn" role="status" aria-live="polite"></div>
+    <div id="announce" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="screen" aria-live="off">
+      <div class="state-card card"><p class="muted">Loading game…</p></div>
+    </div>
+  </main>
+</div>
+
+<script src="/static/session.js"></script>
+<script src="/static/nhl-game-logic.js"></script>
+<script>
+const G = window.NhlGame;
+const params = new URLSearchParams(location.search);
+const GAME_ID = Number(params.get('daily_game_id'));
+const api = FSC.api;
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const base = `/simulator/games/${GAME_ID}`;
+
+let state = null, events = [], finalSnap = null;
+let failures = 0, pollTimer = null, stateTimer = null;
+let replay = {idx: 0, timeline: [], timer: null, playing: false, shown: 0};
+let reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let busy = false, token = 0;   // token invalidates timers from a previous screen
+
+function showError(msg) { const el = $('error-banner'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+function showConn(msg) { const el = $('conn-banner'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+function announce(msg) { $('announce').textContent = ''; setTimeout(() => { $('announce').textContent = msg; }, 30); }
+function stopTimers() { token++; clearTimeout(pollTimer); clearTimeout(stateTimer); clearTimeout(replay.timer); replay.playing = false; }
+
+function names() {
+  return {home: state && state.home_team ? state.home_team.name : 'Home', away: state && state.away_team ? state.away_team.name : 'Away'};
+}
+
+function setHeader() {
+  const n = names();
+  $('title').textContent = `${n.away} at ${n.home}`;
+  document.title = `${n.away} at ${n.home} · NHL`;
+  $('kicker').textContent = state && state.calendar_date ? `NHL · ${state.calendar_date}` : 'NHL';
+  if (state && state.league_id) {
+    $('nav-league').href = `/static/league.html?league_id=${state.league_id}`;
+    $('nav-schedule').href = `/static/nhl-schedule.html?league_id=${state.league_id}${params.get('team_id') ? '&team_id=' + params.get('team_id') : ''}`;
+    $('nav-brand').textContent = 'NHL league';
+  }
+}
+
+function errorPanel(err) {
+  const d = G.describeError(err);
+  const actions = {
+    signin: '<a class="btn btn-primary" href="/static/index.html">Sign in</a>',
+    back: '<a class="btn btn-secondary" href="/static/index.html">Back home</a>',
+    retry: '<button class="btn btn-primary" id="retry" type="button">Try again</button>',
+    none: '',
+  }[d.action];
+  $('screen').innerHTML = `<div class="state-card card"><h2>${esc(d.title)}</h2><p class="muted">${esc(d.detail)}</p><div class="actions">${actions}</div></div>`;
+  const r = $('retry'); if (r) r.onclick = () => load();
+}
+
+// ---------- rendering ----------
+function chip(status) {
+  const cls = status === 'LIVE' ? 'live' : status === 'FINAL' ? 'final' : '';
+  const label = {LIVE: 'Live', FINAL: 'Final', REPLAY: 'Replay'}[status] || 'Scheduled';
+  return `<span class="status-chip ${cls}">${label}</span>`;
+}
+
+function segsHtml(cur, frac) {
+  return [1, 2, 3].map(p => {
+    const w = cur > p ? 100 : cur === p ? Math.round(frac * 100) : 0;
+    return `<div class="seg" title="Period ${p}"><i style="width:${w}%"></i></div>`;
+  }).join('');
+}
+
+// Update the scoreboard in place (keeps keyboard focus on the controls while the game moves).
+function patchBoard(b, clock, frac) {
+  const n = names();
+  const set = (id, text) => { const el = $(id); if (el && el.textContent !== String(text)) el.textContent = text; };
+  set('sc-home', b.home_score); set('sc-away', b.away_score);
+  $('sc-home').setAttribute('aria-label', `${n.home} ${b.home_score}`); $('sc-away').setAttribute('aria-label', `${n.away} ${b.away_score}`);
+  set('sh-home', `Shots ${b.home_shots}`); set('sh-away', `Shots ${b.away_shots}`); set('clock', clock);
+  $('periods').innerHTML = segsHtml(b.period || 0, frac);
+}
+
+function boardHtml(b, st, opts) {
+  const n = names();
+  const label = opts.clock || '—';
+  const cur = b.period || 0, frac = opts.fraction == null ? 0 : opts.fraction;
+  const segs = segsHtml(cur, frac);
+  return `<section class="card elev-sm" aria-labelledby="board-h">
+    <h2 id="board-h" class="sr-only" tabindex="-1">Scoreboard</h2>
+    <div class="board" role="group" aria-label="Scoreboard">
+      <div class="team away"><div class="team-name">${esc(n.away)}</div><div class="team-shots muted" id="sh-away">Shots ${b.away_shots}</div></div>
+      <div class="mid">${chip(st.status)}<div style="display:flex;gap:var(--space-4);align-items:center;justify-content:center">
+        <span class="score" id="sc-away" aria-label="${esc(n.away)} ${b.away_score}">${b.away_score}</span><span class="muted">–</span>
+        <span class="score" id="sc-home" aria-label="${esc(n.home)} ${b.home_score}">${b.home_score}</span></div>
+        <div class="clock" id="clock">${esc(label)}</div></div>
+      <div class="team home"><div class="team-name">${esc(n.home)}</div><div class="team-shots muted" id="sh-home">Shots ${b.home_shots}</div></div>
+    </div>
+    <div class="periods" id="periods" aria-hidden="true">${segs}</div>
+  </section>`;
+}
+
+function evHtml(e) {
+  const n = names();
+  const side = e.team_side === 'away' ? ' away' : '';
+  const cls = e.kind === 'score' ? ' goal' : (e.kind.startsWith('period') || e.kind === 'game_end') ? ' boundary' : '';
+  const sec = Math.max(0, (state.period_seconds || 1200) - ((e.game_second - (e.period - 1) * (state.period_seconds || 1200))));
+  const t = `P${e.period} ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  const who = e.team_side ? ` <span class="muted">(${esc(n[e.team_side])})</span>` : '';
+  return `<li class="ev${cls}${side}"><span class="t muted">${t}</span><span>${esc(e.headline)}${e.kind === 'score' ? who : ''}</span></li>`;
+}
+
+function tickerHtml(list) {
+  if (!list.length) return '<p class="muted" style="margin:0">Nothing has happened yet.</p>';
+  return `<ol class="ticker" aria-label="Play-by-play, newest first">${list.slice().reverse().map(evHtml).join('')}</ol>`;
+}
+
+function stateFraction(st, board) {
+  const left = st.status === 'LIVE' && st.seconds_remaining != null ? st.seconds_remaining : board.secondsRemaining;
+  if (left == null) return 0;
+  return 1 - left / (st.period_seconds || 1200);
+}
+
+function shape() { return {periods: state.periods, period_seconds: state.period_seconds}; }
+
+function veilScreen(screen) {
+  const ctl = G.controlsFor(screen, state);
+  const live = screen === 'live-veiled';
+  $('screen').innerHTML = `<div class="state-card card veil elev-sm">
+    ${chip(state.status)}
+    <h2>${live ? 'This game is being played now' : 'The result is hidden'}</h2>
+    <p>${live ? 'Scores, shots and plays stay hidden until you choose to watch.' : 'Nobody sees the score until they choose. Watch a short replay, or jump straight to the box score.'}</p>
+    <div class="actions">${ctl.map(c => `<span><button type="button" class="btn ${c.id === 'watch' ? 'btn-primary' : 'btn-secondary'}" data-act="${c.id}" ${c.enabled ? '' : 'disabled aria-disabled="true" aria-describedby="why-' + c.id + '"'}>${esc(c.label)}</button>${c.enabled ? '' : `<span class="why muted" id="why-${c.id}">${esc(c.why)}</span>`}</span>`).join('')}</div>
+  </div>`;
+  bindActions();
+  if (live) schedulePollState();
+}
+
+function bindActions() {
+  document.querySelectorAll('[data-act]').forEach(b => {
+    b.onclick = () => act(b.dataset.act);
+  });
+}
+
+async function act(name) {
+  if (busy) return;           // double-click / double-tap guard
+  busy = true;
+  showError('');
+  try {
+    if (name === 'watch') { state = await FSC.post(`${base}/watch`); }
+    else if (name === 'skip') { state = await FSC.post(`${base}/skip`); }
+    else if (name === 'play') { startReplay(); busy = false; return; }
+    else if (name === 'pause') { pauseReplay(); busy = false; return; }
+    else if (name === 'step') { stepReplay(); busy = false; return; }
+    else if (name === 'reveal') { await revealAll(); busy = false; return; }
+    stopTimers();
+    await enter();
+  } catch (e) { errorBanner(e); }
+  busy = false;
+}
+
+function errorBanner(e) { const d = G.describeError(e); showError(`${d.title}: ${d.detail}`); }
+
+// ---------- backfill ----------
+async function fetchAllEvents(afterSeq) {
+  let after = afterSeq, out = [];
+  for (let guard = 0; guard < 50; guard++) {
+    const page = await api(`${base}/events?after_seq=${after}&limit=500`);
+    out = out.concat(page.events);
+    if (!page.has_more || !page.events.length) break;
+    after = page.next_seq;
+  }
+  return out;
+}
+
+// ---------- live ----------
+async function liveScreen() {
+  const my = token;
+  events = G.mergeEvents([], await fetchAllEvents(0)).events;
+  if (my !== token) return;
+  renderLive();
+  scheduleLivePoll();
+}
+
+function renderLive() {
+  const board = G.boardAt(events, state.shown_seq, shape());
+  if ($('sc-home') && $('ticker-host') && $('screen').dataset.mode === 'live') {
+    board.period = state.period || board.period;
+    patchBoard(board, G.clockLabel(state), stateFraction(state, board));
+    $('ticker-host').innerHTML = tickerHtml(events.filter(e => e.seq <= state.shown_seq));
+    return;
+  }
+  $('screen').dataset.mode = 'live';
+  $('screen').innerHTML = boardHtml(board, state, {clock: G.clockLabel(state), fraction: stateFraction(state, board)}) +
+    `<div class="cols"><section class="card elev-sm" style="padding:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2><div id="ticker-host">${tickerHtml(events.filter(e => e.seq <= state.shown_seq))}</div></section>
+     <section class="card elev-sm" style="padding:var(--space-4)"><h2 style="font-size:20px">Live</h2><p class="muted" style="margin:0">Updates every few seconds. You can leave and come back; the game keeps going. The box score opens when the game ends.</p>
+       ${G.controlsFor('live', state).map(c => `<p><button class="btn btn-secondary" disabled aria-disabled="true" aria-describedby="why-live-${c.id}">${esc(c.label)}</button><span class="why muted" id="why-live-${c.id}">${esc(c.why)}</span></p>`).join('')}</section></div>`;
+}
+
+function scheduleLivePoll() {
+  const my = token;
+  const delay = G.pollDelayMs(failures);
+  pollTimer = setTimeout(async () => {
+    if (my !== token) return;
+    try {
+      const lastSeq = events.length ? events[events.length - 1].seq : 0;
+      const [fresh, st] = await Promise.all([fetchAllEvents(lastSeq), api(`${base}/state`)]);
+      if (my !== token) return;
+      failures = 0; showConn('');
+      const merged = G.mergeEvents(events, fresh);
+      events = merged.events;
+      const before = state.shown_seq;
+      state = st;
+      if (st.status === 'FINAL' && st.cursor_seq < merged.lastSeq) {
+        state = await FSC.post(`${base}/progress`, {cursor_seq: merged.lastSeq});
+      }
+      if (G.screenFor(state) !== 'live') { stopTimers(); return enter(); }
+      renderLive();
+      const goals = events.filter(e => e.seq > before && e.seq <= state.shown_seq && e.kind === 'score');
+      if (goals.length) { const g = goals[goals.length - 1]; announce(`${g.headline}. ${names().home} ${g.home_score}, ${names().away} ${g.away_score}.`); popScore(); }
+    } catch (e) {
+      if (my !== token) return;
+      if (e.status === 401 || e.status === 404) { stopTimers(); return errorPanel(e); }
+      failures++;
+      showConn(G.connectionMessage(failures, G.pollDelayMs(failures)));
+    }
+    scheduleLivePoll();
+  }, delay);
+}
+
+function popScore() {
+  if (reduced) return;
+  ['sc-home', 'sc-away'].forEach(id => { const el = $(id); if (el) { el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); } });
+}
+
+function schedulePollState() {
+  const my = token;
+  stateTimer = setTimeout(async () => {
+    if (my !== token) return;
+    try {
+      const st = await api(`${base}/state`);
+      if (my !== token) return;
+      failures = 0; showConn('');
+      const changed = st.status !== state.status || st.published !== state.published;
+      state = st;
+      if (changed) { stopTimers(); return enter(); }
+    } catch (e) {
+      if (my !== token) return;
+      failures++; showConn(G.connectionMessage(failures, G.pollDelayMs(failures)));
+    }
+    schedulePollState();
+  }, G.pollDelayMs(failures) * (failures ? 1 : 3));
+}
+
+// ---------- replay ----------
+async function replayScreen() {
+  const my = token;
+  events = G.mergeEvents([], await fetchAllEvents(0)).events;
+  if (my !== token) return;
+  const resume = events.filter(e => e.seq <= state.cursor_seq).length;
+  replay = {idx: resume, timeline: [], timer: null, playing: false, shown: resume};
+  buildTimeline();
+  renderReplay();
+  if (G.replayMode(reduced) === 'auto') startReplay();
+}
+
+function buildTimeline() {
+  const rest = events.slice(replay.idx);
+  replay.timeline = G.replayTimeline(rest, G.REPLAY_MS);
+}
+
+function shownSeq() { return replay.idx ? events[replay.idx - 1].seq : 0; }
+
+function replayClock(board, done) {
+  return !replay.idx ? 'Ready' : done ? 'Final' : G.clockLabel({period: board.period, seconds_remaining: board.secondsRemaining, periods: state.periods, status: 'LIVE'});
+}
+
+function patchReplay() {
+  const board = G.boardAt(events, shownSeq(), shape());
+  const done = replay.idx >= events.length;
+  patchBoard(board, replayClock(board, done), stateFraction(state, board));
+  const pct = events.length ? Math.round(replay.idx / events.length * 100) : 0;
+  const pb = document.querySelector('.progress'); if (pb) { pb.setAttribute('aria-valuenow', pct); pb.firstElementChild.style.width = pct + '%'; }
+  $('ticker-host').innerHTML = tickerHtml(events.slice(0, replay.idx));
+}
+
+function renderReplay() {
+  $('screen').dataset.mode = 'replay';
+  const seq = shownSeq();
+  const board = G.boardAt(events, seq, shape());
+  const done = replay.idx >= events.length;
+  const view = Object.assign({}, state, {status: done ? 'FINAL' : 'REPLAY'});
+  const clock = replayClock(board, done);
+  const pct = events.length ? Math.round(replay.idx / events.length * 100) : 0;
+  $('screen').innerHTML = boardHtml(board, view, {clock, fraction: stateFraction(state, board)}) +
+    `<section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-label="Replay controls">
+       <div class="progress" role="progressbar" aria-label="Replay progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
+       <div class="controls">
+         ${replay.playing ? '<button class="btn btn-secondary" type="button" data-act="pause">Pause</button>' : `<button class="btn btn-primary" type="button" data-act="play" ${done ? 'disabled' : ''}>${replay.idx ? 'Resume' : 'Play'}</button>`}
+         <button class="btn btn-secondary" type="button" data-act="step" ${done ? 'disabled' : ''}>Next event</button>
+         <button class="btn btn-secondary" type="button" data-act="reveal" ${done ? 'disabled' : ''}>Reveal everything</button>
+         <button class="btn btn-secondary" type="button" data-act="skip">Skip to box score</button>
+         <label class="toggle"><input type="checkbox" id="reduce" ${reduced ? 'checked' : ''}> Step manually (no animation)</label>
+       </div>
+       <p class="muted" style="margin:0;font-size:13px">${reduced ? 'Manual mode: nothing moves until you press Next event.' : 'A full game replays in about 75 seconds.'} Your place is saved, so a reload resumes where you were.</p>
+     </section>
+     <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2><div id="ticker-host">${tickerHtml(events.slice(0, replay.idx))}</div></section>`;
+  bindActions();
+  const r = $('reduce'); if (r) r.onchange = () => { reduced = r.checked; document.body.classList.toggle('reduced', reduced); if (reduced) pauseReplay(); else renderReplay(); };
+}
+
+function startReplay() {
+  if (replay.playing || replay.idx >= events.length) return;
+  replay.playing = true;
+  buildTimeline();
+  const my = token;
+  let i = 0;
+  const tick = () => {
+    if (my !== token || !replay.playing) return;
+    if (i >= replay.timeline.length) return finishReplay();
+    revealNext();
+    i++;
+    if (replay.idx >= events.length) return finishReplay();
+    replay.timer = setTimeout(tick, G.delayBefore(replay.timeline, i));
+  };
+  renderReplay();
+  replay.timer = setTimeout(tick, 0);
+}
+
+function pauseReplay() { clearTimeout(replay.timer); replay.playing = false; renderReplay(); saveProgress(); }
+
+function revealNext() {
+  const e = events[replay.idx];
+  if (!e) return;
+  replay.idx++;
+  patchReplay();   // in place, so keyboard focus survives while the game plays
+  if (e.kind === 'score') { announce(`${e.headline}. ${names().home} ${e.home_score}, ${names().away} ${e.away_score}.`); popScore(); }
+  if (G.isCheckpoint(e)) saveProgress();
+}
+
+function stepReplay() { pauseReplayQuiet(); revealNext(); if (replay.idx >= events.length) finishReplay(); }
+function pauseReplayQuiet() { clearTimeout(replay.timer); replay.playing = false; }
+
+async function revealAll() {
+  pauseReplayQuiet();
+  replay.idx = events.length;
+  renderReplay();
+  await finishReplay();
+}
+
+async function saveProgress() {
+  try { state = await FSC.post(`${base}/progress`, {cursor_seq: shownSeq()}); failures = 0; showConn(''); }
+  catch (e) { /* progress is a convenience; the next checkpoint retries */ }
+}
+
+async function finishReplay() {
+  pauseReplayQuiet();
+  try {
+    state = await FSC.post(`${base}/progress`, {cursor_seq: events[events.length - 1].seq});
+    stopTimers();
+    await enter();
+  } catch (e) { errorBanner(e); renderReplay(); }
+}
+
+// ---------- final ----------
+async function finalScreen() {
+  const my = token;
+  const [snap, all] = await Promise.all([api(`${base}/final`), fetchAllEvents(0)]);
+  if (my !== token) return;
+  finalSnap = snap; events = G.mergeEvents([], all).events;
+  const b = {home_score: snap.home_score, away_score: snap.away_score, home_shots: snap.home_shots, away_shots: snap.away_shots, period: snap.periods};
+  const n = names();
+  const prov = snap.provenance || {};
+  const boxes = ['home', 'away'].map(side => {
+    const bs = G.boxScoreRows(prov, side);
+    const head = G.ROLE_COLUMNS.map(([, l]) => `<th class="num" scope="col">${l}</th>`).join('');
+    const rows = bs.rows.map(r => `<tr><th scope="row">${esc(r.name)} <span class="muted">${esc(r.position)}</span></th>${r.cells.map(v => `<td class="num ${v != null && v < 0 ? 'neg' : ''}">${v == null ? '' : G.fmtPoints(v)}</td>`).join('')}<td class="num ${r.total < 0 ? 'neg' : ''}"><strong>${G.fmtPoints(r.total)}</strong></td></tr>`).join('');
+    return `<div class="tbl-wrap"><table class="table"><caption style="text-align:left;font-weight:600;padding:6px 0">${esc(n[side])} · credit ${G.fmtPoints(bs.total)}${bs.tiesOut ? '' : ' (does not tie out)'}</caption>
+      <thead><tr><th scope="col">Player</th>${head}<th class="num" scope="col">Total</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="muted">No credited players.</td></tr>'}</tbody></table></div>`;
+  }).join('');
+  $('screen').innerHTML = boardHtml(b, {status: 'FINAL'}, {clock: 'Final', fraction: 1}) +
+    `<div class="cols"><section class="card elev-sm" style="padding:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2>${tickerHtml(events)}</section>
+     <section class="card elev-sm" style="padding:var(--space-4)"><h2 style="font-size:20px">Scoring plays</h2>
+       ${snap.scoring_events.length ? `<ol class="ticker">${snap.scoring_events.map(evHtml).join('')}</ol>` : '<p class="muted" style="margin:0">No goals.</p>'}</section></div>
+     <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="box-h"><h2 id="box-h" style="font-size:20px">Attribution box score</h2>
+       <p class="muted" style="margin-top:0">Points are each player's credited value. The scoreboard is built from them but never changes them.</p>${boxes}
+       <details class="prov"><summary>Data provenance</summary><ul>${G.provenanceLines(prov).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+       <p class="muted" style="font-size:12px">Contract ${esc(snap.contract_version)} · ${snap.event_count} events</p></details></section>`;
+  const h = $('board-h'); if (h) h.focus();
+}
+
+// ---------- entry ----------
+async function enter() {
+  $('screen').dataset.mode = '';
+  setHeader();
+  showConn('');
+  const screen = G.screenFor(state);
+  if (screen === 'unpublished') {
+    $('screen').innerHTML = `<div class="state-card card"><h2>No simulation yet</h2><p class="muted">This game has not been simulated. Nothing is shown until it is; no scores or plays are made up.</p><div class="actions"><button class="btn btn-secondary" type="button" id="reload">Check again</button></div></div>`;
+    $('reload').onclick = () => load();
+  } else if (screen === 'scheduled') {
+    $('screen').innerHTML = `<div class="state-card card">${chip('SCHEDULED')}<h2>Scheduled</h2><p class="muted">This game has not started. This page checks again on its own.</p></div>`;
+    schedulePollState();
+  } else if (screen === 'live-veiled' || screen === 'final-veiled') {
+    veilScreen(screen);
+  } else if (screen === 'live') {
+    await liveScreen();
+  } else if (screen === 'replay') {
+    await replayScreen();
+  } else {
+    await finalScreen();
+  }
+}
+
+async function load() {
+  stopTimers(); showError(''); showConn('');
+  if (!GAME_ID) return errorPanel({status: 404, message: 'Open this page from the schedule: add ?daily_game_id=…'});
+  try {
+    const me = await FSC.current();
+    if (!me) return errorPanel({status: 401, message: 'You need to be signed in to open a game.'});
+    state = await api(`${base}/state`);
+    await enter();
+  } catch (e) { errorPanel(e); }
+}
+
+window.addEventListener('online', () => { if (failures) { clearTimeout(pollTimer); failures = 0; showConn(''); if (G.screenFor(state) === 'live') scheduleLivePoll(); } });
+document.body.classList.toggle('reduced', reduced);
+load();
+</script>
+</body>
+</html>

@@ -14,7 +14,12 @@ const FSC = (() => {
     const res = await fetch(path, Object.assign({}, opts, {headers}));
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.detail || `${res.status} ${res.statusText}`);
+      // detail is a string for most routes and {code, message} for the simulator routes.
+      const d = body.detail;
+      const err = new Error((d && typeof d === 'object' ? d.message : d) || `${res.status} ${res.statusText}`);
+      err.status = res.status;
+      err.code = d && typeof d === 'object' ? d.code : undefined;
+      throw err;
     }
     return res.status === 204 ? null : res.json();
   }

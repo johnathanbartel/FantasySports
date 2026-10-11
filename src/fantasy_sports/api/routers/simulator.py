@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.api.schemas import (
-    SimEventOut, SimEventsOut, SimFinalOut, SimProgressRequest, SimStateOut,
+    SimEventOut, SimEventsOut, SimFinalOut, SimProgressRequest, SimStateOut, SimTeamOut,
 )
 from fantasy_sports.platform.db.models.core import SeriesDailyGame, SimulatorGame, User
 from fantasy_sports.platform.db.session import get_db
@@ -40,8 +40,11 @@ def _sim(db: Session, daily_game_id: int) -> SimulatorGame:
     return sim
 
 
-def _state_out(view: service.StateView) -> SimStateOut:
-    return SimStateOut(**view.__dict__)
+def _state_out(view: service.StateView, game: SeriesDailyGame) -> SimStateOut:
+    return SimStateOut(
+        **view.__dict__, league_id=game.series.league_id, series_id=game.series_id, calendar_date=game.calendar_date,
+        home_team=SimTeamOut(id=game.home_team_id, name=game.home_team.name),
+        away_team=SimTeamOut(id=game.away_team_id, name=game.away_team.name))
 
 
 @router.get("/contract")
@@ -56,10 +59,10 @@ def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     game = _game(db, daily_game_id)
     sim = service.get_sim(db, daily_game_id)
     if sim is None:
-        return _state_out(service.unpublished_state(game))
+        return _state_out(service.unpublished_state(game), game)
     view = service.view_state(db, sim, user.id, service.utcnow())
     db.commit()
-    return _state_out(view)
+    return _state_out(view, game)
 
 
 @router.get("/games/{daily_game_id}/events", response_model=SimEventsOut)
@@ -89,7 +92,7 @@ def _transition(daily_game_id: int, db: Session, user: User, action) -> SimState
         db.rollback()
         raise _fail(e)
     db.commit()
-    return _state_out(service.view_state(db, sim, user.id, now))
+    return _state_out(service.view_state(db, sim, user.id, now), sim.daily_game)
 
 
 @router.post("/games/{daily_game_id}/watch", response_model=SimStateOut)
@@ -136,4 +139,4 @@ def start_game(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     sim = _sim(db, daily_game_id)
     service.start_game(db, sim, service.utcnow())
     db.commit()
-    return _state_out(service.view_state(db, sim, user.id, service.utcnow()))
+    return _state_out(service.view_state(db, sim, user.id, service.utcnow()), game)

@@ -89,6 +89,7 @@
   // One tab per calendar day of the series: {date, label, off, opponent, homeAway, status, gameScore}.
   function seriesTabs(series) {
     return series.games.map(g => ({
+      dailyGameId: g.daily_game_id,
       date: g.calendar_date,
       label: dayLabel(g.calendar_date),
       off: !g.is_matchup_day,
