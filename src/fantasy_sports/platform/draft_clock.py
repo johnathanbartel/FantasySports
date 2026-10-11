@@ -16,12 +16,18 @@ Concepts
   * Overdue: now >= deadline_at. The server then makes the pick itself (the router's process_overdue), and the next
     pick's clock starts at the missed deadline, not at `now`, so the result is the same however late it is applied.
 
+AI teams pick for themselves part-way through their clock (ai_delay_seconds): a fixed pseudo-random point, seeded by
+the draft and the pick number, so it varies from pick to pick yet is identical on every replay and after a restart.
+An untimed draft has no deadline, but its AI teams still "think" for a few seconds, so the clock start is recorded
+for every draft.
+
 Mode (reported, not stored): untimed (no pick_seconds), live (< 1 hour per pick), async (1 hour or more).
 """
 
 from __future__ import annotations
 
 import datetime
+import random
 from dataclasses import dataclass
 
 from fantasy_sports.platform.db.models.core import Draft
@@ -31,6 +37,9 @@ MAX_PICK_SECONDS = 7 * 86400
 ASYNC_THRESHOLD_SECONDS = 3600
 DAY = 86400
 MAX_STEPS = 10000
+AI_MIN_FRACTION, AI_MAX_FRACTION = 0.15, 0.85   # of the pick allowance: when an AI team picks on a timed clock
+AI_CAP_SECONDS = 2 * 3600                       # ...but never longer than this, however slow the draft
+AI_UNTIMED_SECONDS = (3.0, 12.0)                # "thinking" time on a draft with no clock
 
 
 class ClockError(ValueError):
@@ -152,10 +161,10 @@ def configure(draft: Draft, pick_seconds: int | None, overnight_start_minute: in
 
 
 def begin_pick(draft: Draft, started_at: datetime.datetime) -> None:
-    """Start the clock for the pick now on the clock."""
+    """Start the clock for the pick now on the clock. An untimed draft only records when the pick began."""
+    draft.pick_started_at = started_at
     if not is_timed(draft):
         return
-    draft.pick_started_at = started_at
     draft.deadline_at = add_active_seconds(started_at, draft.pick_seconds, window_of(draft))
     draft.remaining_seconds = None
 
@@ -166,6 +175,21 @@ def clear(draft: Draft) -> None:
     draft.remaining_seconds = None
     draft.paused = False
     draft.paused_at = None
+
+
+def ai_delay_seconds(draft: Draft, pick_number: int) -> float:
+    """Active seconds into a pick at which an AI-owned team makes it. Deterministic per (draft, pick)."""
+    rng = random.Random(f"ai-pick:{draft.id}:{pick_number}")
+    if draft.pick_seconds is None:
+        return rng.uniform(*AI_UNTIMED_SECONDS)
+    return min(rng.uniform(AI_MIN_FRACTION, AI_MAX_FRACTION) * draft.pick_seconds, AI_CAP_SECONDS)
+
+
+def ai_due_at(draft: Draft, pick_number: int) -> datetime.datetime | None:
+    """When the AI team now on the clock will pick; None while paused or if the pick's clock was never started."""
+    if draft.status != "in_progress" or draft.paused or draft.pick_started_at is None:
+        return None
+    return add_active_seconds(draft.pick_started_at, ai_delay_seconds(draft, pick_number), window_of(draft))
 
 
 def remaining_seconds(draft: Draft, now: datetime.datetime) -> int | None:

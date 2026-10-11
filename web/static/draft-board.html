@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/styles.css">
 <script src="/static/session.js"></script>
 <script src="/static/draft-clock-logic.js"></script>
+<script src="/static/roster-lines.js"></script>
 <script src="/static/draft-broadcast-logic.js"></script>
 <style>body{margin:0}
 .board-table{font-size:14px}
@@ -24,6 +25,7 @@
     <span class="nav-brand" id="brand">Draft</span>
     <div style="display:flex;gap:var(--space-4)">
       <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
       <a href="#" id="nav-league">League</a>
       <a href="/static/draft-board.html" aria-current="page">Draft</a>
     </div>
@@ -69,13 +71,22 @@
           <ul id="mx-list" style="list-style:none;margin:0;padding:0"><li class="text-muted">Checking what is available…</li></ul>
           <p class="text-muted" style="margin:0;font-size:12px">Anything marked "Not enabled" is off until the owner approves it. Nothing here connects to an outside service.</p>
         </section>
-        <h4 style="margin-bottom:var(--space-3)">Pick history</h4>
+        <div role="tablist" aria-label="Draft side panel" style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
+          <button class="btn btn-primary" id="tab-roster" role="tab" aria-selected="true">Roster</button>
+          <button class="btn btn-secondary" id="tab-picks" role="tab" aria-selected="false">Pick history</button>
+        </div>
+        <div id="pane-roster" role="tabpanel">
+          <label style="display:block;margin-bottom:var(--space-2)">Team <select id="roster-team"></select></label>
+          <div id="roster-lines" class="card elev-sm" style="padding:var(--space-3) var(--space-4)"></div>
+        </div>
+        <div id="pane-picks" role="tabpanel" hidden>
         <div style="max-height:640px;overflow:auto">
           <table class="table">
             <thead><tr><th>Rnd</th><th>Pick</th><th>Team</th><th>Player</th></tr></thead>
             <tbody id="picks-body"></tbody>
           </table>
           <p class="text-muted" id="no-picks-msg" style="display:none">No picks made yet.</p>
+        </div>
         </div>
       </div>
 
@@ -311,7 +322,7 @@ async function pollAnnouncements() {
       const last = m.fresh[m.fresh.length - 1];
       showAnnouncement(last, BC.toSpeak(m.fresh, {soundOn, supported: speechSupported, backfill}).length > 0);
       document.getElementById('bc-replay').disabled = false;
-      if (!backfill && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); }
+      if (!backfill && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); refreshClock(); }
     }
   } catch (e) { bcFailures++; }
   bcTimer = setTimeout(pollAnnouncements, BC.pollDelayMs(bcFailures));
@@ -358,7 +369,7 @@ function renderClockLine() {
   if (!line) { line = document.createElement('div'); line.id = 'clock-line'; line.style.marginTop = 'var(--space-3)'; panel.appendChild(line); }
   if (clock.clock_status === 'untimed') {
     line.innerHTML = `<div class="card-kicker" style="margin-bottom:2px">Pick clock</div>
-      <div class="text-muted" style="font-size:13px">No pick clock - this draft was started without one, so picks wait for the team on the clock.</div>`;
+      <div class="text-muted" style="font-size:13px">${clock.ai_in_seconds != null ? 'The AI team is deciding on its pick...' : 'No pick clock - this draft was started without one, so picks wait for the team on the clock.'}</div>`;
     return;
   }
   const left = DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt);
@@ -513,6 +524,41 @@ function render() {
   renderFilters();
   renderBoard();
   renderPicks();
+  renderRosterTab();
+}
+
+// ---- roster tab: a team's lines filling as the draft goes ----
+let rosterTeamId = null, rosterTab = 'roster';
+
+function setSideTab(which) {
+  rosterTab = which;
+  document.getElementById('pane-roster').hidden = which !== 'roster';
+  document.getElementById('pane-picks').hidden = which !== 'picks';
+  for (const [id, key] of [['tab-roster', 'roster'], ['tab-picks', 'picks']]) {
+    const b = document.getElementById(id);
+    b.className = `btn ${which === key ? 'btn-primary' : 'btn-secondary'}`;
+    b.setAttribute('aria-selected', String(which === key));
+  }
+}
+document.getElementById('tab-roster').onclick = () => setSideTab('roster');
+document.getElementById('tab-picks').onclick = () => setSideTab('picks');
+
+async function renderRosterTab() {
+  const teams = Object.values(teamsById);
+  if (!teams.length) return;
+  const sel = document.getElementById('roster-team');
+  if (!sel.options.length) {
+    sel.innerHTML = teams.map(t => `<option value="${t.id}">${esc(t.name)}${isMyTeam(t) ? ' (you)' : ''}${t.is_ai_owned ? ' - AI' : ''}</option>`).join('');
+    const mine = teams.find(isMyTeam);
+    rosterTeamId = (mine || teams[0]).id;
+    sel.value = String(rosterTeamId);
+    sel.onchange = () => { rosterTeamId = Number(sel.value); renderRosterTab(); };
+  }
+  const box = document.getElementById('roster-lines');
+  try {
+    const lines = await api(`/teams/${rosterTeamId}/lines`);
+    box.innerHTML = RosterLines.html(lines);
+  } catch (e) { box.innerHTML = `<span class="text-muted">Could not load this roster: ${esc(e.message)}</span>`; }
 }
 
 document.getElementById('search').oninput = e => { searchText = e.target.value; renderBoard(); };

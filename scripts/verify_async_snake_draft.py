@@ -141,14 +141,19 @@ def main() -> None:
                 db.flush()
                 db.add(DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=p.id))
             leagues = {}
-            for name in ("legacy", "live", "async", "twin_a", "twin_b", "pause", "night", "boot"):
+            for name in ("legacy", "live", "async", "twin_a", "twin_b", "pause", "night", "boot", "ai", "ai_untimed"):
                 lg = League(name=name, commissioner_user_id=commissioner.id, size=4, draft_rounds=3, series_length_days=None)
                 db.add(lg)
                 db.flush()
                 db.add(LeagueUniverse(league_id=lg.id, universe_id=nhl.id))
                 teams = [Team(league_id=lg.id, name=f"{name}-A", owner_user_id=owners[0].id, is_ai_owned=False),
                          Team(league_id=lg.id, name=f"{name}-B", owner_user_id=owners[1].id, is_ai_owned=False),
-                         Team(league_id=lg.id, name=f"{name}-C", is_ai_owned=True), Team(league_id=lg.id, name=f"{name}-D", is_ai_owned=True)]
+                         # Teams C and D are people in the clock scenarios (an AI team picks for itself part-way through its
+                         # clock - tested in the "ai" leagues); only the "ai" leagues have AI teams.
+                         Team(league_id=lg.id, name=f"{name}-C", owner_user_id=owners[0].id, is_ai_owned=False) if not name.startswith("ai")
+                         else Team(league_id=lg.id, name=f"{name}-C", is_ai_owned=True),
+                         Team(league_id=lg.id, name=f"{name}-D", owner_user_id=owners[1].id, is_ai_owned=False) if not name.startswith("ai")
+                         else Team(league_id=lg.id, name=f"{name}-D", is_ai_owned=True)]
                 db.add_all(teams)
                 db.flush()
                 leagues[name] = {"id": lg.id, "teams": [t.id for t in teams]}
@@ -263,6 +268,51 @@ def main() -> None:
         check(prompt == late and len(late) == 12 and all(x[4] for x in late),
               "the same draft, processed every 7s or once after 30 minutes, ends with identical picks and timestamps")
 
+        # ---- AI teams pick for themselves, at varying points in their clock ---------------------------------------------
+        set_now(at(10, 12))
+        aid = start("ai", {"pick_seconds": 60}).json()["id"]
+        ai_teams = leagues["ai"]["teams"]
+        check(clk(aid)["ai_in_seconds"] is None, "a person on the clock: no AI countdown")
+        r = client.post(f"/drafts/{aid}/pick", json={"draftable_asset_id": assets[1]}, headers=auth["a"])
+        r = client.post(f"/drafts/{aid}/pick", json={"draftable_asset_id": assets[4]}, headers=auth["b"])
+        check(r.status_code == 200, "the people pick (A, B); the AI team (C) is now on the clock")
+        c = clk(aid)
+        check(c["on_clock_team_id"] == ai_teams[2] and c["ai_in_seconds"] is not None and 9 <= c["ai_in_seconds"] <= 51,
+              f"AI countdown is between 15% and 85% of the 60s clock ({c['ai_in_seconds']:.1f}s)")
+        check(client.post(f"/drafts/{aid}/process-overdue").json()["processed"] == 0, "the AI does not pick before its time")
+        set_now(at(10, 12, 0, 52))
+        out = client.post(f"/drafts/{aid}/process-overdue").json()
+        check(out["processed"] >= 1 and out["picks"][0]["team_id"] == ai_teams[2] and out["picks"][0]["is_autopick"],
+              "the AI team made its own pick once its time was up, with no click on the board")
+        # run the whole draft with long gaps: AI picks land at different offsets into their clocks, human ones time out
+        set_now(at(10, 13))
+        client.post(f"/drafts/{aid}/process-overdue")
+        offsets = []
+        started = None
+        for p in picks(aid):
+            t = dt.datetime.fromisoformat(p["picked_at"])
+            if started is not None and p["team_id"] in ai_teams[2:] and p["is_autopick"]:
+                offsets.append(round((t - started).total_seconds()))
+            started = t
+        check(len(set(offsets)) >= 3 and all(9 <= o <= 51 for o in offsets),
+              f"AI picks land at varying points in their clock, never before 15% or after 85% of it: {sorted(set(offsets))}")
+        twin = [(p["pick_number"], p["picked_at"], p["display_name"]) for p in picks(aid)]
+        set_now(at(10, 13, 30))
+        client.post(f"/drafts/{aid}/process-overdue")
+        check(twin == [(p["pick_number"], p["picked_at"], p["display_name"]) for p in picks(aid)], "processing again later changes nothing")
+
+        set_now(at(10, 12))
+        uid = start("ai_untimed").json()["id"]
+        client.post(f"/drafts/{uid}/pick", json={"draftable_asset_id": assets[2]}, headers=auth["a"])
+        client.post(f"/drafts/{uid}/pick", json={"draftable_asset_id": assets[5]}, headers=auth["b"])
+        c = clk(uid)
+        check(c["clock_status"] == "untimed" and c["ai_in_seconds"] is not None and 3 <= c["ai_in_seconds"] <= 12,
+              f"an untimed draft's AI team still thinks for 3-12 seconds ({c['ai_in_seconds']:.1f}s)")
+        check(client.post(f"/drafts/{uid}/process-overdue").json()["processed"] == 0, "...and does not pick instantly")
+        set_now(at(10, 12, 0, 13))
+        check(client.post(f"/drafts/{uid}/process-overdue").json()["processed"] >= 1, "...but picks once the time is up")
+        set_now(at(10, 12))
+
         # ---- pause / resume --------------------------------------------------------------------------------------------
         set_now(at(11, 9))
         r = start("pause", {"pick_seconds": 300})
@@ -375,8 +425,12 @@ def main() -> None:
 
         # ---- the AI-team path still works on a timed draft ---------------------------------------------------------------
         set_now(at(17, 9))
-        ai = start("async", {"pick_seconds": 3600}).json()["id"]
         t = leagues["async"]["teams"]
+        with SessionLocal() as db:       # team C becomes AI-owned for this check
+            c_team = db.get(Team, t[2])
+            c_team.owner_user_id, c_team.is_ai_owned = None, True
+            db.commit()
+        ai = start("async", {"pick_seconds": 3600}).json()["id"]
         client.post(f"/drafts/{ai}/pick", json={"draftable_asset_id": assets[1]}, headers=auth["a"])
         client.post(f"/drafts/{ai}/pick", json={"draftable_asset_id": assets[2]}, headers=auth["b"])
         r = client.post(f"/drafts/{ai}/autopick")

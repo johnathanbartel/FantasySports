@@ -15,7 +15,8 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import draft_clock
+from fantasy_sports.platform import draft_clock, pecking_order
+from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_fill import assert_league_full
 from fantasy_sports.platform.db.models.core import (
@@ -199,32 +200,43 @@ def _lock_draft(db: Session, draft_id: int) -> Draft:
 
 
 def _fill_with_best_available(db: Session, draft: Draft, pick: DraftPick, picked_at: datetime.datetime) -> None:
-    """Deterministic autopick: the first asset on the board (best last-season points, then name)."""
+    """Deterministic autopick: the asset that best fills this team's lineup (platform/ai/snake_ai.py)."""
     board = get_draft_board(draft.id, db)
     if not board:
         raise HTTPException(400, "No draftable assets left")
-    pick.draftable_asset_id = board[0].draftable_asset_id
+    pick.draftable_asset_id = snake_ai.choose_pick(db, draft, pick.team_id, board).draftable_asset_id
     pick.picked_at = picked_at
     pick.is_autopick = True
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=pick.draftable_asset_id, acquired_via="draft"))
     db.flush()
+    pecking_order.rank_new_player(db, db.get(Team, pick.team_id), pick.draftable_asset_id)
     _close_if_finished(db, draft.id)
 
 
 def process_overdue(db: Session, draft: Draft, now: datetime.datetime) -> list[DraftPick]:
-    """Make every pick whose clock has run out, in order. Each autopick is stamped with its own deadline and starts
-    the next pick's clock from that deadline, so the outcome is identical whether this runs the moment time runs out
-    or days later (restart-safe), and running it twice changes nothing. Flushes, does not commit."""
+    """Make every pick that is due, in order: a team whose clock ran out, and an AI-owned team whose (varying) thinking
+    time is up. Each pick is stamped with the instant it fell due and starts the next pick's clock from there, so the
+    outcome is identical whether this runs the moment time is up or days later (restart-safe), and running it twice
+    changes nothing. Flushes, does not commit."""
     made: list[DraftPick] = []
-    while draft_clock.is_overdue(draft, now):
+    while draft.status == "in_progress" and not draft.paused:
         pick = _next_open_pick(db, draft.id)
         if pick is None:
             break
-        deadline = draft.deadline_at
-        _fill_with_best_available(db, draft, pick, deadline)
+        if draft.pick_started_at is None:      # a draft begun before pick starts were recorded for untimed drafts
+            draft_clock.begin_pick(draft, now)
+            break
+        due = draft.deadline_at if draft_clock.is_overdue(draft, now) else None
+        if db.get(Team, pick.team_id).is_ai_owned:
+            ai_at = draft_clock.ai_due_at(draft, pick.pick_number)
+            if ai_at is not None and ai_at <= now and (due is None or ai_at < due):
+                due = ai_at
+        if due is None:
+            break
+        _fill_with_best_available(db, draft, pick, due)
         made.append(pick)
         if draft.status == "in_progress":
-            draft_clock.begin_pick(draft, deadline)
+            draft_clock.begin_pick(draft, due)
     return made
 
 
@@ -245,6 +257,11 @@ def _clock_out(db: Session, draft: Draft, now: datetime.datetime) -> DraftClockO
     resumes = None
     if in_window and not draft.paused:
         resumes = now + datetime.timedelta(seconds=window.seconds_until_end(now))
+    ai_in = None
+    if pick is not None and db.get(Team, pick.team_id).is_ai_owned:
+        ai_at = draft_clock.ai_due_at(draft, pick.pick_number)
+        if ai_at is not None:
+            ai_in = max(0.0, (ai_at - now).total_seconds())
     return DraftClockOut(
         draft_id=draft.id, status=draft.status, clock_status=status, mode=draft_clock.mode(draft),
         pick_seconds=draft.pick_seconds, paused=bool(draft.paused), server_time=now, deadline_at=draft.deadline_at,
@@ -253,7 +270,7 @@ def _clock_out(db: Session, draft: Draft, now: datetime.datetime) -> DraftClockO
                                     end=draft_clock.hhmm(draft.overnight_end_minute),
                                     utc_offset_minutes=draft.utc_offset_minutes or 0) if window else None,
         overnight_active=in_window, resumes_at=resumes, pick_number=pick.pick_number if pick else None,
-        on_clock_team_id=pick.team_id if pick else None)
+        on_clock_team_id=pick.team_id if pick else None, ai_in_seconds=ai_in)
 
 
 @router.get("/{draft_id}/clock", response_model=DraftClockOut)
@@ -321,7 +338,7 @@ def make_pick(
     draft = _lock_draft(db, draft_id)
     now = utcnow()
     made = process_overdue(db, draft, now)
-    if made:
+    if any(db.get(Team, p.team_id).owner_user_id == user.id for p in made):
         db.commit()
         raise HTTPException(409, "Your pick time ran out, so the pick was made automatically")
     if draft.paused:
@@ -353,6 +370,7 @@ def make_pick(
     pick.picked_at = now
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=asset.id, acquired_via="draft"))
     db.flush()
+    pecking_order.rank_new_player(db, team_on_clock, asset.id)
     _close_if_finished(db, draft_id)
     if draft.status == "in_progress":
         draft_clock.begin_pick(draft, now)
@@ -365,9 +383,8 @@ def make_pick(
 def autopick(draft_id: int, db: Session = Depends(get_db)):
     """Fills the next open pick with the first available board asset.
 
-    TODO: real AI personality-driven pick logic (Team.personality_profile
-    isn't consulted at all yet) - this is a placeholder so AI-owned teams
-    don't stall a draft, not the actual trait system.
+    The pick is lineup-aware (platform/ai/snake_ai.py); personality-driven variation (Team.personality_profile) is
+    not built yet.
 
     On a timed draft this is limited to what the clock allows: an AI-owned team may be picked for at any time (the
     draft page uses that to run AI teams), a human team only once its time has run out, and nothing while paused.
