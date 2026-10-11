@@ -191,6 +191,11 @@ class LineupEntryOut(BaseModel):
 
 class DraftStartRequest(BaseModel):
     league_id: int
+    # Optional pick clock (commissioner only). Omit everything for the original untimed draft.
+    pick_seconds: int | None = None
+    overnight_start: str | None = None   # "HH:MM" local, with utc_offset_minutes
+    overnight_end: str | None = None
+    utc_offset_minutes: int = 0
 
 
 class DraftOut(ORMModel):
@@ -199,6 +204,32 @@ class DraftOut(ORMModel):
     status: str
     started_at: datetime.datetime | None
     completed_at: datetime.datetime | None
+    pick_seconds: int | None = None
+    paused: bool = False
+    deadline_at: datetime.datetime | None = None
+
+
+class DraftOvernightOut(BaseModel):
+    start: str
+    end: str
+    utc_offset_minutes: int
+
+
+class DraftClockOut(BaseModel):
+    draft_id: int
+    status: str               # draft status: pending / in_progress / complete
+    clock_status: str         # untimed / running / paused / overnight / complete
+    mode: str                 # untimed / live / async
+    pick_seconds: int | None
+    paused: bool
+    server_time: datetime.datetime
+    deadline_at: datetime.datetime | None
+    remaining_seconds: int | None   # active seconds left; frozen while paused or overnight
+    overnight: DraftOvernightOut | None
+    overnight_active: bool
+    resumes_at: datetime.datetime | None   # when an active overnight pause ends
+    pick_number: int | None
+    on_clock_team_id: int | None
 
 
 class DraftPickOut(BaseModel):
@@ -214,6 +245,12 @@ class DraftPickOut(BaseModel):
 
 class MakePickRequest(BaseModel):
     draftable_asset_id: int
+
+
+class DraftProcessOut(BaseModel):
+    processed: int
+    picks: list[DraftPickOut]
+    clock: DraftClockOut
 
 
 class DraftBoardAsset(BaseModel):

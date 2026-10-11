@@ -344,6 +344,17 @@ class Draft(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/in_progress/complete
     started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Pick clock (platform/draft_clock.py). pick_seconds NULL = untimed (the original behaviour). All instants are
+    # naive UTC. deadline_at is the authoritative end of the current pick; it is NULL while paused or untimed.
+    pick_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overnight_start_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)  # local minute of day
+    overnight_end_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    utc_offset_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    paused_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    remaining_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)  # active seconds left, while paused
+    pick_started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    deadline_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DraftPick(Base):

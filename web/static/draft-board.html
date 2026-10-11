@@ -6,6 +6,7 @@
 <title>Draft Board</title>
 <link rel="stylesheet" href="/static/styles.css">
 <script src="/static/session.js"></script>
+<script src="/static/draft-clock-logic.js"></script>
 <style>body{margin:0}</style>
 </head>
 <body>
@@ -100,6 +101,8 @@ async function loadAll() {
   document.getElementById('setup-panel').style.display = 'none';
   [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]);
   render();
+  refreshClock();
+  if (!tickTimer) tickClock();
 }
 
 function isCommissioner() { return !!(me && league && me.user_id === league.commissioner_user_id); }
@@ -114,15 +117,70 @@ function renderSetup(teams) {
     <h3 style="margin:0 0 var(--space-2)">${league.draft_type === 'snake' ? 'Snake draft' : 'Draft'} setup</h3>
     <p class="muted" style="margin:0 0 var(--space-3)">${teams.length} of ${league.size} teams in the league (${teams.filter(t => t.is_ai_owned).length} AI-owned) · ${league.draft_rounds} rounds.
       ${open > 0 ? `${open} spot${open === 1 ? '' : 's'} still open.` : 'The league is full.'}</p>
-    ${isCommissioner() ? `<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+    ${isCommissioner() ? `${clockFormHtml()}<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
       ${open > 0 ? '<button class="btn btn-secondary" id="fill-ai">Fill open spots with AI teams</button>' : ''}
       <button class="btn btn-primary" id="start-draft" ${teams.length ? '' : 'disabled'}>Start draft</button></div>`
       : '<p class="muted" style="margin:0">Waiting for the commissioner to start the draft.</p>'}`;
   const fill = document.getElementById('fill-ai');
   if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
   const start = document.getElementById('start-draft');
-  if (start) start.onclick = () => act(() => FSC.post('/drafts/start', {league_id: Number(LEAGUE_ID)}));
+  if (start) {
+    wireClockForm();
+    start.onclick = () => {
+      const r = DraftClock.startBody(readClockForm());
+      if (r.error) return showError(r.error);
+      act(() => FSC.post('/drafts/start', Object.assign({league_id: Number(LEAGUE_ID)}, r.body)));
+    };
+  }
   render();
+}
+
+// ---- pick clock setup ----
+function clockFormHtml() {
+  return `<fieldset style="border:1px solid var(--color-divider);padding:var(--space-3);margin:0 0 var(--space-3)">
+    <legend>Pick clock</legend>
+    <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end">
+      <label>Mode<br><select id="clk-mode"><option value="none">No clock (manual picks)</option><option value="live">Live: seconds per pick</option><option value="slow">Slow: hours per pick</option></select></label>
+      <label id="clk-val-wrap" hidden>Time per pick<br><input id="clk-val" type="number" min="1" step="any" value="60" style="width:100px"> <span id="clk-unit">seconds</span></label>
+      <label><input type="checkbox" id="clk-night"> Pause overnight</label>
+    </div>
+    <div id="clk-night-wrap" hidden style="display:none;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end;margin-top:var(--space-2)">
+      <label>From<br><input id="clk-from" type="time" value="22:00"></label>
+      <label>To<br><input id="clk-to" type="time" value="06:00"></label>
+      <label>Time zone<br><select id="clk-offset"></select></label>
+    </div>
+    <p class="text-muted" style="margin:var(--space-2) 0 0;font-size:12px" id="clk-help">Picks are made for a team automatically when its time runs out. While paused or overnight the time left does not count down. The time zone is a fixed offset: change it if your clocks change.</p>
+  </fieldset>`;
+}
+
+function wireClockForm() {
+  const sel = document.getElementById('clk-offset');
+  const local = -new Date().getTimezoneOffset();
+  const offsets = [];
+  for (let m = -12 * 60; m <= 14 * 60; m += 30) offsets.push(m);
+  if (!offsets.includes(local)) offsets.push(local);
+  sel.innerHTML = offsets.sort((a, b) => a - b).map(m => `<option value="${m}">${DraftClock.offsetLabel(m)}</option>`).join('');
+  sel.value = String(local);
+  const mode = document.getElementById('clk-mode');
+  const night = document.getElementById('clk-night');
+  const sync = () => {
+    const timed = mode.value !== 'none';
+    document.getElementById('clk-val-wrap').hidden = !timed;
+    document.getElementById('clk-unit').textContent = mode.value === 'slow' ? 'hours' : 'seconds';
+    night.disabled = !timed;
+    if (!timed) night.checked = false;
+    const w = document.getElementById('clk-night-wrap');
+    w.hidden = !night.checked; w.style.display = night.checked ? 'flex' : 'none';
+  };
+  mode.onchange = () => { document.getElementById('clk-val').value = mode.value === 'slow' ? '8' : '60'; sync(); };
+  night.onchange = sync;
+  sync();
+}
+
+function readClockForm() {
+  const v = id => document.getElementById(id);
+  return {mode: v('clk-mode').value, value: v('clk-val').value, overnight: v('clk-night').checked,
+          from: v('clk-from').value, to: v('clk-to').value, offsetMinutes: Number(v('clk-offset').value)};
 }
 
 // One request chain at a time: overlapping picks/autopicks would race for the same asset.
@@ -184,6 +242,59 @@ function renderClock() {
     document.getElementById('autopick-btn').onclick = autopick;
     document.getElementById('run-ai-btn').onclick = runAi;
   }
+  renderClockLine();
+}
+
+// ---- pick clock display (server-owned; see draft-clock-logic.js) ----
+let clock = null, clockFetchedAt = 0, clockPoll = null, tickTimer = null, processing = false;
+
+function renderClockLine() {
+  const panel = document.getElementById('on-clock-panel');
+  let line = document.getElementById('clock-line');
+  if (!clock || clock.clock_status === 'untimed' || clock.clock_status === 'complete' || !onClockPick()) {
+    if (line) line.remove();
+    return;
+  }
+  if (!line) { line = document.createElement('div'); line.id = 'clock-line'; line.style.marginTop = 'var(--space-3)'; panel.appendChild(line); }
+  const left = DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt);
+  const paused = clock.clock_status === 'paused';
+  line.innerHTML = `
+    <div class="card-kicker" style="margin-bottom:2px">Time left</div>
+    <div id="countdown" style="font-family:var(--font-heading);font-size:32px;font-variant-numeric:tabular-nums" aria-hidden="true">${DraftClock.formatRemaining(left)}</div>
+    <div class="sr-status" id="clock-sr" role="status" aria-live="polite" style="position:absolute;left:-9999px">${esc(DraftClock.statusLine(clock))}</div>
+    <div class="text-muted" style="font-size:13px">${esc(DraftClock.statusLine(clock))}</div>
+    ${clock.overnight ? `<div class="text-muted" style="font-size:12px">${esc(DraftClock.overnightNote(clock))}</div>` : ''}
+    ${isCommissioner() ? `<div style="margin-top:var(--space-2)"><button class="btn btn-secondary" id="pause-btn" type="button">${paused ? 'Resume draft' : 'Pause draft'}</button></div>` : ''}`;
+  const b = document.getElementById('pause-btn');
+  if (b) b.onclick = () => act(() => FSC.post(`/drafts/${DRAFT_ID}/${paused ? 'resume' : 'pause'}`));
+}
+
+function renderCountdown() {
+  const el = document.getElementById('countdown');
+  if (el && clock) el.textContent = DraftClock.formatRemaining(DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt));
+}
+
+async function refreshClock() {
+  clearTimeout(clockPoll);
+  if (!DRAFT_ID) return;
+  try {
+    const c = await api(`/drafts/${DRAFT_ID}/clock`);
+    const moved = clock && (c.pick_number !== clock.pick_number || c.status !== clock.status);
+    clock = c; clockFetchedAt = Date.now();
+    if (moved && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); }
+    else renderClockLine();
+  } catch (e) { /* keep showing the last clock and retry */ }
+  const d = DraftClock.pollDelayMs(clock);
+  if (d) clockPoll = setTimeout(refreshClock, d);
+}
+
+function tickClock() {
+  renderCountdown();
+  if (!processing && DraftClock.shouldProcess(clock, Date.now(), clockFetchedAt)) {
+    processing = true;   // one request at a time; the server applies every expired pick in order
+    FSC.post(`/drafts/${DRAFT_ID}/process-overdue`).catch(() => {}).finally(() => { processing = false; refreshClock(); });
+  }
+  tickTimer = setTimeout(tickClock, 1000);
 }
 
 function renderFilters() {
