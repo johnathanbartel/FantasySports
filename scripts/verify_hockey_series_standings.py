@@ -1,0 +1,310 @@
+"""
+Offline verification for NHL series standings, rivalry history and the Game Score (FS-024).
+
+Builds NHL leagues in a throwaway SQLite database, generates schedules through the real API, writes seeded
+daily results straight into series_daily_games, and checks the API against an independent brute-force tally.
+No external services are called.
+
+Run from the repository root with:
+
+    .venv-api/Scripts/python.exe scripts/verify_hockey_series_standings.py
+"""
+
+from __future__ import annotations
+
+import datetime
+import itertools
+import os
+import random
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+
+def check(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+    print(f"ok  {message}")
+
+
+def brute_standings(games: list[dict], series: list[dict], teams: list[int]) -> dict[int, dict]:
+    """Independent tally from plain dicts: final games only; a series counts only when all its games are final."""
+    t = {i: dict(sw=0, sl=0, st=0, dw=0, dl=0, dt=0, gf=0, ga=0) for i in teams}
+    wins = defaultdict(lambda: defaultdict(int))
+    final_count = defaultdict(int)
+    for g in games:
+        if g["status"] != "FINAL":
+            continue
+        final_count[g["series_id"]] += 1
+        h, a, hs, as_ = g["home"], g["away"], g["hs"], g["as"]
+        t[h]["gf"] += hs; t[h]["ga"] += as_; t[a]["gf"] += as_; t[a]["ga"] += hs
+        if hs == as_:
+            t[h]["dt"] += 1; t[a]["dt"] += 1
+        else:
+            w, l = (h, a) if hs > as_ else (a, h)
+            t[w]["dw"] += 1; t[l]["dl"] += 1
+            wins[g["series_id"]][w] += 1
+    for s in series:
+        if final_count[s["id"]] != s["days"]:
+            continue
+        wa, wb = wins[s["id"]][s["a"]], wins[s["id"]][s["b"]]
+        if wa == wb:
+            t[s["a"]]["st"] += 1; t[s["b"]]["st"] += 1
+        else:
+            w, l = (s["a"], s["b"]) if wa > wb else (s["b"], s["a"])
+            t[w]["sw"] += 1; t[l]["sl"] += 1
+    return t
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="fs024-standings-", dir=ROOT) as temp_dir:
+        os.environ["DATABASE_URL"] = f"sqlite:///{(Path(temp_dir) / 'standings').as_posix()}"
+
+        from fastapi.testclient import TestClient
+
+        from fantasy_sports.api.auth import create_session
+        from fantasy_sports.api.main import app
+        from fantasy_sports.platform import game_score
+        from fantasy_sports.platform.db.base import Base
+        from fantasy_sports.platform.db.models.core import (
+            League, LeagueSeries, LeagueUniverse, SeriesDailyGame, Team, Universe, User,
+        )
+        from fantasy_sports.platform.db.session import SessionLocal, engine
+
+        Base.metadata.create_all(bind=engine)
+        client = TestClient(app)
+        start = datetime.date(2026, 10, 7)
+
+        with SessionLocal() as db:
+            commissioner = User(email="c@example.com", display_name="Commissioner")
+            other = User(email="o@example.com", display_name="Other")
+            db.add_all([commissioner, other])
+            nhl = Universe(sport="hockey", level="pro", code="nhl", display_name="NHL", supports_individual_defense=False)
+            cfb = Universe(sport="football", level="college", code="cfb", display_name="CFB", supports_individual_defense=True)
+            db.add_all([nhl, cfb])
+            db.flush()
+
+            def make_league(name: str, universe: Universe, teams: int, length: int | None) -> League:
+                league = League(name=name, commissioner_user_id=commissioner.id, size=teams, series_length_days=length)
+                db.add(league)
+                db.flush()
+                db.add(LeagueUniverse(league_id=league.id, universe_id=universe.id))
+                for i in range(teams):
+                    db.add(Team(league_id=league.id, name=f"{name} T{i + 1}", is_ai_owned=True))
+                db.flush()
+                return league
+
+            small = make_league("S4", nhl, 4, 5)
+            big = make_league("B12", nhl, 12, 7)
+            football = make_league("CFB", cfb, 12, None)
+            db.commit()
+            lid = dict(small=small.id, big=big.id, football=football.id)
+            token = create_session(db, commissioner.id).token
+            other_token = create_session(db, other.id).token
+        auth = {"Authorization": f"Bearer {token}"}
+        body = {"start_date": start.isoformat(), "cycles": 2}
+
+        for key in ("small", "big"):
+            r = client.post(f"/leagues/{lid[key]}/series-schedule", json=body, headers=auth)
+            check(r.status_code == 200, f"{key} schedule created (2 cycles)")
+
+        def load(league_id: int):
+            with SessionLocal() as db:
+                series = [dict(id=s.id, a=s.team_a_id, b=s.team_b_id, days=s.total_days)
+                          for s in db.query(LeagueSeries).filter_by(league_id=league_id)]
+                games = [dict(id=g.id, series_id=g.series_id, date=g.calendar_date, home=g.home_team_id, away=g.away_team_id,
+                              hs=g.home_score, **{"as": g.away_score}, status=g.status)
+                         for g in db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+                         .filter(LeagueSeries.league_id == league_id).order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id)]
+                teams = sorted(t.id for t in db.query(Team).filter_by(league_id=league_id))
+            return teams, series, games
+
+        steams, sseries, sgames = load(lid["small"])
+        base = f"/leagues/{lid['small']}"
+
+        # Opening state: nothing final -> all zeros, one shared rank, no rivalry history.
+        st = client.get(f"{base}/series-standings").json()
+        check(st["tiebreak_order"].startswith("series_wins desc"), "tie-break order is published")
+        check(all(r["rank"] == 1 and r["series_wins"] == 0 and r["goal_diff"] == 0 for r in st["standings"]),
+              "opening standings: all zero, shared rank 1")
+        check(client.get(f"{base}/rivalries").json()["rivalries"] == [], "no rivalry history before any final game")
+        check(client.get(f"/leagues/{lid['football']}/series-standings").status_code == 400, "non-NHL league rejected")
+        check(client.get("/leagues/99999/series-standings").status_code == 404, "unknown league is 404")
+
+        # Seed deterministic results for the first cycle; leave the final game of the last series incomplete.
+        rng = random.Random(24)
+        first_cycle = sorted({g["date"] for g in sgames})[:15]  # 3 rounds x 5 days
+        with SessionLocal() as db:
+            rows = db.query(SeriesDailyGame).order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all()
+            round3 = [g for g in rows if g.calendar_date == first_cycle[-1]]
+            for g in rows:
+                if g.calendar_date in first_cycle:
+                    g.home_score, g.away_score, g.status = rng.randint(0, 5), rng.randint(0, 5), "FINAL"
+            # A daily tie and a tied series: in round 1 force series A to 2 wins each + one tie.
+            round1 = [g for g in rows if g.calendar_date in first_cycle[:5]]
+            by_series = defaultdict(list)
+            for g in round1:
+                by_series[g.series_id].append(g)
+            tied_series_id = sorted(by_series)[0]
+            ts = by_series[tied_series_id]
+            home_of = lambda g: g.home_team_id
+            a_id = db.get(LeagueSeries, tied_series_id).team_a_id
+            for i, g in enumerate(ts):
+                if i == 4:
+                    g.home_score, g.away_score = 3, 3
+                else:
+                    a_wins_here = i < 2
+                    a_home = g.home_team_id == a_id
+                    g.home_score, g.away_score = (4, 1) if a_wins_here == a_home else (1, 4)
+            for g in round3[:1]:
+                g.status, g.home_score, g.away_score = "LIVE_SIMULATING", 2, 1  # incomplete: not counted
+            db.commit()
+
+        steams, sseries, sgames = load(lid["small"])
+        expected = brute_standings(sgames, sseries, steams)
+        st = client.get(f"{base}/series-standings").json()
+        got = {r["team_id"]: r for r in st["standings"]}
+        for tid, e in expected.items():
+            r = got[tid]
+            check((r["series_wins"], r["series_losses"], r["series_ties"], r["daily_wins"], r["daily_losses"], r["daily_ties"],
+                   r["goals_for"], r["goals_against"]) == (e["sw"], e["sl"], e["st"], e["dw"], e["dl"], e["dt"], e["gf"], e["ga"]),
+                  f"team {tid}: standings tie out to the brute-force tally")
+        check(sum(r["series_ties"] for r in got.values()) >= 2, "a tied series (2-2 plus a daily tie) is a series tie for both teams")
+        check(sum(r["daily_ties"] for r in got.values()) >= 2, "equal-score games are daily ties")
+        check(sum(r["goals_for"] for r in got.values()) == sum(r["goals_against"] for r in got.values()),
+              "league goals for equal goals against")
+        incomplete = [g for g in sgames if g["status"] != "FINAL"]
+        check(len(incomplete) > 0 and all(r["daily_wins"] + r["daily_losses"] + r["daily_ties"] <= 15 for r in got.values()),
+              "non-final games are excluded from the tallies")
+
+        # Ranking order and tie-break keys.
+        order = st["standings"]
+        keys = [(-r["series_wins"], r["series_losses"], -r["daily_wins"], -r["goal_diff"], -r["goals_for"]) for r in order]
+        check(keys == sorted(keys), "rows are ordered by the published tie-break keys")
+        for prev, cur, pk, ck in zip(order, order[1:], keys, keys[1:]):
+            check((pk == ck) == (prev["rank"] == cur["rank"]) or cur["rank"] > prev["rank"] or pk == ck,
+                  "equal keys share a rank; otherwise rank increases")
+        check(order[0]["rank"] == 1 and all(a["rank"] <= b["rank"] for a, b in zip(order, order[1:])), "ranks never decrease")
+
+        # Tie-break layering on a synthetic standing set (pure function).
+        from fantasy_sports.platform.series_standings import GameRecord, SeriesRecord, compute_standings
+        d = datetime.date(2026, 1, 1)
+        s1, s2 = SeriesRecord(1, 1, 2, d, 5), SeriesRecord(2, 3, 4, d, 5)
+        gs = []
+        for i in range(5):  # series 1: team 1 wins 3-2; series 2: team 3 wins 3-2; goals differ
+            day = d + datetime.timedelta(days=i)
+            gs.append(GameRecord(1, day, 1, 2, 3 if i < 3 else 0, 0 if i < 3 else 1, True))
+            gs.append(GameRecord(2, day, 3, 4, 2 if i < 3 else 0, 1 if i < 3 else 1, True))
+        tab = compute_standings([1, 2, 3, 4], [s1, s2], gs)
+        check([r.team_id for r in tab] == [1, 3, 4, 2] or [r.team_id for r in tab] == [1, 3, 2, 4],
+              "series winners rank above series losers; goal differential then orders the winners")
+        check(tab[0].team_id == 1 and tab[0].goal_diff > tab[1].goal_diff, "goal differential breaks a series-and-daily tie")
+
+        # Repeat reads are identical, and the data endpoint doesn't write.
+        check(client.get(f"{base}/series-standings").json() == st, "repeat standings reads are identical")
+        as_of = client.get(f"{base}/series-standings", params={"as_of": first_cycle[1].isoformat()}).json()
+        check(sum(r["daily_wins"] + r["daily_losses"] + r["daily_ties"] for r in as_of["standings"]) == 2 * 2 * 2,
+              "as_of limits the tally to games on or before that date (2 days x 2 games x 2 teams)")
+        check(all(r["series_wins"] + r["series_losses"] + r["series_ties"] == 0 for r in as_of["standings"]),
+              "no series is decided by as_of before its last game")
+
+        # Rivalry history.
+        riv = client.get(f"{base}/rivalries").json()["rivalries"]
+        check(len(riv) == 6, "every pair has met in the first cycle, so six rivalry rows")
+        for p in riv:
+            lo, hi = p["team_low_id"], p["team_high_id"]
+            mine = [g for g in sgames if g["status"] == "FINAL" and {g["home"], g["away"]} == {lo, hi}]
+            lo_goals = sum(g["hs"] if g["home"] == lo else g["as"] for g in mine)
+            hi_goals = sum(g["as"] if g["home"] == lo else g["hs"] for g in mine)
+            lo_w = sum(1 for g in mine if (g["hs"] > g["as"]) == (g["home"] == lo) and g["hs"] != g["as"])
+            hi_w = sum(1 for g in mine if (g["hs"] > g["as"]) == (g["home"] == hi) and g["hs"] != g["as"])
+            check((p["goals_low"], p["goals_high"], p["daily_low_wins"], p["daily_high_wins"]) == (lo_goals, hi_goals, lo_w, hi_w)
+                  and p["net_goal_diff_low"] == lo_goals - hi_goals and 0 <= p["intensity"] < 1,
+                  f"rivalry {lo}-{hi} ties out to its games")
+        one = client.get(f"{base}/rivalries/{riv[0]['team_high_id']}/{riv[0]['team_low_id']}").json()
+        check(one["team_low_id"] == riv[0]["team_low_id"] and one["goals_low"] == riv[0]["goals_low"],
+              "pair lookup is order-insensitive")
+        check(client.get(f"{base}/rivalries/{steams[0]}/{steams[0]}").status_code == 404, "a team can't rival itself")
+        check(client.get(f"{base}/rivalries", params={"team_id": steams[0]}).json()["rivalries"].__len__() == 3,
+              "team filter keeps that team's three pairs")
+
+        # Game Score: bounded, deterministic, breakdown present.
+        gsr = client.get(f"{base}/game-scores").json()
+        check(abs(sum(gsr["weights"].values()) - 1.0) < 1e-9, "weights sum to 1")
+        check(all(0 <= g["score"] <= 100 for g in gsr["games"]), "every small-league Game Score is within 0-100")
+        check(client.get(f"{base}/game-scores").json() == gsr, "repeat Game Score reads are identical")
+        g0 = gsr["games"][0]
+        check(all(0 <= g0[k] <= 1 for k in ("margin", "cutoff", "rivalry", "urgency")), "components are within 0-1")
+        single = client.get(f"/series-daily-games/{g0['daily_game_id']}/game-score").json()
+        check(single == g0, "per-game endpoint matches the league listing")
+        opening = [g for g in gsr["games"] if g["calendar_date"] == start.isoformat()]
+        last_day = max(g["calendar_date"] for g in gsr["games"])
+        late = [g for g in gsr["games"] if g["calendar_date"] == last_day]
+        check(max(g["score"] for g in opening) <= 15 and min(g["score"] for g in late) > max(g["score"] for g in opening),
+              "opening-week games rate low and late-season games rate higher")
+        check(all(g["standings_as_of"] == (datetime.date.fromisoformat(g["calendar_date"])
+                                           - datetime.timedelta(days=7)).isoformat() for g in gsr["games"]),
+              "ratings use standings published one week ahead")
+        check(all(g["rivalry"] == 0 for g in opening), "opening games have no rivalry history")
+
+        # Formula monotonicity and bounds on a grid.
+        grid = [0, 0.25, 0.5, 0.75, 1.0]
+        bounded = all(0 <= game_score.combine(m, c, r, u) <= 100 for m, c, r, u in itertools.product(grid, repeat=4))
+        check(bounded, "combine() stays within 0-100 across the whole component grid")
+        check(game_score.combine(1, 1, 1, 1) == 100 and game_score.combine(0, 0, 0, 0) == 0, "extremes map to exactly 100 and 0")
+        mono = True
+        for m, c, r, u in itertools.product(grid[:-1], repeat=4):
+            i = grid.index(m)
+            base_score = game_score.combine(m, c, r, u)
+            for bumped in (game_score.combine(grid[i + 1], c, r, u), game_score.combine(m, grid[grid.index(c) + 1], r, u),
+                           game_score.combine(m, c, grid[grid.index(r) + 1], u), game_score.combine(m, c, r, grid[grid.index(u) + 1])):
+                mono &= bumped >= base_score
+        check(mono, "combine() is monotonic non-decreasing in every component")
+        check(game_score.combine(1, 1, 0, 0) == 0, "tight standings alone carry no leverage in week one")
+
+        # Publish writes ratings for unfinished games only; commissioner only.
+        pub = f"{base}/game-scores/publish"
+        check(client.post(pub).status_code == 401, "publish requires sign-in")
+        check(client.post(pub, headers={"Authorization": f"Bearer {other_token}"}).status_code == 403, "publish is commissioner-only")
+        r = client.post(pub, headers=auth)
+        check(r.status_code == 200, "commissioner can publish")
+        with SessionLocal() as db:
+            rows = db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
+                LeagueSeries.league_id == lid["small"]).all()
+            by_id = {g["daily_game_id"]: g["score"] for g in r.json()["games"]}
+            check(all(g.game_score_rating == by_id[g.id] for g in rows if g.status != "FINAL"), "stored ratings match the computed scores")
+            check(any(g.status == "FINAL" and g.game_score_rating == 50 for g in rows), "FINAL games keep their stored rating")
+
+        # 12-team league with seeded results across the whole schedule: every rating bounded, standings tie out.
+        bteams, bseries, bgames = load(lid["big"])
+        rng = random.Random(1224)
+        with SessionLocal() as db:
+            all_rows = db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
+                LeagueSeries.league_id == lid["big"]).all()
+            cutoff_date = sorted({g.calendar_date for g in all_rows})[len(all_rows) // 12 * 3 // 2]
+            for g in all_rows:
+                if g.calendar_date <= cutoff_date:
+                    g.home_score, g.away_score, g.status = rng.randint(0, 6), rng.randint(0, 6), "FINAL"
+            db.commit()
+        bteams, bseries, bgames = load(lid["big"])
+        bexp = brute_standings(bgames, bseries, bteams)
+        bst = client.get(f"/leagues/{lid['big']}/series-standings").json()["standings"]
+        check(all((r["series_wins"], r["series_losses"], r["series_ties"], r["daily_wins"], r["goal_diff"]) ==
+                  (bexp[r["team_id"]]["sw"], bexp[r["team_id"]]["sl"], bexp[r["team_id"]]["st"], bexp[r["team_id"]]["dw"],
+                   bexp[r["team_id"]]["gf"] - bexp[r["team_id"]]["ga"]) for r in bst),
+              "12-team standings tie out to the brute-force tally")
+        bsc = client.get(f"/leagues/{lid['big']}/game-scores").json()["games"]
+        check(len(bsc) == 11 * 2 * 6 * 7 and all(0 <= g["score"] <= 100 and isinstance(g["score"], int) for g in bsc),
+              "all 924 twelve-team Game Scores are integers within 0-100")
+        check(max(g["score"] for g in bsc) > 30 and min(g["score"] for g in bsc) < 15, "scores span a useful range")
+        engine.dispose()  # release the SQLite file so the temp directory can be removed
+
+    print("\nAll NHL series standings and Game Score checks passed.")
+
+
+if __name__ == "__main__":
+    main()

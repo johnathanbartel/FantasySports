@@ -413,3 +413,70 @@ class PeckingOrderResolvedOut(BaseModel):
     team_id: int
     starters: dict[str, list[PeckingOrderPlayerOut]]
     vacancies: list[PeckingOrderVacancyOut]
+
+
+# --- NHL series standings, rivalries, Game Score ----------------------------
+
+class SeriesStandingOut(BaseModel):
+    rank: int
+    team_id: int
+    team_name: str
+    series_wins: int
+    series_losses: int
+    series_ties: int
+    daily_wins: int
+    daily_losses: int
+    daily_ties: int
+    goals_for: int
+    goals_against: int
+    goal_diff: int
+
+
+class SeriesStandingsOut(BaseModel):
+    league_id: int
+    as_of: datetime.date | None
+    tiebreak_order: str
+    standings: list[SeriesStandingOut]
+
+
+class RivalryOut(BaseModel):
+    league_id: int
+    team_low_id: int
+    team_high_id: int
+    series_low_wins: int
+    series_high_wins: int
+    series_ties: int
+    daily_low_wins: int
+    daily_high_wins: int
+    daily_ties: int
+    goals_low: int
+    goals_high: int
+    net_goal_diff_low: int
+    intensity: float
+
+
+class RivalriesOut(BaseModel):
+    league_id: int
+    as_of: datetime.date | None
+    rivalries: list[RivalryOut]
+
+
+class GameScoreOut(BaseModel):
+    daily_game_id: int
+    series_id: int
+    calendar_date: datetime.date
+    home_team_id: int
+    away_team_id: int
+    status: str
+    score: int
+    margin: float
+    cutoff: float
+    rivalry: float
+    urgency: float
+    standings_as_of: datetime.date
+
+
+class GameScoresOut(BaseModel):
+    league_id: int
+    weights: dict[str, float]
+    games: list[GameScoreOut]
