@@ -225,3 +225,15 @@ Constants: cap `BANK_CAP = 1.50` per credit applied to a game (`applied_points`;
 - Routes: `GET /teams/{id}/banked-credits[?status=]` (owner, or the commissioner with commissioner mode for an AI team), `POST /banked-credits/{id}/assign {daily_game_id}`. Errors are `{code, message}`.
 
 Not done: applying `banking.assigned_for_game(...)` credits to the simulated scoreboard (needs a `banked` role in the protected FS-026 adapter), the job that ingests and calls the fallback, off-day marking. Verification: `scripts/verify_hockey_banking.py`.
+
+### NHL banking UI (FS-029)
+
+`web/static/nhl-schedule.html` (the series viewer) now shows off-day banking to a team's owner (or the commissioner for an AI team); anyone else sees a one-line "only shown to the team's owner" note. Logic is `web/static/nhl-banking-logic.js`; every value and recommendation comes from the FS-028 API and nothing is calculated in JavaScript. No backend change was needed.
+
+- **Alert strip** above the zones: what is waiting, the points, the time left before the 24-hour automatic banking; turns urgent under six hours; **Review** opens the first credit.
+- **Banked credits list** (matchup zone): per credit the player, off-day date, `Earned x` (and `· y applies` when capped), a status chip - Available, Assigned, Auto-assigned, Expired - plus a separate Capped chip; where it went (`Banked to Thu 10/16 vs BOS`, or that it banked automatically after 24 hours, or expired with no open game).
+- **Recommendation card** under the chosen credit: the recommended game, a confidence chip with an honest note (`No projection data ... not a prediction`, `Partial basis ... not a win-probability estimate`, `Based on projections`), a "Why this game" disclosure listing the API reasons and which inputs were used (missing inputs read "Not available - not estimated"). **Accept recommendation** or **Choose another game** (radio list of ranked options with opponent record and sample size) -> **Confirm** step stating the points and that it cannot be changed. One request at a time (`ui.submitting`); the API also rejects a repeat with 409.
+- **Errors** map API codes to plain text and reload the options when the credit or game changed under the user; network failures say nothing was changed.
+- **Series tabs** badge each game that holds a credit (`+0.90 banked`, `+0.60 banked (auto)`).
+
+Verification: `scripts/verify_hockey_banking_ui.py` (all five credit states and four recommendation shapes from the real API through Node, plus page structure and double-submit guard). Manual checks recorded 2026-10-10 in the in-app browser against a throwaway database: alert -> review -> neutral recommendation -> choose another -> confirm -> a triple click produced exactly one request and the tab badge/banner updated; all five states rendered; 375 px width without horizontal scroll; keyboard focus moved to the card heading on open and to Confirm after a choice. Not checked: screen-reader output, and the FULL-confidence card in a browser (covered in logic only, since no projection source exists).
