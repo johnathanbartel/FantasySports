@@ -70,6 +70,32 @@
   @keyframes sk{to{background-position:-200% 0}}
   @media (prefers-reduced-motion:reduce){.skeleton{animation:none}}
 
+  /* off-day banking */
+  .bank-alert{display:none;border:1px solid var(--color-process-yellow);background:#fff8df;color:#4a3a00;padding:var(--space-3);margin-bottom:var(--space-4);border-radius:var(--radius-md);align-items:center;gap:var(--space-3);flex-wrap:wrap}
+  .bank-alert.urgent{border-color:var(--color-accent-2);background:var(--color-accent-2-100);color:var(--color-accent-2-900)}
+  .bank-alert .msg{flex:1 1 260px}
+  .bk{font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--color-accent-800);background:var(--color-accent-100);padding:1px 5px;border-radius:2px;justify-self:start}
+  .bk.auto{background:var(--color-neutral-200);color:var(--color-neutral-800)}
+  .bank-sec{border-top:1px solid var(--color-divider);margin-top:var(--space-4);padding-top:var(--space-3)}
+  .credit{border:1px solid var(--color-divider);padding:var(--space-3);margin-top:var(--space-2);display:grid;gap:4px}
+  .credit.sel{border-color:var(--color-accent);box-shadow:inset 3px 0 0 var(--color-accent)}
+  .credit .top{display:flex;justify-content:space-between;gap:var(--space-2);flex-wrap:wrap;align-items:baseline}
+  .chip{font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border:1px solid var(--color-divider);white-space:nowrap}
+  .chip.attention{border-color:var(--color-process-yellow);background:#fff2c4;color:#4a3a00}
+  .chip.good{border-color:var(--color-accent);background:var(--color-accent-100);color:var(--color-accent-800)}
+  .chip.info{background:var(--color-neutral-200);color:var(--color-neutral-800)}
+  .chip.muted{border-style:dashed;color:color-mix(in srgb,var(--color-text) 55%,transparent)}
+  .chip.cap{border-color:var(--color-accent-2);color:var(--color-accent-2-800)}
+  .reco{border:1px solid var(--color-accent);padding:var(--space-3);margin-top:var(--space-3);display:grid;gap:var(--space-2)}
+  .reco ul{margin:0;padding-left:18px;font-size:13px}
+  .reco .inputs li.no{color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+  .reco .row{display:flex;gap:var(--space-2);flex-wrap:wrap}
+  .reco fieldset{border:1px solid var(--color-divider);margin:0;padding:var(--space-2) var(--space-3)}
+  .reco label.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 0;font-size:14px;cursor:pointer}
+  .reco label.opt input{margin-top:4px}
+  .reco .err{background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-2) var(--space-3)}
+  button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
+
   @media (max-width:860px){
     .wrap{padding:var(--space-4) var(--space-3)}
     h1{font-size:30px}
@@ -114,6 +140,7 @@
     </div>
 
     <div id="viewer" style="display:none">
+      <div id="bank-alert" class="bank-alert" role="status" aria-live="polite"></div>
       <div class="zone-switch" role="group" aria-label="Show section">
         <button type="button" data-zone="lineup" aria-pressed="true">Lineup</button>
         <button type="button" data-zone="days" aria-pressed="false">Series days</button>
@@ -140,6 +167,7 @@
         <section class="zone card elev-sm" id="zone-panel" aria-labelledby="h-panel" style="padding:var(--space-4);gap:0">
           <h2 id="h-panel" style="font-size:20px">Matchup</h2>
           <div id="panel"></div>
+          <div id="bank-section" class="bank-sec" aria-labelledby="h-bank"></div>
         </section>
       </div>
     </div>
@@ -148,6 +176,7 @@
 
 <script src="/static/session.js"></script>
 <script src="/static/nhl-schedule-logic.js"></script>
+<script src="/static/nhl-banking-logic.js"></script>
 <script>
 const V = window.NhlViewer;
 const params = new URLSearchParams(location.search);
@@ -293,6 +322,7 @@ function renderSeries() {
       <span class="o">${t.off ? '<span class="muted">OFF DAY</span>' : `<span class="logo" aria-hidden="true">${esc(V.initials(t.opponent))}</span><span>${t.homeAway === 'home' ? 'vs' : '@'} ${esc(t.opponent)}</span>`}</span>
       <span class="s muted">${esc(statusLabel(t.status))}</span>
       <span class="gs ${V.gameScoreClass(t.gameScore)}" title="The Game Score is not available yet">${t.gameScore == null ? 'Game Score —' : 'Game Score ' + t.gameScore}</span>
+      ${bankBadge(t)}
     </button>`).join('');
   const btns = Array.from($('tabs').querySelectorAll('.tab'));
   btns.forEach((b, i) => {
@@ -328,6 +358,152 @@ function renderPanel() {
     </div>`;
 }
 
+// ---- off-day banking (FS-029). Everything shown comes from the FS-028 API; nothing is calculated here. ----
+const B = window.NhlBanking;
+let bank = {state: 'idle', credits: [], error: ''};   // idle | loading | ready | hidden | error
+let ui = {creditId: null, rec: null, view: null, recError: null, loadingRec: false, picking: false, selected: null, confirming: false, submitting: false};
+const resetUi = () => { ui = {creditId: null, rec: null, view: null, recError: null, loadingRec: false, picking: false, selected: null, confirming: false, submitting: false}; };
+const dayLabel = (d) => V.dayLabel(d);
+let bankIndex = {};
+
+function bankBadge(t) {
+  const b = bank.state === 'ready' && t.dailyGameId != null ? B.tabBadges(bank.credits)[t.dailyGameId] : null;
+  return b ? `<span class="bk${b.auto ? ' auto' : ''}" title="${esc(b.name)} banked ${B.fmtPts(b.points)} pts${b.auto ? ' automatically' : ''}">+${B.fmtPts(b.points)} banked${b.auto ? ' (auto)' : ''}</span>` : '';
+}
+
+async function loadBanking(keepSelection) {
+  const team = teams.find(t => t.id === teamId);
+  if (!canManage(team)) { bank = {state: 'hidden', credits: [], error: ''}; resetUi(); renderBank(); renderSeries(); return; }
+  bank.state = 'loading'; renderBank();
+  try {
+    const d = await api(`/teams/${teamId}/banked-credits`);
+    bank = {state: 'ready', credits: B.sortCredits(d.credits), error: '', cap: d.cap, fallbackHours: d.fallback_hours};
+    if (!keepSelection) resetUi();
+    if (ui.creditId && !bank.credits.find(c => c.id === ui.creditId && c.status === 'AVAILABLE')) resetUi();
+  } catch (e) {
+    bank = e.status === 400 ? {state: 'hidden', credits: [], error: ''} : {state: 'error', credits: [], error: e.message};
+  }
+  renderBank(); renderSeries();
+}
+
+function renderBankAlert() {
+  const el = $('bank-alert');
+  const a = bank.state === 'ready' ? B.alertSummary(bank.credits, Date.now(), bank.cap) : null;
+  if (!a) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.className = 'bank-alert' + (a.urgent ? ' urgent' : '');
+  el.style.display = 'flex';
+  el.innerHTML = `<span class="msg"><strong>Banked credit${a.count > 1 ? 's' : ''}:</strong> ${esc(a.text)}</span><button type="button" class="btn btn-primary" id="bank-review">Review ${a.count > 1 ? 'credits' : 'options'}</button>`;
+  $('bank-review').onclick = () => { setZone('panel'); openCredit(a.firstId, true); };
+}
+
+function creditHtml(c) {
+  const st = B.stateOf(c);
+  const sel = ui.creditId === c.id;
+  const cd = c.status === 'AVAILABLE' ? B.fallbackCountdown(c, Date.now()) : null;
+  return `<li class="credit${sel ? ' sel' : ''}" style="list-style:none" data-credit="${c.id}">
+    <div class="top"><strong>${esc(c.player_name)}</strong>
+      <span><span class="chip ${st.tone}">${esc(st.label)}</span>${st.capped ? ' <span class="chip cap">Capped</span>' : ''}</span></div>
+    <div class="muted" style="font-size:13px">${esc(V.dayLabel(c.source_calendar_date))} off day · ${esc(B.pointsText(c, bank.cap))}</div>
+    ${cd ? `<div style="font-size:13px">${esc(cd.text)}</div>` : `<div style="font-size:13px">${esc(B.outcomeText(c, bankIndex))}</div>`}
+    ${c.status === 'AVAILABLE' ? `<div><button type="button" class="btn btn-secondary" data-open="${c.id}" aria-expanded="${sel}" aria-controls="reco">${sel ? 'Hide options' : 'Choose a game'}</button></div>` : ''}
+    ${sel ? '<div id="reco" aria-live="polite"></div>' : ''}
+  </li>`;
+}
+
+function renderBank() {
+  renderBankAlert();
+  const el = $('bank-section');
+  if (!B || bank.state === 'idle') { el.innerHTML = ''; return; }
+  bankIndex = B.gameIndex(schedule, dayLabel);
+  const head = '<h3 id="h-bank" style="margin:0 0 4px">Banked credits</h3>';
+  if (bank.state === 'hidden') { el.innerHTML = `${head}<p class="muted" style="margin:0;font-size:13px">Off-day credits are only shown to the team's owner.</p>`; return; }
+  if (bank.state === 'loading') { el.innerHTML = `${head}<div class="skeleton" style="width:50%"></div>`; return; }
+  if (bank.state === 'error') { el.innerHTML = `${head}<p role="alert" style="margin:0 0 var(--space-2)">Couldn't load banked credits: ${esc(bank.error)}</p><button type="button" class="btn btn-secondary" id="bank-retry">Try again</button>`; $('bank-retry').onclick = () => loadBanking(); return; }
+  const intro = `<p class="muted" style="margin:0 0 var(--space-2);font-size:13px">Points your players earn on an off day bank into a later game. One credit per game, up to ${B.fmtPts(bank.cap)} each. Unclaimed credits bank automatically after ${bank.fallbackHours} hours.</p>`;
+  if (!bank.credits.length) { el.innerHTML = `${head}${intro}<div class="panel-state"><h3>No banked credits</h3><p class="muted" style="margin:0">Credits appear here when a rostered player scores on one of your off days.</p></div>`; return; }
+  el.innerHTML = `${head}${intro}<ul style="margin:0;padding:0" aria-label="Banked credits">${bank.credits.map(creditHtml).join('')}</ul>`;
+  el.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openCredit(Number(b.dataset.open), ui.creditId !== Number(b.dataset.open)));
+  renderReco();
+}
+
+async function openCredit(id, open) {
+  if (ui.submitting) return;
+  if (!open) { resetUi(); renderBank(); return; }
+  resetUi(); ui.creditId = id; ui.loadingRec = true; renderBank();
+  try {
+    ui.rec = await api(`/banked-credits/${id}/recommendation`);
+    ui.view = B.recommendationView(ui.rec, dayLabel);
+  } catch (e) { ui.recError = B.bankError(e); }
+  ui.loadingRec = false; renderBank();
+  const r = $('reco'); if (r) { const h = r.querySelector('h4'); if (h) { h.tabIndex = -1; h.focus(); } }
+}
+
+function renderReco() {
+  const el = $('reco');
+  if (!el || !ui.creditId) return;
+  const credit = bank.credits.find(c => c.id === ui.creditId);
+  if (!credit) { el.innerHTML = ''; return; }
+  if (ui.loadingRec) { el.innerHTML = '<div class="reco"><div class="skeleton" style="width:60%"></div><p class="muted" style="margin:0">Loading options…</p></div>'; return; }
+  if (ui.recError && !ui.view) { el.innerHTML = `<div class="reco"><div class="err" role="alert"><strong>${esc(ui.recError.title)}</strong> ${esc(ui.recError.text)}</div><div class="row"><button type="button" class="btn btn-secondary" id="reco-refresh">Refresh</button></div></div>`; $('reco-refresh').onclick = () => openCredit(credit.id, true); return; }
+  const v = ui.view;
+  const dis = ui.submitting ? 'disabled aria-disabled="true"' : '';
+  const err = ui.recError ? `<div class="err" role="alert"><strong>${esc(ui.recError.title)}</strong> ${esc(ui.recError.text)}</div>` : '';
+  let body;
+  if (!v.hasRecommendation) {
+    body = `<p style="margin:0">${esc(v.confidenceNote)} This credit will expire at the end of its window.</p>`;
+  } else if (ui.confirming) {
+    const opt = v.options.find(o => o.id === ui.selected);
+    body = `<p style="margin:0" id="confirm-text"><strong>${esc(B.confirmText(credit, opt, bank.cap))}</strong></p>
+      <div class="row"><button type="button" class="btn btn-primary" id="reco-confirm" ${dis}>${ui.submitting ? 'Banking…' : 'Confirm'}</button>
+      <button type="button" class="btn btn-secondary" id="reco-back" ${dis}>Back</button></div>`;
+  } else if (ui.picking) {
+    body = `<fieldset><legend>Choose a game</legend>${v.options.map(o => `<label class="opt"><input type="radio" name="bank-game" value="${o.id}" ${ui.selected === o.id ? 'checked' : ''}><span>${esc(o.label)}${o.recommended ? ' <span class="chip good">Recommended</span>' : ''}<span class="muted" style="display:block;font-size:12px">Rank ${o.rank}${o.strength ? ' · opponent ' + esc(o.strength) : ''}</span></span></label>`).join('')}</fieldset>
+      <div class="row"><button type="button" class="btn btn-primary" id="reco-pick" ${ui.selected == null ? 'disabled aria-disabled="true"' : ''}>Review choice</button>
+      <button type="button" class="btn btn-secondary" id="reco-cancel">Back to recommendation</button></div>`;
+  } else {
+    body = `<div><span class="chip ${v.confidenceKey === 'FULL' ? 'good' : v.confidenceKey === 'PARTIAL' ? 'info' : 'muted'}">${esc(v.confidenceLabel)}</span> <span class="muted" style="font-size:13px">${esc(v.confidenceNote)}</span></div>
+      <details><summary>Why this game</summary><ul>${v.reasons.map(r => `<li>${esc(r)}</li>`).join('')}</ul>
+      <ul class="inputs" aria-label="Inputs">${v.inputs.map(i => `<li class="${i.available ? 'yes' : 'no'}">${esc(i.label)}: ${esc(i.text)}</li>`).join('')}</ul></details>
+      <div class="row"><button type="button" class="btn btn-primary" id="reco-accept" ${dis}>Accept recommendation</button>
+      ${v.options.length > 1 ? `<button type="button" class="btn btn-secondary" id="reco-choose" ${dis}>Choose another game</button>` : ''}</div>`;
+  }
+  el.innerHTML = `<div class="reco" role="group" aria-labelledby="reco-h"><h4 id="reco-h" style="margin:0">${esc(credit.player_name)}: ${esc(ui.confirming ? 'confirm your choice' : ui.picking ? 'choose a game' : v.headline)}</h4>${err}${body}</div>`;
+  const on = (id, fn) => { const b = $(id); if (b) b.onclick = fn; };
+  on('reco-accept', () => { ui.selected = v.recommendedId; ui.confirming = true; ui.recError = null; renderReco(); const b = $('reco-confirm'); if (b) b.focus(); });
+  on('reco-choose', () => { ui.picking = true; ui.selected = null; ui.recError = null; renderReco(); const r = el.querySelector('input[type=radio]'); if (r) r.focus(); });
+  on('reco-cancel', () => { ui.picking = false; ui.selected = null; renderReco(); const b = $('reco-choose'); if (b) b.focus(); });
+  on('reco-back', () => { ui.confirming = false; renderReco(); });
+  on('reco-pick', () => { ui.picking = false; ui.confirming = true; renderReco(); const b = $('reco-confirm'); if (b) b.focus(); });
+  on('reco-confirm', submitBank);
+  el.querySelectorAll('input[name=bank-game]').forEach(r => r.onchange = () => { ui.selected = Number(r.value); const b = $('reco-pick'); if (b) { b.disabled = false; b.removeAttribute('aria-disabled'); } });
+}
+
+// One request at a time: a double click, a second tap or Enter held down must not assign twice.
+async function submitBank() {
+  if (ui.submitting) return;
+  const credit = bank.credits.find(c => c.id === ui.creditId);
+  if (!credit || ui.selected == null) return;
+  ui.submitting = true; ui.recError = null; renderReco();
+  try {
+    const done = await FSC.post(`/banked-credits/${credit.id}/assign`, {daily_game_id: ui.selected});
+    const label = bankIndex[done.assigned_daily_game_id] ? B.gameText(bankIndex[done.assigned_daily_game_id]) : 'the game';
+    ui.submitting = false;
+    await loadBanking();
+    showResult(`Banked ${B.fmtPts(done.applied_points)} pts from ${done.player_name} to ${label}.`);
+  } catch (e) {
+    ui.submitting = false;
+    ui.recError = B.bankError(e);
+    ui.confirming = false; ui.picking = false;
+    if (ui.recError.refresh) { const keep = ui.recError; await loadBanking(true); if (ui.creditId) { await refreshReco(); ui.recError = keep; } }
+    renderReco();
+  }
+}
+
+async function refreshReco() {
+  try { ui.rec = await api(`/banked-credits/${ui.creditId}/recommendation`); ui.view = B.recommendationView(ui.rec, dayLabel); }
+  catch (e) { ui.view = null; ui.recError = B.bankError(e); resetUi(); }
+}
+
 // ---- loading ----
 async function loadTeam() {
   showError(''); showResult('');
@@ -345,7 +521,9 @@ async function loadTeam() {
   const first = schedule.series[seriesIdx];
   if (first) { const i = first.games.findIndex(g => g.calendar_date >= today()); dayIdx = i >= 0 ? i : 0; }
   pageState('');
+  bank = {state: 'idle', credits: [], error: ''}; resetUi();
   renderLines(); renderSeries(); renderPanel();
+  loadBanking();
 }
 
 async function init() {
