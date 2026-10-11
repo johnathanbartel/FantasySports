@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.auction.constants import MINIMUM_BID, STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.defense_modes import league_pool
+from fantasy_sports.platform.league_fill import assert_league_full
 from fantasy_sports.platform.db.models.core import (
     AuctionBid,
     AuctionDraft,
@@ -45,6 +46,7 @@ def start_auction(db: Session, league_id: int, round_seconds: int) -> AuctionDra
     teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
     if not teams:
         raise ValueError("League has no teams yet")
+    assert_league_full(db, league)
 
     auction = AuctionDraft(
         league_id=league_id,

@@ -17,6 +17,7 @@ from fantasy_sports.api.schemas import (
 )
 from fantasy_sports.platform import draft_clock
 from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.league_fill import assert_league_full
 from fantasy_sports.platform.db.models.core import (
     Draft,
     DraftableAsset,
@@ -60,6 +61,10 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     teams = db.query(Team).filter(Team.league_id == league.id).order_by(Team.id).all()
     if not teams:
         raise HTTPException(400, "League has no teams yet")
+    try:
+        assert_league_full(db, league)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     # TODO: real draft-order randomization/settings. v1 uses team.id order.
     if db.query(Draft).filter(Draft.league_id == league.id, Draft.status == "in_progress").first():
         raise HTTPException(409, "This league already has a draft in progress")
