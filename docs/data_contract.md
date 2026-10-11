@@ -267,3 +267,7 @@ Disabled-by-default interfaces for AI commentary, shared music and video/audio c
 ### Weekly salary-cap redraft (FS-033)
 
 Separate league mode with contests, pairings, per-contest salaries, draft/submitted rosters and a fixed cap; migration `d6f0b4c8e2a5` (adds `leagues.league_mode` and six tables). The cap-adjustment formula is an open product decision and is not implemented; salaries are a commissioner-supplied input. Full rules, routes and the decision record are in `docs/weekly_redraft.md`. Verification: `scripts/verify_weekly_redraft.py`.
+
+### NHL series release gate (FS-034)
+
+`scripts/verify_hockey_series_e2e.py` (12 teams, 24 rounds, 1 human + 11 AI, built from `alembic upgrade head`) and `scripts/run_hockey_release_gate.py` (full command matrix). Go/no-go, defects fixed, deferred items and deployment impact are in `docs/hockey_series_release_checklist.md`.

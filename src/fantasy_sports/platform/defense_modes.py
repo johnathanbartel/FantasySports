@@ -17,7 +17,7 @@ offer individual defense are never filtered.
 from __future__ import annotations
 
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
@@ -75,6 +75,10 @@ def league_pool(db: Session, league_id: int) -> list[DraftableAsset]:
     modes = league_modes(db, league_id)
     assets = (
         db.query(DraftableAsset)
+        # Eager-load what in_pool()/the board read per asset; without this a 360-player pool costs ~1000 lazy queries
+        # per request, which made a 288-pick draft take minutes (found by the FS-034 end-to-end run).
+        .options(selectinload(DraftableAsset.player), selectinload(DraftableAsset.universe),
+                 selectinload(DraftableAsset.defense_group))
         .outerjoin(Player, Player.id == DraftableAsset.player_id)
         .filter(
             DraftableAsset.universe_id.in_(list(modes) or [0]),
