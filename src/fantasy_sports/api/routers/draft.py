@@ -15,9 +15,10 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import draft_clock, pecking_order
+from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.league_features import is_college, roster_spots
 from fantasy_sports.platform.league_fill import assert_league_full
 from fantasy_sports.platform.db.models.core import (
     Draft,
@@ -69,12 +70,24 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     # TODO: real draft-order randomization/settings. v1 uses team.id order.
     if db.query(Draft).filter(Draft.league_id == league.id, Draft.status == "in_progress").first():
         raise HTTPException(409, "This league already has a draft in progress")
-    if not league_pool(db, league.id):
+    pool = league_pool(db, league.id)
+    if not pool:
         raise HTTPException(
             400,
             "This league's player pool is empty - ingest the universe's rosters first "
             "(for NFL: scripts/ingest_nfl_rosters_and_stats.py)",
         )
+    if not is_college(db, league.id):
+        # Outside college leagues the draft fills every roster spot (starters and bench): one round per spot.
+        spots = roster_spots(db, league.id)
+        if spots and league.draft_rounds != spots:
+            league.draft_rounds = spots
+        if len(pool) < len(teams) * league.draft_rounds:
+            raise HTTPException(
+                400,
+                f"The player pool has {len(pool)} players but {len(teams)} teams x {league.draft_rounds} roster spots "
+                f"need {len(teams) * league.draft_rounds} - ingest more of the universe's players first",
+            )
 
     timed = payload.pick_seconds is not None or payload.overnight_start or payload.overnight_end
     now = utcnow()
@@ -179,6 +192,8 @@ def _close_if_finished(db: Session, draft_id: int) -> None:
         draft.status = "complete"
         draft.completed_at = datetime.datetime.utcnow()
         draft_clock.clear(draft)
+        # Free agency opens now (platform/free_agency.is_open), and a league that doesn't set its own schedule gets one.
+        auto_schedule.ensure_schedule(db, db.get(League, draft.league_id))
 
 
 def _next_open_pick(db: Session, draft_id: int) -> DraftPick | None:

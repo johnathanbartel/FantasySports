@@ -81,6 +81,7 @@ const HOCKEY_POSITIONS = ['C', 'LW', 'RW', 'D', 'G'];
 let POSITIONS = FOOTBALL_POSITIONS;   // set from the league's universe in refreshOverview()
 const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
+const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const ALL_TABS = [['home', 'Home'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
@@ -152,9 +153,11 @@ async function renderHome() {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
       ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`)}
       ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`)}
-      ${statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine())}
-      ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? 'Fill open roster spots' : 'Opens when recruiting ends')}
-      ${statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`)}
+      ${ov.draft_type === 'snake'
+        ? statCard('Draft', {complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state, ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`)
+        : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine())}
+      ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'))}
+      ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}
     </div>
     ${fillNeeded && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
       <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.</span>
@@ -236,6 +239,18 @@ function ensureActiveTeam() {
   }
 }
 
+// Releases a player to free agency from the Roster tab. Free agency is open once the draft is over.
+async function dropPlayer(team, assetId, name) {
+  if (!confirm(`Drop ${name}? He goes back to the free-agent pool${ov.is_college ? ' and you are not refunded what he cost' : ''}.`)) return;
+  showError(''); showResult('');
+  try {
+    await FSC.post(`/teams/${team.id}/free-agency/drop`, {draftable_asset_id: assetId});
+    await go('roster');
+    showResult(`Dropped ${name}. He is now a free agent.`);
+  } catch (e) { showError(e.message); }
+}
+const canDrop = (t) => canManage(t) && ov.free_agency_open;
+
 // ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
 let gridGroups = [], gridSel = null;
 
@@ -256,22 +271,29 @@ function paintHockeyRoster() {
   const cellBtn = (c) => {
     const p = c.player, sel = isSel(c.group, c.rank, null);
     const border = sel ? '2px solid var(--color-accent)' : target(c.group) ? '2px dashed var(--color-accent)' : '1px solid var(--color-divider)';
-    const label = p ? `${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}` : '<span class="muted">Open</span>';
+    const label = p ? `${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}<div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>` : '<span class="muted">Open</span>';
     return `<button type="button" class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can && (p || gridSel) ? '' : 'disabled'} aria-pressed="${sel}"
       style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);background:var(--color-surface, transparent);color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:38px">${label}</button>`;
   };
   const reserveBtn = (g, p) => {
     const sel = isSel(g, null, p.player_id);
     return `<button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
-      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer">${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}</span></button>`;
+      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer">${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)} · ${ppg(p.points_per_game)} PPG</span></button>`;
   };
   const reserveGroups = ['C', 'W', 'D', 'G'].filter(g => grid.reserves[g].length);
+  // The selected player, if any, so he can be dropped to free agency.
+  const selPlayer = !gridSel ? null : gridSel.playerId != null
+    ? (grid.reserves[gridSel.group] || []).find(p => p.player_id === gridSel.playerId)
+    : (gridGroups.find(g => g.position_group === gridSel.group)?.ranked || []).find(p => p.priority === gridSel.rank);
+  const dropBar = canDrop(t) ? `<div style="margin:0 0 var(--space-2);min-height:36px;display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+      ${selPlayer ? `<span>Selected: <strong>${esc(selPlayer.display_name)}</strong></span><button class="btn btn-secondary" id="grid-drop">Drop to free agency</button>` : '<span class="muted" style="font-size:13px">Select a player to swap him with another of his position, or drop him to free agency.</span>'}</div>` : '';
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">NHL ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div>${teamPicker('team-pick')}</div></div>
     <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-4)">
       ${statCard('Roster', total, '')}${['C', 'W', 'D', 'G'].map(g => statCard(g, counts[g] || 0, '')).join('')}</div>
+    ${dropBar}
     <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-4 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
       <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
@@ -283,6 +305,7 @@ function paintHockeyRoster() {
   $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('roster'); };
   document.querySelectorAll('.gcell').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, rank: Number(b.dataset.rank)}));
   document.querySelectorAll('.gres').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, playerId: Number(b.dataset.pid)}));
+  if ($('grid-drop') && selPlayer) $('grid-drop').onclick = () => dropPlayer(t, selPlayer.draftable_asset_id, selPlayer.display_name);
   bindNav();
 }
 
@@ -305,7 +328,6 @@ async function renderRoster() {
   const t = activeTeam();
   if (isHockey()) return renderHockeyRoster();
   const roster = await api(`/teams/${t.id}/roster`);
-  const lines = ov.draft_type === 'snake' ? await api(`/teams/${t.id}/lines`).catch(() => null) : null;   // snake leagues: show it by lineup slot
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
   roster.sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   const counts = {}; roster.forEach(r => counts[r.position] = (counts[r.position] || 0) + 1);
@@ -324,13 +346,19 @@ async function renderRoster() {
         ? `${open} open spot${open === 1 ? '' : 's'}. Open spots are filled through <a href="#" data-go="transactions">free agency on the Transactions tab</a>${t.is_ai_owned ? ' - AI teams are required to fill theirs, and do so automatically.' : '.'}`
         : 'Teams may recruit fewer players than the roster size. Free agency opens when recruiting ends, and open spots are filled there.'}</div>` : ''}
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-5)">
-      ${lines ? RosterLines.html(lines) : roster.length ? roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
+      ${roster.length ? `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span><span class="pts">Points</span><span class="pts">PPG</span>${canDrop(t) ? '<span style="width:64px"></span>' : ''}</div>`
+        + roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
         <span class="pill">${r.acquired_via === 'free_agency' ? 'Free agency' : r.acquired_via === 'recruiting' ? 'Recruited' : esc(r.acquired_via || '')}</span>
-        <span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span></div>`).join('')
+        <span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span><span class="pts" title="Points per game">${ppg(r.points_per_game)}</span>
+        ${canDrop(t) ? `<button class="btn btn-ghost" data-drop="${r.draftable_asset_id}">Drop</button>` : ''}</div>`).join('')
         : '<p class="muted" style="margin:var(--space-3) 0">No players yet.</p>'}
     </div>
     <p class="muted" style="font-size:12px;margin-top:var(--space-2)">Points are last season's (${LAST}) fantasy points, ESPN standard scoring. Defense groups have none.</p>`;
   $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('roster'); };
+  document.querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
+    const r = roster.find(x => x.draftable_asset_id === Number(b.dataset.drop));
+    dropPlayer(t, r.draftable_asset_id, r.display_name);
+  });
   bindNav();
   document.querySelectorAll('a[data-go]').forEach(a => a.onclick = (e) => { e.preventDefault(); go(a.dataset.go); });
 }
@@ -346,8 +374,9 @@ async function renderTransactions() {
   cache.tx = {fa, log, sum, roster, team: t};
   $('content').innerHTML = `
     <div class="note" style="margin-bottom:var(--space-4)">
-      Teams may recruit fewer players than the roster size. <strong>Open roster spots are filled through free agency</strong>, which opens when recruiting ends.
-      AI teams are required to use it to fill their rosters, and do so automatically the moment recruiting closes.
+      ${ov.is_college ? `Teams may recruit fewer players than the roster size. <strong>Open roster spots are filled through free agency</strong>, which opens when recruiting ends.
+      AI teams are required to use it to fill their rosters, and do so automatically the moment recruiting closes.`
+      : `<strong>Free agency is open as soon as the draft ends.</strong> Drop a player to release him to the pool, and sign any free agent into an open roster spot. Signing is free.`}
       ${fa.open ? `<span class="muted"> ${esc(fa.price_note)}</span>` : ''}
     </div>
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
@@ -362,7 +391,7 @@ async function renderTransactions() {
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
         <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)"><input id="fa-q" class="inp" placeholder="Search players or schools..." style="flex:1" value="${esc(view.fa.q)}">
-          <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option><option value="price">Sort: asking price (low)</option><option value="name">Sort: name</option></select></div>
+          <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option>${ov.is_college ? '<option value="price">Sort: asking price (low)</option>' : ''}<option value="name">Sort: name</option></select></div>
         <div id="fa-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-2)"></div>
         <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="fa-list"></div>
       </div>
@@ -370,7 +399,7 @@ async function renderTransactions() {
         <h3 style="margin:0 0 var(--space-2)">${tn(t.id)} roster</h3>
         <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="tx-roster"></div>
       </div>
-    </div>` : `<div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)"><div class="card-title">Free agency is closed</div><p class="muted" style="margin:var(--space-2) 0 0">It opens when the recruiting draft ends (${esc(draftLine())}).</p></div>`}
+    </div>` : `<div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)"><div class="card-title">Free agency is closed</div><p class="muted" style="margin:var(--space-2) 0 0">It opens when the ${ov.draft_type === 'snake' ? 'draft' : 'recruiting draft'} ends${ov.draft_type === 'snake' ? '' : ` (${esc(draftLine())})`}.</p></div>`}
     <h3 style="margin:0 0 var(--space-2)">Transaction log</h3>
     <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2);flex-wrap:wrap">
       <select id="log-kind" class="inp"><option value="">All activity</option><option value="recruited">Recruited</option><option value="added">Signed</option><option value="dropped">Dropped</option></select>
@@ -404,7 +433,7 @@ function drawFa() {
   const can = canManage(team) && sum.open_spots > 0;
   $('fa-list').innerHTML = rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
       <span style="flex:1;min-width:0"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
-      <span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>
+      <span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
       <button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button></div>`).join('')
     + (rows.length > 50 ? `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing 50 of ${rows.length} - search or pick a position to narrow.</p>` : '')
     || '<p class="muted" style="margin:var(--space-2) 0">No free agents match.</p>';
@@ -417,7 +446,7 @@ function drawTxRoster() {
   const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   $('tx-roster').innerHTML = sorted.length ? sorted.map(r => `<div class="row">${posTag(r.position)}
     <span style="flex:1;min-width:0"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
-    <span class="pts muted">${pts(r.last_season_points)}</span>
+    <span class="pts muted" title="Points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
     <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
     : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
   $('tx-roster').querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
@@ -439,7 +468,7 @@ async function faAct(kind, assetId) {
   try {
     const r = await FSC.post(`/teams/${t.id}/free-agency/${kind}`, {draftable_asset_id: assetId});
     await go('transactions');
-    showResult(kind === 'add' ? `Signed ${r.display_name} for ${money(r.price)}.` : `Dropped ${r.display_name}.`);
+    showResult(kind === 'add' ? `Signed ${r.display_name}${ov.is_college ? ' for ' + money(r.price) : ''}.` : `Dropped ${r.display_name}.`);
   } catch (e) { showError(e.message); }
 }
 
@@ -458,12 +487,7 @@ async function renderSchedule() {
   const mySchedule = view.schedTeam && ov.teams_set_schedule ? await api(`/teams/${view.schedTeam}/schedule`) : null;
 
   const selfSchedule = ov.teams_set_schedule;
-  const banner = !selfSchedule ? `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
-    <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center">
-      <div><div class="card-kicker">Schedule</div><strong>${isHockey() ? 'Series schedule' : state.has_schedule ? 'Set by the league' : 'No schedule yet'}</strong>
-        <div class="muted" style="font-size:13px;margin-top:2px">Only college leagues let teams arrange their own opponents. In this league the schedule is set for you.
-          ${isHockey() ? `<a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${myTeam() ? '&team_id=' + myTeam().id : ''}">Open the series schedule &amp; lineup</a>.` : ''}</div></div>
-      ${isCommissioner && !state.has_schedule && !isHockey() ? '<button class="btn btn-primary" id="mk-sched">Create schedule</button>' : ''}</div></div>` :
+  const banner = !selfSchedule ? await proScheduleHtml(state) :
   `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4)">
     <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center">
       <div><div class="card-kicker">Preseason schedule stage</div>
@@ -537,9 +561,43 @@ async function renderSchedule() {
   wireSchedule(state);
 }
 
+// The auto-generated schedule of a league whose teams don't set their own (NHL series, NFL weeks): read-only.
+async function proScheduleHtml(state) {
+  const teams = ov.teams;
+  if (view.proTeam === undefined || !teamsById[view.proTeam]) view.proTeam = (myTeam() || teams[0])?.id;
+  const t = teamsById[view.proTeam];
+  const head = (body) => `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5);margin-bottom:var(--space-4);overflow-x:auto">
+    <div style="display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:baseline">
+      <div><div class="card-kicker">Schedule</div><h3 style="margin:0">${isHockey() ? 'Series schedule' : 'Season schedule'}</h3></div>
+      ${t ? `<select id="pro-team" class="inp">${teams.map(x => `<option value="${x.id}"${x.id === view.proTeam ? ' selected' : ''}>${esc(x.name)}${x.id === myTeam()?.id ? ' (you)' : ''}</option>`).join('')}</select>` : ''}</div>
+    <p class="muted" style="font-size:13px;margin:var(--space-2) 0">The schedule is generated for you when the draft ends - only college leagues arrange their own opponents.</p>${body}</div>`;
+  if (!state.has_schedule) {
+    const ready = ov.draft_state === 'complete';
+    return head(`<p style="margin:var(--space-2) 0">${ready ? 'No schedule has been created yet.' : 'The schedule is created automatically as soon as the draft finishes.'}</p>
+      ${ready && isCommissioner ? '<button class="btn btn-primary" id="mk-sched">Generate schedule now</button>' : ''}`);
+  }
+  if (isHockey()) {
+    const s = await api(`/teams/${t.id}/series-schedule`);
+    const fmtD = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+    return head(`<table class="table"><thead><tr><th>#</th><th>Dates</th><th>Opponent</th><th>Games</th><th>Status</th></tr></thead><tbody>
+      ${s.series.map((x, i) => `<tr><td>${i + 1}</td><td>${fmtD(x.start_date)} - ${fmtD(x.end_date)}</td><td>${tn(x.opponent_id, x.opponent_name)}</td>
+        <td>${x.total_days} (${x.games.filter(g => g.home_away === 'home').length} home)</td><td class="muted">${esc(x.status.toLowerCase().replace('_', ' '))}</td></tr>`).join('')}
+      </tbody></table>
+      <p style="margin:var(--space-2) 0 0"><a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${t ? '&team_id=' + t.id : ''}">Open the series schedule &amp; lineup</a></p>`);
+  }
+  const sch = await api(`/teams/${t.id}/schedule`);
+  return head(`<table class="table"><thead><tr><th>Week</th><th>Starts</th><th>Opponent</th></tr></thead><tbody>
+    ${sch.weeks.map(w => `<tr><td>${w.week_number}</td><td class="muted">${esc(w.start_date || '')}</td><td>${w.opponent_id ? tn(w.opponent_id, w.opponent_name) : '<span class="muted">Bye</span>'}</td></tr>`).join('')}</tbody></table>`);
+}
+
 function wireSchedule(state) {
   const act = async (fn) => { try { await fn(); await renderSchedule(); } catch (e) { showError(e.message); } };
-  if ($('mk-sched')) $('mk-sched').onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/schedule/auto`, {weeks: state.regular_weeks}));
+  if ($('mk-sched')) $('mk-sched').onclick = () => act(async () => {
+    if (state.is_college) return FSC.post(`/leagues/${LEAGUE_ID}/schedule/auto`, {weeks: state.regular_weeks});
+    const r = await FSC.post(`/leagues/${LEAGUE_ID}/schedule/generate`);
+    if (!r.created) throw new Error(r.reason || 'The schedule could not be created yet.');
+  });
+  if ($('pro-team')) $('pro-team').onchange = (e) => { view.proTeam = Number(e.target.value); renderSchedule(); };
   if ($('close-stage')) $('close-stage').onclick = () => { if (confirm('Close the schedule stage? AI teams answer the requests made to them, all other open requests are declined, and nothing can change afterwards.')) act(async () => {
     const r = await FSC.post(`/leagues/${LEAGUE_ID}/schedule/close`); showResult(`Stage closed: ${r.accepted} request${r.accepted === 1 ? '' : 's'} accepted by AI teams, ${r.declined} declined.`); }); };
   if ($('sched-team')) $('sched-team').onchange = (e) => { view.schedTeam = Number(e.target.value); renderSchedule(); };

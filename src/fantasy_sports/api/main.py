@@ -55,6 +55,16 @@ app.include_router(simulator.router)
 app.include_router(banking.router)
 
 
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    """The pages and their scripts/styles change with every deploy: have browsers check (a cheap 304) instead of
+    reusing a stale copy, so a fix like a missing CSS token shows up straight away."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

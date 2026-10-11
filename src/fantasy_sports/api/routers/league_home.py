@@ -15,7 +15,9 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
 from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
-from fantasy_sports.platform.league_features import is_college
+from fantasy_sports.platform.league_features import draft_state, is_college
+from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import (
     Conference,
     DefenseGroup,
@@ -88,6 +90,8 @@ class OverviewOut(BaseModel):
     free_agency_open: bool
     ai_teams_with_open_spots: int
     teams: list[TeamSummary]
+    is_college: bool = False
+    draft_state: str = "not_started"     # not_started / in_progress / complete, whatever kind of draft the league runs
     has_rankings: bool = False          # College Football / College Basketball only, to start
     teams_set_schedule: bool = False    # likewise: only college teams negotiate their own schedules
 
@@ -127,7 +131,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         commissioner_name=users.get(league.commissioner_user_id), season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
-        has_rankings=college, teams_set_schedule=college,
+        is_college=college, draft_state=draft_state(db, league_id), has_rankings=college, teams_set_schedule=college,
     )
 
 
@@ -138,6 +142,7 @@ class FreeAgentOut(BaseModel):
     position: str | None
     real_team: str | None
     last_season_points: float | None
+    points_per_game: float | None = None
     asking_price: int   # PROVISIONAL rule - see platform/free_agency.py
 
 
@@ -164,19 +169,22 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "League not found")
     is_open = free_agency.is_open(db, league_id)
     note = ("Asking prices are provisional: each player's recruiting price, revealed once recruiting ends."
-            if is_open else "Free agency opens when the recruiting draft ends.")
+            if is_open and is_college(db, league_id) else "Signing is free: any free agent can fill an open roster spot."
+            if is_open else "Free agency opens when the draft ends.")
     if not is_open:
         return FreeAgentsOut(open=False, price_note=note, players=[])
     prices = free_agency.asking_prices(db, league)
     taken = free_agency.rostered_ids(db, league_id)
     schools = _school_names(db)
-    points = season_points_by_asset(db)
-    assets = db.query(DraftableAsset).options(*_EAGER).filter(
-        DraftableAsset.id.in_([a for a in prices if a not in taken] or [0])).all()
+    free_ids = [a for a in prices if a not in taken]
+    stats = stats_by_asset(db, free_ids)
+    rates = rates_by_asset(db, free_ids)
+    assets = db.query(DraftableAsset).options(*_EAGER).filter(DraftableAsset.id.in_(free_ids or [0])).all()
     return FreeAgentsOut(open=True, price_note=note, players=[
         FreeAgentOut(
             draftable_asset_id=a.id, display_name=draftable_asset_display_name(a), position=draftable_asset_position(a),
-            real_team=_school(a, schools), last_season_points=points.get(a.id), asking_price=prices[a.id])
+            real_team=_school(a, schools), last_season_points=stats.get(a.id, {}).get("points"),
+            points_per_game=rates.get(a.id, {}).get("points_per_game"), asking_price=prices[a.id])
         for a in assets
     ])
 
@@ -204,7 +212,7 @@ def fa_summary(team_id: int, db: Session = Depends(get_db), user: User | None = 
         or (team.is_ai_owned and league.commissioner_user_id == user.id
             and entitlements.has_feature(db, user, entitlements.COMMISSIONER_MODE))
     )
-    money = free_agency.team_money(db, team) if can_see else None
+    money = free_agency.team_money(db, team) if can_see and is_college(db, team.league_id) else None
     return FaSummaryOut(
         team_id=team_id, roster_count=n, roster_size=league.draft_rounds, open_spots=max(0, league.draft_rounds - n),
         fa_money=money["fa_money"] if money else None, roster_cost=money["roster_cost"] if money else None,

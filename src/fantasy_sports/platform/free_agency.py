@@ -32,11 +32,13 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
-from fantasy_sports.platform import season
+from fantasy_sports.platform import pecking_order, season
+from fantasy_sports.platform.league_features import is_college
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.db.models.core import (
+    Draft,
     DraftableAsset,
     FreeAgencyTransaction,
     League,
@@ -56,9 +58,13 @@ USER, COMMISSIONER, AI_FILL = "user", "commissioner", "ai_fill"
 
 
 def is_open(db: Session, league_id: int) -> bool:
-    """Free agency opens when the recruiting draft ends."""
+    """Free agency opens when the draft ends: the recruiting draft for a college league, the snake draft for any other."""
     draft = db.query(RecruitingDraft).filter_by(league_id=league_id).first()
-    return draft is not None and draft.status == "closed"
+    if draft is not None and draft.status == "closed":
+        return True
+    if is_college(db, league_id):
+        return False
+    return db.query(Draft).filter_by(league_id=league_id, status="complete").first() is not None
 
 
 def pool_ids(db: Session, league_id: int) -> list[int]:
@@ -83,6 +89,8 @@ def asking_prices(db: Session, league: League) -> dict[int, int]:
     """PROVISIONAL price rule: a free agent costs his hidden recruiting price,
     made public once recruiting ends. Players with no recruiting price (a league
     that never ran a recruiting draft) cost the average player's price."""
+    if not is_college(db, league.id):      # no budget outside college leagues: signings are free
+        return {a: 0 for a in pool_ids(db, league.id)}
     fallback = pricing.ROLE_MEAN_PER_WEEK * league.draft_rounds
     draft = db.query(RecruitingDraft).filter_by(league_id=league.id).first()
     out = {}
@@ -122,6 +130,8 @@ def roster_count(db: Session, team_id: int) -> int:
 
 def _sign(db: Session, team: Team, asset_id: int, price: int, reason: str, now: datetime.datetime) -> None:
     db.add(RosterEntry(team_id=team.id, draftable_asset_id=asset_id, acquired_via="free_agency"))
+    db.flush()
+    pecking_order.rank_new_player(db, team, asset_id)    # NHL: onto the end of his position's lines
     db.add(FreeAgencyTransaction(
         league_id=team.league_id, team_id=team.id, draftable_asset_id=asset_id,
         kind="add", price=price, reason=reason, created_at=now))
@@ -135,7 +145,7 @@ def add_player(
     now = now or datetime.datetime.utcnow()
     league = db.get(League, team.league_id)
     if not is_open(db, league.id):
-        raise ValueError("Free agency opens when the recruiting draft ends")
+        raise ValueError("Free agency opens when the draft ends")
     if asset_id not in set(pool_ids(db, league.id)):
         raise ValueError("That player isn't in this league's pool")
     if asset_id in rostered_ids(db, league.id):
@@ -144,7 +154,7 @@ def add_player(
         raise ValueError(f"Roster is full ({league.draft_rounds}) - drop a player first")
     price = asking_prices(db, league)[asset_id]
     money = team_money(db, team)["fa_money"]
-    if price > money:
+    if is_college(db, league.id) and price > money:
         raise ValueError(f"He costs ${price} but only ${max(0, money)} of free-agency money is left "
                          f"(Season Budget less Roster Cost)")
     _sign(db, team, asset_id, price, reason, now)
@@ -159,12 +169,13 @@ def drop_player(
     """Releases a player to the free-agent pool. No refund - the money is spent."""
     now = now or datetime.datetime.utcnow()
     if not is_open(db, team.league_id):
-        raise ValueError("Free agency opens when the recruiting draft ends")
+        raise ValueError("Free agency opens when the draft ends")
     entry = db.query(RosterEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).first()
     if entry is None:
         raise ValueError("That player isn't on this team's roster")
     db.delete(entry)
     db.query(LineupEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).delete()
+    pecking_order.unrank_player(db, team, asset_id)      # NHL: off the lines, the players behind him move up
     txn = FreeAgencyTransaction(
         league_id=team.league_id, team_id=team.id, draftable_asset_id=asset_id,
         kind="drop", price=0, reason=reason, created_at=now)

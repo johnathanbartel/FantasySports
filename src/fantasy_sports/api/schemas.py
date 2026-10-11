@@ -109,6 +109,8 @@ class RosterEntryOut(BaseModel):
     real_team: str | None = None     # the school
     last_season_points: float | None = None  # last season, ESPN standard scoring (None for defense groups / no stat line)
     acquired_via: str | None = None
+    games: int | None = None                  # games with stored credit (None = no stored games)
+    points_per_game: float | None = None
 
 
 class RosterSlotOut(BaseModel):
@@ -430,6 +432,8 @@ class PeckingOrderPlayerOut(BaseModel):
     display_name: str
     position: str
     priority: int | None  # None = on the roster but unranked
+    games: int | None = None
+    points_per_game: float | None = None
 
 
 class PeckingOrderGroupOut(BaseModel):

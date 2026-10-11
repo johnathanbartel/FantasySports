@@ -8,6 +8,7 @@ from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCrea
 from fantasy_sports.platform import lineups
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.roster_fill import fill_slots
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, League, LeagueUniverse, RealTeam, RosterEntry, Team, User,
@@ -73,7 +74,10 @@ def get_team(team_id: int, db: Session = Depends(get_db)):
 @router.get("/{team_id}/roster", response_model=list[RosterEntryOut])
 def get_roster(team_id: int, db: Session = Depends(get_db)):
     entries = db.query(RosterEntry).filter(RosterEntry.team_id == team_id).all()
-    points = season_points_by_asset(db)
+    ids = [e.draftable_asset_id for e in entries]
+    stats = stats_by_asset(db, ids)       # season points: football's stored points, or hockey's stored xG credit
+    rates = rates_by_asset(db, ids)
+    points = {i: stats[i]["points"] for i in ids}
     school = {t.id: t.name for t in db.query(RealTeam)}
     out = []
     for e in entries:
@@ -86,6 +90,7 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             real_team=school.get(a.player.real_team_id if a.player else a.defense_group.real_team_id),
             last_season_points=points.get(a.id),
             acquired_via=e.acquired_via,
+            games=rates.get(a.id, {}).get("games"), points_per_game=rates.get(a.id, {}).get("points_per_game"),
         ))
     return out
 
@@ -96,6 +101,8 @@ class LinePlayer(BaseModel):
     position: str | None
     real_team: str | None
     points: float | None   # last season's points (None = no stored data)
+    games: int | None = None
+    points_per_game: float | None = None
 
 
 class LineSlot(BaseModel):
@@ -128,12 +135,14 @@ def get_lines(team_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
     entries = db.query(RosterEntry).filter(RosterEntry.team_id == team_id).order_by(RosterEntry.id).all()
     stats = stats_by_asset(db, [e.draftable_asset_id for e in entries])
+    rates = rates_by_asset(db, [e.draftable_asset_id for e in entries])
 
     def player(e: RosterEntry) -> LinePlayer:
         a = e.draftable_asset
         st = stats.get(a.id, {})
         return LinePlayer(draftable_asset_id=a.id, display_name=draftable_asset_display_name(a),
-                          position=draftable_asset_position(a), real_team=st.get("team"), points=st.get("points"))
+                          position=draftable_asset_position(a), real_team=st.get("team"), points=st.get("points"),
+                          games=rates.get(a.id, {}).get("games"), points_per_game=rates.get(a.id, {}).get("points_per_game"))
 
     by_asset = {e.draftable_asset_id: player(e) for e in entries}
     filled, overflow = fill_slots(slots, [(e.draftable_asset_id, by_asset[e.draftable_asset_id].position) for e in entries])
