@@ -636,6 +636,36 @@ class SeriesDailyGame(Base):
     away_team: Mapped["Team"] = relationship(foreign_keys=[away_team_id])
 
 
+class TeamPeckingOrder(Base):
+    """One ranked slot in an NHL team's depth chart (docs/hockey_spec.md section 4). C and G rank
+    4 deep; W and D rank 8 deep (pooled: the top two active dress). Ranks are 1-based; a team may
+    rank fewer players than the maximum, and a roster player may be left unranked."""
+
+    __tablename__ = "team_pecking_order"
+    __table_args__ = (
+        UniqueConstraint("team_id", "position_group", "priority", name="uq_pecking_order_team_group_priority"),
+        UniqueConstraint("team_id", "draftable_asset_id", name="uq_pecking_order_team_asset"),
+        CheckConstraint("position_group IN ('C', 'W', 'D', 'G')", name="ck_pecking_order_position_group"),
+        CheckConstraint(
+            "(position_group IN ('C', 'G') AND priority BETWEEN 1 AND 4) OR "
+            "(position_group IN ('W', 'D') AND priority BETWEEN 1 AND 8)",
+            name="ck_pecking_order_priority_range",
+        ),
+        Index("ix_pecking_order_team_id", "team_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    position_group: Mapped[str] = mapped_column(String(1))
+    priority: Mapped[int] = mapped_column(Integer)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
 class WeeklyTeamScore(Base):
     """Sum of a fantasy team's active lineup's player scores for a week -
     feeds weekly_matchups. Standings are NOT a stored table; they're

@@ -370,3 +370,46 @@ class TeamSeriesScheduleOut(BaseModel):
     team_id: int
     league_id: int
     series: list[TeamSeriesOut]
+
+
+class PeckingOrderSetRequest(BaseModel):
+    """group ("C"/"W"/"D"/"G") -> Player ids, highest priority first. Groups left out are untouched."""
+    assignments: dict[str, list[int]]
+
+
+class PeckingOrderPlayerOut(BaseModel):
+    player_id: int
+    draftable_asset_id: int
+    display_name: str
+    position: str
+    priority: int | None  # None = on the roster but unranked
+
+
+class PeckingOrderGroupOut(BaseModel):
+    position_group: str
+    max_depth: int
+    starters: int
+    ranked: list[PeckingOrderPlayerOut]
+    unranked: list[PeckingOrderPlayerOut]
+
+
+class PeckingOrderOut(BaseModel):
+    team_id: int
+    groups: list[PeckingOrderGroupOut]
+
+
+class PeckingOrderResolveRequest(BaseModel):
+    scheduled_player_ids: list[int]
+    confirmed_goalie_ids: list[int] = []
+
+
+class PeckingOrderVacancyOut(BaseModel):
+    position_group: str
+    slot: int
+    reason: str
+
+
+class PeckingOrderResolvedOut(BaseModel):
+    team_id: int
+    starters: dict[str, list[PeckingOrderPlayerOut]]
+    vacancies: list[PeckingOrderVacancyOut]

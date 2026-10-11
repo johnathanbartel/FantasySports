@@ -1,0 +1,140 @@
+"""
+NHL pecking order (docs/hockey_spec.md section 4): a team ranks its players per position group and
+each day's starters are resolved from that ranking.
+
+Depth: C and G rank 4 deep; W and D rank 8 deep. A daily game dresses 1 C, 2 W, 2 D, 1 G: the
+highest-ranked ACTIVE players of each group (W and D are pooled, so the top two active of the eight
+dress), and the goalie must also be CONFIRMED as the starter. Activity and goalie confirmation are
+passed in as data; nothing here fetches from an NHL service, and nothing here scores anything.
+
+All ids in this module are Player ids (hockey rosters hold only players).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sqlalchemy.orm import Session
+
+from fantasy_sports.platform.db.models.core import LeagueUniverse, RosterEntry, Team, TeamPeckingOrder, Universe
+
+GROUPS = ("C", "W", "D", "G")
+DEPTH = {"C": 4, "W": 8, "D": 8, "G": 4}
+STARTERS = {"C": 1, "W": 2, "D": 2, "G": 1}
+GROUP_BY_POSITION = {"C": "C", "W": "W", "LW": "W", "RW": "W", "D": "D", "G": "G"}
+
+NO_RANKED_PLAYERS = "NO_RANKED_PLAYERS"
+INSUFFICIENT_RANKED = "INSUFFICIENT_RANKED"
+NO_ACTIVE_PLAYER = "NO_ACTIVE_PLAYER"
+NO_CONFIRMED_GOALIE = "NO_CONFIRMED_GOALIE"
+
+
+@dataclass
+class Vacancy:
+    position_group: str
+    slot: int  # 1-based starter slot within the group
+    reason: str
+
+
+@dataclass
+class Resolution:
+    starters: dict[str, list[int]] = field(default_factory=dict)
+    vacancies: list[Vacancy] = field(default_factory=list)
+
+
+def resolve_starters(
+    order: dict[str, list[int]], scheduled_player_ids: set[int] | frozenset[int],
+    confirmed_goalie_ids: set[int] | frozenset[int],
+) -> Resolution:
+    """Pure and deterministic. order maps a group to its player ids, highest priority first. A player
+    is active if in scheduled_player_ids; a goalie additionally needs to be in confirmed_goalie_ids."""
+    result = Resolution()
+    for group in GROUPS:
+        ranked = list(order.get(group, []))
+        need = STARTERS[group]
+        picked: list[int] = []
+        for pid in ranked:
+            if len(picked) == need:
+                break
+            if pid not in scheduled_player_ids:
+                continue
+            if group == "G" and pid not in confirmed_goalie_ids:
+                continue
+            picked.append(pid)
+        result.starters[group] = picked
+        for slot in range(len(picked) + 1, need + 1):
+            if not ranked:
+                reason = NO_RANKED_PLAYERS
+            elif len(ranked) <= len(picked):
+                reason = INSUFFICIENT_RANKED
+            elif group == "G" and any(p in scheduled_player_ids for p in ranked):
+                reason = NO_CONFIRMED_GOALIE
+            else:
+                reason = NO_ACTIVE_PLAYER
+            result.vacancies.append(Vacancy(group, slot, reason))
+    return result
+
+
+def assert_hockey_team(db: Session, team: Team) -> None:
+    nhl = (
+        db.query(LeagueUniverse).join(Universe, Universe.id == LeagueUniverse.universe_id)
+        .filter(LeagueUniverse.league_id == team.league_id, Universe.code == "nhl").first()
+    )
+    if nhl is None:
+        raise ValueError("Pecking order is only available for NHL teams")
+
+
+def roster_players(db: Session, team_id: int) -> dict[int, tuple[int, object]]:
+    """player_id -> (draftable_asset_id, Player) for the team's rostered players."""
+    out = {}
+    for entry in db.query(RosterEntry).filter_by(team_id=team_id):
+        asset = entry.draftable_asset
+        if asset.asset_type == "player" and asset.player is not None:
+            out[asset.player_id] = (asset.id, asset.player)
+    return out
+
+
+def load_order(db: Session, team_id: int) -> dict[str, list[int]]:
+    """group -> player ids in priority order (every group present, possibly empty)."""
+    order: dict[str, list[int]] = {g: [] for g in GROUPS}
+    rows = db.query(TeamPeckingOrder).filter_by(team_id=team_id).order_by(TeamPeckingOrder.priority).all()
+    for row in rows:
+        order[row.position_group].append(row.draftable_asset.player_id)
+    return order
+
+
+def replace_groups(db: Session, team: Team, assignments: dict[str, list[int]]) -> None:
+    """Replaces the ranking of each named group (others untouched). Raises ValueError, before any
+    change is flushed, for an unknown group, an over-long list, a duplicate, or a player who is
+    missing, not on this team's roster, or not eligible for the group. The caller commits, or rolls
+    back, so the update is all-or-nothing."""
+    assert_hockey_team(db, team)
+    if not assignments:
+        raise ValueError("No position groups given")
+    roster = roster_players(db, team.id)
+    seen: set[int] = set()
+    for group, ids in assignments.items():
+        if group not in DEPTH:
+            raise ValueError(f"Unknown position group {group!r} (use C, W, D or G)")
+        if len(ids) > DEPTH[group]:
+            raise ValueError(f"{group} can rank at most {DEPTH[group]} players, got {len(ids)}")
+        for pid in ids:
+            if pid in seen:
+                raise ValueError(f"Player {pid} is listed more than once")
+            seen.add(pid)
+            if pid not in roster:
+                raise ValueError(f"Player {pid} is not on this team's roster")
+            position = roster[pid][1].position
+            if GROUP_BY_POSITION.get(position) != group:
+                raise ValueError(f"Player {pid} ({position}) is not eligible for {group}")
+    # Eligibility pins each player to one group, so clearing only the named groups and re-inserting
+    # cannot collide with the (team, asset) unique key.
+    (db.query(TeamPeckingOrder)
+     .filter(TeamPeckingOrder.team_id == team.id, TeamPeckingOrder.position_group.in_(list(assignments)))
+     .delete(synchronize_session=False))
+    db.flush()
+    for group, ids in assignments.items():
+        for rank, pid in enumerate(ids, start=1):
+            db.add(TeamPeckingOrder(team_id=team.id, position_group=group, priority=rank,
+                                    draftable_asset_id=roster[pid][0]))
+    db.flush()

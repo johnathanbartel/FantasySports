@@ -166,3 +166,15 @@ Routes (NHL leagues only; football weekly scheduling in `platform/schedule.py` i
 Rules (`platform/series_schedule.py`): the league must contain the `nhl` universe and have an even team count of at least 2 (otherwise 400). Teams sorted by id are paired by the circle method, giving N-1 rounds per cycle; each round is one series of `series_length_days` (5, 7, or 10) consecutive dates and rounds run back to back, so every team has exactly one opponent per series and one game on every date. Extra cycles repeat the pairings with `team_a`/`team_b` swapped on odd cycles. `team_a` is home on days 1, 3, 5... and `team_b` on days 2, 4.... Every daily game is created `SCHEDULED` with `is_matchup_day=true`; real NHL slates are not consulted, so `is_matchup_day` is only the input a later step uses for off-day marking.
 
 Regeneration is replace-only: a second `POST` returns 400 unless `replace=true`, and even then returns 400 once any series is not `SCHEDULED` or any game is not `SCHEDULED` with a 0-0 score. Replacing deletes and recreates all rows, and identical inputs produce identical rows.
+
+### NHL pecking order
+
+Table `team_pecking_order` (migration `e7a3c5d1f9b8`): one row per ranked slot - `team_id`, `position_group` (`C`/`W`/`D`/`G`), `priority` (1-based), `draftable_asset_id`, `updated_at`. Unique on `(team_id, position_group, priority)` and on `(team_id, draftable_asset_id)`; a check limits priority to 1-4 for C/G and 1-8 for W/D. A team may rank fewer players than the maximum and may leave roster players unranked.
+
+Routes (NHL teams only, otherwise 400; all ids are **Player ids**):
+
+- `GET /teams/{id}/pecking-order` - per group: `max_depth`, `starters`, `ranked` (priority order) and `unranked` roster players. LW/RW count as W.
+- `PUT /teams/{id}/pecking-order` - body `{"assignments": {"W": [playerId, ...], ...}}`, highest priority first. Replaces each named group (others untouched), all-or-nothing. 400 for an unknown group, a list over the depth, a duplicate id (also across groups), or a player who does not exist, is not on this team's roster, or is not eligible for the group. Authority matches `PUT /teams/{id}/lineup` (owner; or the commissioner with commissioner mode for an AI team).
+- `POST /teams/{id}/pecking-order/resolve` - read-only. Body `{"scheduled_player_ids": [...], "confirmed_goalie_ids": [...]}`. Returns `starters` per group (with priority) and `vacancies` (`position_group`, `slot`, `reason`).
+
+Resolver rules (`platform/pecking_order.py`, pure): a day dresses 1 C, 2 W, 2 D, 1 G. Each group takes its highest-priority players that are in `scheduled_player_ids`; W and D are pooled across all eight ranks. The goalie must also be in `confirmed_goalie_ids`. Vacancy reasons: `NO_RANKED_PLAYERS` (nobody ranked), `INSUFFICIENT_RANKED` (everyone ranked starts, still short), `NO_ACTIVE_PLAYER` (ranked players exist but are not scheduled), `NO_CONFIRMED_GOALIE` (an active ranked goalie exists but none is confirmed). Activity is caller-supplied; nothing is fetched from an NHL service and no scoring is involved. Players no longer on the roster are ignored.

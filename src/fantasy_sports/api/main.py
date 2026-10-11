@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from fantasy_sports.api.routers import (
-    auction, draft, entitlements, league_home, leagues, recruiting, rosters, schedule, scoring, series_schedule, sessions, teams,
+    auction, draft, entitlements, league_home, leagues, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, sessions, teams,
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
@@ -46,6 +46,7 @@ app.include_router(rosters.router)
 app.include_router(scoring.router)
 app.include_router(schedule.router)
 app.include_router(series_schedule.router)
+app.include_router(pecking_order.router)
 
 
 @app.get("/health")
