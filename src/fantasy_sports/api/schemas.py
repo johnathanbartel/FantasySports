@@ -258,6 +258,14 @@ class DraftBoardAsset(BaseModel):
     asset_type: str
     display_name: str
     position: str | None = None  # player position, or "DL"/"LB"/"DB" for defense groups
+    # Stored stats for the sortable table; None = not available (never estimated). See platform/draft_stats.py.
+    team: str | None = None
+    points: float | None = None       # last season's fantasy points
+    projected: float | None = None    # no projection source yet: always None
+    goals: int | None = None
+    assists: int | None = None
+    shots: int | None = None
+    blocks: int | None = None
 
 
 # --- Auction draft --------------------------------------------------------------

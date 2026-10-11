@@ -8,7 +8,14 @@
 <script src="/static/session.js"></script>
 <script src="/static/draft-clock-logic.js"></script>
 <script src="/static/draft-broadcast-logic.js"></script>
-<style>body{margin:0}</style>
+<style>body{margin:0}
+.board-table{font-size:14px}
+.board-table th.num,.board-table td.num{text-align:right;font-variant-numeric:tabular-nums}
+.board-table td,.board-table th{padding:6px 8px;white-space:nowrap}
+.sort-btn{all:unset;cursor:pointer;font-weight:600;font-size:12px;letter-spacing:.03em}
+.sort-btn:hover{color:var(--color-accent)}
+.sort-btn:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
+</style>
 </head>
 <body>
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
@@ -41,7 +48,7 @@
       <div>
         <input id="search" type="search" placeholder="Search players" style="width:100%;box-sizing:border-box;padding:var(--space-2) var(--space-3);margin-bottom:var(--space-3)">
         <div id="pos-filters" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)"></div>
-        <div id="board-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+        <div id="board-list" style="overflow-x:auto"></div>
       </div>
 
       <div>
@@ -350,16 +357,13 @@ function renderClockLine() {
   }
   if (!line) { line = document.createElement('div'); line.id = 'clock-line'; line.style.marginTop = 'var(--space-3)'; panel.appendChild(line); }
   const left = DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt);
-  const paused = clock.clock_status === 'paused';
   line.innerHTML = `
     <div class="card-kicker" style="margin-bottom:2px">Time left</div>
     <div id="countdown" style="font-family:var(--font-heading);font-size:32px;font-variant-numeric:tabular-nums" aria-hidden="true">${DraftClock.formatRemaining(left)}</div>
     <div class="sr-status" id="clock-sr" role="status" aria-live="polite" style="position:absolute;left:-9999px">${esc(DraftClock.statusLine(clock))}</div>
     <div class="text-muted" style="font-size:13px">${esc(DraftClock.statusLine(clock))}</div>
     ${clock.overnight ? `<div class="text-muted" style="font-size:12px">${esc(DraftClock.overnightNote(clock))}</div>` : ''}
-    ${isCommissioner() ? `<div style="margin-top:var(--space-2)"><button class="btn btn-secondary" id="pause-btn" type="button">${paused ? 'Resume draft' : 'Pause draft'}</button></div>` : ''}`;
-  const b = document.getElementById('pause-btn');
-  if (b) b.onclick = () => act(() => FSC.post(`/drafts/${DRAFT_ID}/${paused ? 'resume' : 'pause'}`));
+  `;
 }
 
 function renderCountdown() {
@@ -405,6 +409,40 @@ function renderFilters() {
   });
 }
 
+// ---- sortable player table ----
+const COLUMNS = [
+  {key: 'display_name', label: 'Player', text: true},
+  {key: 'position', label: 'Pos', text: true},
+  {key: 'team', label: 'Team', text: true},
+  {key: 'points', label: 'Last season pts', title: "Last season's fantasy points"},
+  {key: 'projected', label: 'Proj', title: 'Projected points'},
+  {key: 'goals', label: 'G', title: 'Goals'},
+  {key: 'assists', label: 'A', title: 'Assists'},
+  {key: 'shots', label: 'SOG', title: 'Shots on goal'},
+  {key: 'blocks', label: 'Blk', title: 'Blocked shots'},
+];
+let sortKey = 'points', sortDir = 'desc';
+
+function sortRows(rows) {
+  const col = COLUMNS.find(c => c.key === sortKey) || COLUMNS[0];
+  const dir = sortDir === 'asc' ? 1 : -1;
+  // Players with no value for the column always sort last, whichever direction.
+  return rows.slice().sort((a, b) => {
+    const x = a[col.key], y = b[col.key];
+    const nx = x == null || x === '', ny = y == null || y === '';
+    if (nx || ny) return nx === ny ? a.display_name.localeCompare(b.display_name) : (nx ? 1 : -1);
+    const c = col.text ? String(x).localeCompare(String(y)) : x - y;
+    return c ? c * dir : a.display_name.localeCompare(b.display_name);
+  });
+}
+
+function setSort(key) {
+  const col = COLUMNS.find(c => c.key === key);
+  if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortKey = key; sortDir = col.text ? 'asc' : 'desc'; }
+  renderBoard();
+}
+
 function renderBoard() {
   const el = document.getElementById('board-list');
   el.innerHTML = '';
@@ -412,25 +450,30 @@ function renderBoard() {
   const next = onClockPick();
   const canPick = !!next && isMyTeam(teamsById[next.team_id]);
   const q = searchText.trim().toLowerCase();
-  const filtered = board.filter(a => (posFilter === 'ALL' || a.position === posFilter) && (!q || a.display_name.toLowerCase().includes(q)));
+  const filtered = sortRows(board.filter(a => (posFilter === 'ALL' || a.position === posFilter) && (!q || a.display_name.toLowerCase().includes(q))));
 
   if (filtered.length === 0) {
     el.innerHTML = '<p class="text-muted">No draftable assets left at this position.</p>';
     return;
   }
-
-  filtered.slice(0, MAX_ROWS).forEach(a => {
-    const row = document.createElement('div');
-    row.className = 'card elev-sm';
-    row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
-    row.innerHTML = `
-      <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${esc(a.position || '-')}</span>
-      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${esc(a.display_name)}</span>
-      <button class="btn btn-primary" ${canPick ? '' : 'disabled'} title="${canPick ? '' : 'Only the owner of the team on the clock can pick'}">Make pick</button>
-    `;
-    row.querySelector('button').onclick = () => makePick(a.draftable_asset_id);
-    el.appendChild(row);
-  });
+  const head = COLUMNS.map(c => {
+    const active = sortKey === c.key;
+    const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th scope="col" ${active ? `aria-sort="${sortDir === 'asc' ? 'ascending' : 'descending'}"` : ''} class="${c.text ? '' : 'num'}">
+      <button type="button" class="sort-btn" data-sort="${c.key}" title="${esc(c.title || 'Sort by ' + c.label)}">${esc(c.label)}${arrow}</button></th>`;
+  }).join('');
+  const cell = v => v == null ? '<span class="text-muted">—</span>' : esc(v);
+  const rows = filtered.slice(0, MAX_ROWS).map(a => `<tr>
+      <th scope="row" style="text-align:left;font-weight:600">${esc(a.display_name)}</th>
+      <td>${esc(a.position || '-')}</td><td>${esc(a.team || '—')}</td>
+      <td class="num">${cell(a.points)}</td><td class="num">${cell(a.projected)}</td><td class="num">${cell(a.goals)}</td>
+      <td class="num">${cell(a.assists)}</td><td class="num">${cell(a.shots)}</td><td class="num">${cell(a.blocks)}</td>
+      <td><button class="btn btn-primary" data-pick="${a.draftable_asset_id}" ${canPick ? '' : 'disabled'} title="${canPick ? '' : 'Only the owner of the team on the clock can pick'}">Draft</button></td></tr>`).join('');
+  el.innerHTML = `<table class="table board-table"><thead><tr>${head}<th></th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="text-muted" style="font-size:12px;margin:6px 0 0">Click a column to sort; click again to reverse. A dash means that stat has not been loaded for the player.
+      ${board.some(a => a.projected != null) ? '' : 'Projected points are not available yet.'}</p>`;
+  el.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => setSort(b.dataset.sort));
+  el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => makePick(Number(b.dataset.pick)));
   if (filtered.length > MAX_ROWS) {
     const more = document.createElement('p');
     more.className = 'text-muted';

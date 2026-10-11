@@ -16,6 +16,7 @@ from fantasy_sports.api.schemas import (
     MakePickRequest,
 )
 from fantasy_sports.platform import draft_clock
+from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.db.models.core import (
     Draft,
     DraftableAsset,
@@ -153,12 +154,14 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
         (a, draftable_asset_display_name(a)) for a in league_pool(db, draft.league_id) if a.id not in already_picked
     ]
     available.sort(key=lambda pair: (-points.get(pair[0].id, -1.0), pair[1]))
+    stats = stats_by_asset(db, [a.id for a, _ in available if a.asset_type == "player"])
     return [
         DraftBoardAsset(
             draftable_asset_id=a.id,
             asset_type=a.asset_type,
             display_name=name,
             position=draftable_asset_position(a),
+            **stats.get(a.id, {}),
         )
         for a, name in available
     ]

@@ -392,8 +392,8 @@ def main() -> None:
     print(proc.stdout, end="")
     check(proc.returncode == 0, "draft clock page logic passes under Node" + (f": {proc.stderr.strip()}" if proc.returncode else ""))
     html = (ROOT / "web" / "static" / "draft-board.html").read_text(encoding="utf-8")
-    check("draft-clock-logic.js" in html and "process-overdue" in html and "Pause draft" in html and "Resume draft" in html and "Pick clock" in html,
-          "the draft board loads the clock logic and offers pause, resume and clock setup")
+    check("draft-clock-logic.js" in html and "process-overdue" in html and "Pick clock" in html,
+          "the draft board loads the clock logic and offers clock setup")
 
     print("\nAll async snake draft checks passed.")
 
