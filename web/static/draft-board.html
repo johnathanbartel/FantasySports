@@ -57,6 +57,11 @@
           <div id="bc-live" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden"></div>
           <p class="text-muted" style="margin:0;font-size:12px">Commentary is generated locally from this draft's own picks and last-season points when stored. Where a number is missing it says so.</p>
         </section>
+        <section id="media-extras" class="card elev-sm" aria-labelledby="mx-h" style="padding:var(--space-4);margin-bottom:var(--space-5);gap:var(--space-2)">
+          <h4 id="mx-h" style="margin:0">Draft room extras</h4>
+          <ul id="mx-list" style="list-style:none;margin:0;padding:0"><li class="text-muted">Checking what is available…</li></ul>
+          <p class="text-muted" style="margin:0;font-size:12px">Anything marked "Not enabled" is off until the owner approves it. Nothing here connects to an outside service.</p>
+        </section>
         <h4 style="margin-bottom:var(--space-3)">Pick history</h4>
         <div style="max-height:640px;overflow:auto">
           <table class="table">
@@ -316,6 +321,22 @@ document.getElementById('bc-replay').onclick = () => {
   if (a) showAnnouncement(a, true);
 };
 renderSoundButton();
+
+// ---- draft room extras: capability status only (FS-032). Controls appear only for a capability that is "available". ----
+async function loadMediaExtras() {
+  const list = document.getElementById('mx-list');
+  try {
+    const d = await api('/media/capabilities');
+    list.innerHTML = d.capabilities.map(c => `<li style="display:flex;justify-content:space-between;gap:var(--space-2);padding:4px 0">
+      <span>${esc(c.label)}</span>
+      <span class="tag ${c.state === 'available' ? 'tag-accent' : c.state === 'misconfigured' ? 'tag-accent-2' : 'tag-neutral'}"
+            title="${esc(c.reason)}">${c.state === 'available' ? 'Available' : c.state === 'misconfigured' ? 'Setup incomplete' : 'Not enabled'}</span></li>
+      <li class="text-muted" style="font-size:12px;margin:-2px 0 4px">${esc(c.reason)}</li>`).join('');
+  } catch (e) {
+    list.innerHTML = '<li class="text-muted">Could not check media options. The draft works without them.</li>';
+  }
+}
+loadMediaExtras();
 
 // ---- pick clock display (server-owned; see draft-clock-logic.js) ----
 let clock = null, clockFetchedAt = 0, clockPoll = null, tickTimer = null, processing = false;
