@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCreateRequest, TeamOut
+from fantasy_sports.platform import lineups
 from fantasy_sports.platform.conferences import service as conferences
+from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.roster_fill import fill_slots
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, League, LeagueUniverse, RealTeam, RosterEntry, Team, User,
 )
@@ -84,6 +88,63 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             acquired_via=e.acquired_via,
         ))
     return out
+
+
+class LinePlayer(BaseModel):
+    draftable_asset_id: int
+    display_name: str
+    position: str | None
+    real_team: str | None
+    points: float | None   # last season's points (None = no stored data)
+
+
+class LineSlot(BaseModel):
+    slot_code: str
+    eligible_positions: list[str]
+    is_starter: bool
+    capacity: int
+    players: list[LinePlayer]   # fewer than capacity = open spots
+
+
+class LinesOut(BaseModel):
+    team_id: int
+    team_name: str
+    starters_filled: int
+    starters_total: int
+    slots: list[LineSlot]
+    unslotted: list[LinePlayer]   # drafted beyond every slot
+
+
+@router.get("/{team_id}/lines", response_model=LinesOut)
+def get_lines(team_id: int, db: Session = Depends(get_db)):
+    """The team's roster laid out by lineup slot (C, W, D, G, bench... / QB, RB, ...), with open slots shown, so a
+    manager can watch the lines fill as the draft goes."""
+    team = db.get(Team, team_id)
+    if team is None:
+        raise HTTPException(404, "Team not found")
+    try:
+        slots = lineups.league_slots(db, team.league_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    entries = db.query(RosterEntry).filter(RosterEntry.team_id == team_id).order_by(RosterEntry.id).all()
+    stats = stats_by_asset(db, [e.draftable_asset_id for e in entries])
+
+    def player(e: RosterEntry) -> LinePlayer:
+        a = e.draftable_asset
+        st = stats.get(a.id, {})
+        return LinePlayer(draftable_asset_id=a.id, display_name=draftable_asset_display_name(a),
+                          position=draftable_asset_position(a), real_team=st.get("team"), points=st.get("points"))
+
+    by_asset = {e.draftable_asset_id: player(e) for e in entries}
+    filled, overflow = fill_slots(slots, [(e.draftable_asset_id, by_asset[e.draftable_asset_id].position) for e in entries])
+    filled.sort(key=lambda sc: (not sc[0].is_starter, sc[0].id))   # show in the universe's own order (C, W, D, G, bench)
+    out = [LineSlot(slot_code=s.slot_code, eligible_positions=list(s.eligible_positions), is_starter=s.is_starter,
+                    capacity=s.slot_count, players=[by_asset[i] for i, _ in chosen]) for s, chosen in filled]
+    return LinesOut(
+        team_id=team.id, team_name=team.name,
+        starters_filled=sum(len(s.players) for s in out if s.is_starter),
+        starters_total=sum(s.capacity for s in out if s.is_starter),
+        slots=out, unslotted=[by_asset[i] for i, _ in overflow])
 
 
 @router.get("/{team_id}/free-agents", response_model=list[DraftBoardAsset])

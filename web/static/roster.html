@@ -14,6 +14,7 @@
     <span class="nav-brand">Fantasy Sports Company</span>
     <div style="display:flex;gap:var(--space-4)">
       <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
       <a href="/static/draft-board.html">Draft</a>
       <a href="/static/auction-board.html">Auction</a>
       <a href="/static/roster.html" aria-current="page">Roster</a>
@@ -41,6 +42,7 @@
   </div>
 </div>
 
+<script src="/static/roster-lines.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const TEAM_ID = params.get('team_id') || 1;
@@ -102,14 +104,18 @@ function renderRoster(entries) {
 async function loadAll() {
   try {
     const team = await api(`/teams/${TEAM_ID}`);
-    const [league, roster] = await Promise.all([
+    const [league, roster, lines] = await Promise.all([
       api(`/leagues/${team.league_id}`),
       api(`/teams/${TEAM_ID}/roster`),
+      api(`/teams/${TEAM_ID}/lines`).catch(() => null),
     ]);
     document.getElementById('league-kicker').textContent = league.name.toUpperCase();
     document.getElementById('team-heading').textContent = team.name;
     renderScheduleBanner(league);
-    renderRoster(roster);
+    if (lines) {
+      document.getElementById('roster-list').innerHTML = `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4)">${RosterLines.html(lines)}</div>`;
+      document.getElementById('empty-roster-msg').style.display = 'none';
+    } else renderRoster(roster);
   } catch (e) {
     showError(`Failed to load roster: ${e.message}`);
   }

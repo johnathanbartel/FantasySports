@@ -230,6 +230,8 @@ class DraftClockOut(BaseModel):
     resumes_at: datetime.datetime | None   # when an active overnight pause ends
     pick_number: int | None
     on_clock_team_id: int | None
+    # Set when an AI-owned team is on the clock: seconds until it makes its pick (the page processes the draft then).
+    ai_in_seconds: float | None = None
 
 
 class DraftPickOut(BaseModel):

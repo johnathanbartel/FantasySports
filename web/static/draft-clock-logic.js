@@ -49,16 +49,29 @@
     return o ? `Overnight pause ${o.start}–${o.end} (${offsetLabel(o.utc_offset_minutes)}): time does not count down.` : '';
   }
 
-  // Whether the page should ask the server to apply an expired pick now.
+  // Seconds until the AI team on the clock makes its pick (null when a person is on the clock).
+  function aiRemaining(clock, nowMs, fetchedAtMs) {
+    if (!clock || clock.ai_in_seconds == null) return null;
+    if (clock.clock_status === 'paused' || clock.clock_status === 'complete') return null;
+    return Math.max(0, clock.ai_in_seconds - (nowMs - fetchedAtMs) / 1000);
+  }
+
+  // Whether the page should ask the server to apply a pick now: an expired clock, or an AI team's thinking time is up.
   function shouldProcess(clock, nowMs, fetchedAtMs) {
-    if (!clock || clock.clock_status !== 'running') return false;
+    if (!clock) return false;
+    const ai = aiRemaining(clock, nowMs, fetchedAtMs);
+    if (ai != null && ai <= 0) return true;
+    if (clock.clock_status !== 'running') return false;
     const left = liveRemaining(clock, nowMs, fetchedAtMs);
     return left != null && left <= 0;
   }
 
-  // How often to poll the clock: quickly for live drafts, slowly for slow ones, never for untimed/finished.
+  // How often to poll the clock: quickly for live drafts (and while an AI team is on the clock), slowly for slow ones,
+  // never for finished drafts or untimed drafts with only people on the clock.
   function pollDelayMs(clock) {
-    if (!clock || clock.clock_status === 'untimed' || clock.clock_status === 'complete') return 0;
+    if (!clock || clock.clock_status === 'complete') return 0;
+    if (clock.ai_in_seconds != null) return 3000;
+    if (clock.clock_status === 'untimed') return 0;
     return clock.mode === 'async' ? 30000 : 5000;
   }
 
@@ -82,7 +95,7 @@
   }
 
   const api = {MIN_PICK_SECONDS, MAX_PICK_SECONDS, formatRemaining, liveRemaining, offsetLabel, statusLine, overnightNote,
-               shouldProcess, pollDelayMs, startBody};
+               aiRemaining, shouldProcess, pollDelayMs, startBody};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.DraftClock = api;
 })(typeof window !== 'undefined' ? window : this);
