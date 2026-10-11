@@ -28,6 +28,7 @@ from sqlalchemy import (
     JSON,
     String,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -892,3 +893,98 @@ class MatchupRequest(Base):
     status: Mapped[str] = mapped_column(String(10), default="pending")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SimulatorGame(Base):
+    """The published progressive-simulation record for one series daily game (platform/simulator/). One
+    row per daily game; its events are immutable once written. `status` is SCHEDULED until started, LIVE
+    while the real-time window runs, FINAL after it."""
+
+    __tablename__ = "simulator_games"
+    __table_args__ = (
+        CheckConstraint("status IN ('SCHEDULED', 'LIVE', 'FINAL')", name="ck_simulator_game_status"),
+        CheckConstraint("periods >= 1 AND period_seconds >= 1 AND window_seconds >= 1", name="ck_simulator_game_shape"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    daily_game_id: Mapped[int] = mapped_column(ForeignKey("series_daily_games.id"), unique=True)
+    contract_version: Mapped[str] = mapped_column(String(10))
+    sport: Mapped[str] = mapped_column(String(30))
+    periods: Mapped[int] = mapped_column(Integer)
+    period_seconds: Mapped[int] = mapped_column(Integer)
+    window_seconds: Mapped[int] = mapped_column(Integer)
+    event_count: Mapped[int] = mapped_column(Integer)
+    script_digest: Mapped[str] = mapped_column(String(64))
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(10), default="SCHEDULED")
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    finalized_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+    daily_game: Mapped["SeriesDailyGame"] = relationship()
+    events: Mapped[list["SimulatorEvent"]] = relationship(back_populates="game", order_by="SimulatorEvent.seq")
+
+
+class SimulatorEvent(Base):
+    """One immutable event of a published script. Totals are running totals after the event. Updates and
+    deletes through the ORM are refused (see the listeners below)."""
+
+    __tablename__ = "simulator_events"
+    __table_args__ = (
+        UniqueConstraint("simulator_game_id", "seq", name="uq_simulator_event_seq"),
+        CheckConstraint("seq >= 1", name="ck_simulator_event_seq"),
+        CheckConstraint(
+            "home_score >= 0 AND away_score >= 0 AND home_shots >= 0 AND away_shots >= 0",
+            name="ck_simulator_event_totals",
+        ),
+        CheckConstraint("team_side IS NULL OR team_side IN ('home', 'away')", name="ck_simulator_event_side"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    simulator_game_id: Mapped[int] = mapped_column(ForeignKey("simulator_games.id"))
+    seq: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(20))
+    period: Mapped[int] = mapped_column(Integer)
+    game_second: Mapped[int] = mapped_column(Integer)
+    team_side: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    home_score: Mapped[int] = mapped_column(Integer)
+    away_score: Mapped[int] = mapped_column(Integer)
+    home_shots: Mapped[int] = mapped_column(Integer)
+    away_shots: Mapped[int] = mapped_column(Integer)
+    headline: Mapped[str] = mapped_column(String(200))
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    game: Mapped["SimulatorGame"] = relationship(back_populates="events")
+
+
+@event.listens_for(SimulatorEvent, "before_update")
+def _refuse_event_update(mapper, connection, target):
+    raise ValueError("Simulator events are immutable")
+
+
+@event.listens_for(SimulatorEvent, "before_delete")
+def _refuse_event_delete(mapper, connection, target):
+    raise ValueError("Simulator events are immutable")
+
+
+class SimulatorReveal(Base):
+    """How far one user has opened one simulated game. No row = still behind the spoiler veil.
+    mode WATCHING: following the game; cursor_seq is the last event they have been shown (it only ever
+    moves forward). mode SKIPPED: jumped straight to the box score; everything is open (terminal)."""
+
+    __tablename__ = "simulator_reveals"
+    __table_args__ = (
+        UniqueConstraint("simulator_game_id", "user_id", name="uq_simulator_reveal_game_user"),
+        CheckConstraint("mode IN ('WATCHING', 'SKIPPED')", name="ck_simulator_reveal_mode"),
+        CheckConstraint("cursor_seq >= 0", name="ck_simulator_reveal_cursor"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    simulator_game_id: Mapped[int] = mapped_column(ForeignKey("simulator_games.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    mode: Mapped[str] = mapped_column(String(10))
+    cursor_seq: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

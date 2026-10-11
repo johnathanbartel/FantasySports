@@ -31,6 +31,9 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     SeriesDailyGame,
     TeamPeckingOrder,
     WeeklyTeamScore,
+    SimulatorGame,
+    SimulatorEvent,
+    SimulatorReveal,
 )
 from fantasy_sports.sports.football.models import (  # noqa: F401
     Play,

@@ -1,0 +1,139 @@
+"""
+Progressive game simulator endpoints (contract and rules: platform/simulator/). Sport-agnostic: the routes
+reveal a published script; they never score anything. Scripts are published by sport adapters through
+service.publish_script, not over HTTP.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from fantasy_sports.api.auth import assert_commissioner, current_user
+from fantasy_sports.api.schemas import (
+    SimEventOut, SimEventsOut, SimFinalOut, SimProgressRequest, SimStateOut,
+)
+from fantasy_sports.platform.db.models.core import SeriesDailyGame, SimulatorGame, User
+from fantasy_sports.platform.db.session import get_db
+from fantasy_sports.platform.simulator import contract, service
+
+router = APIRouter(prefix="/simulator", tags=["simulator"])
+
+_STATUS = {"NOT_STARTED": 409, "NOT_FINAL": 409, "ALREADY_PUBLISHED": 409, "GAME_STARTED": 409,
+           "NOT_WATCHING": 409, "AHEAD_OF_GAME": 400, "BAD_CURSOR": 400, "REVEAL_REQUIRED": 403}
+
+
+def _fail(e: service.SimulatorError) -> HTTPException:
+    return HTTPException(_STATUS.get(e.code, 400), {"code": e.code, "message": str(e)})
+
+
+def _game(db: Session, daily_game_id: int) -> SeriesDailyGame:
+    game = db.get(SeriesDailyGame, daily_game_id)
+    if game is None:
+        raise HTTPException(404, "Daily game not found")
+    return game
+
+
+def _sim(db: Session, daily_game_id: int) -> SimulatorGame:
+    _game(db, daily_game_id)
+    sim = service.get_sim(db, daily_game_id)
+    if sim is None:
+        raise HTTPException(409, {"code": "NOT_PUBLISHED", "message": "No simulation has been published for this game"})
+    return sim
+
+
+def _state_out(view: service.StateView) -> SimStateOut:
+    return SimStateOut(**view.__dict__)
+
+
+@router.get("/contract")
+def read_contract():
+    """The contract version this server speaks and the event vocabulary."""
+    return {"contract_version": contract.CONTRACT_VERSION, "supported_major": contract.SUPPORTED_MAJOR,
+            "event_kinds": list(contract.EVENT_KINDS), "max_events": contract.MAX_EVENTS}
+
+
+@router.get("/games/{daily_game_id}/state", response_model=SimStateOut)
+def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    game = _game(db, daily_game_id)
+    sim = service.get_sim(db, daily_game_id)
+    if sim is None:
+        return _state_out(service.unpublished_state(game))
+    view = service.view_state(db, sim, user.id, service.utcnow())
+    db.commit()
+    return _state_out(view)
+
+
+@router.get("/games/{daily_game_id}/events", response_model=SimEventsOut)
+def read_events(daily_game_id: int, after_seq: int = 0, limit: int = 200, db: Session = Depends(get_db),
+                user: User = Depends(current_user)):
+    """Idempotent polling: the events after `after_seq` that this viewer may see. Repeating a request returns
+    the same page; nothing is consumed server-side."""
+    sim = _sim(db, daily_game_id)
+    try:
+        page, bound, more = service.view_events(db, sim, user.id, service.utcnow(), after_seq, limit)
+    except service.SimulatorError as e:
+        raise _fail(e)
+    db.commit()
+    return SimEventsOut(
+        contract_version=sim.contract_version, daily_game_id=daily_game_id, status=sim.status, after_seq=after_seq,
+        next_seq=page[-1].seq if page else after_seq, available_through=bound, has_more=more,
+        events=[SimEventOut.model_validate(e) for e in page],
+    )
+
+
+def _transition(daily_game_id: int, db: Session, user: User, action) -> SimStateOut:
+    sim = _sim(db, daily_game_id)
+    now = service.utcnow()
+    try:
+        action(sim, now)
+    except service.SimulatorError as e:
+        db.rollback()
+        raise _fail(e)
+    db.commit()
+    return _state_out(service.view_state(db, sim, user.id, now))
+
+
+@router.post("/games/{daily_game_id}/watch", response_model=SimStateOut)
+def watch_game(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Open the game for you (live, or a replay of a finished game). Idempotent; never rewinds."""
+    return _transition(daily_game_id, db, user, lambda sim, now: service.watch(db, sim, user.id, now))
+
+
+@router.post("/games/{daily_game_id}/progress", response_model=SimStateOut)
+def report_progress(daily_game_id: int, payload: SimProgressRequest, db: Session = Depends(get_db),
+                    user: User = Depends(current_user)):
+    """Save how far you have watched (forward-only), so a reconnect resumes there."""
+    return _transition(daily_game_id, db, user,
+                       lambda sim, now: service.progress(db, sim, user.id, now, payload.cursor_seq))
+
+
+@router.post("/games/{daily_game_id}/skip", response_model=SimStateOut)
+def skip_to_box_score(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Jump straight to the box score of a finished game. Idempotent; only affects you."""
+    return _transition(daily_game_id, db, user, lambda sim, now: service.skip(db, sim, user.id, now))
+
+
+@router.get("/games/{daily_game_id}/final", response_model=SimFinalOut)
+def read_final(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    sim = _sim(db, daily_game_id)
+    try:
+        view = service.final_view(db, sim, user.id, service.utcnow())
+    except service.SimulatorError as e:
+        raise _fail(e)
+    db.commit()
+    return SimFinalOut(
+        contract_version=view.contract_version, daily_game_id=view.daily_game_id, status="FINAL",
+        home_score=view.home_score, away_score=view.away_score, home_shots=view.home_shots,
+        away_shots=view.away_shots, periods=view.periods, event_count=view.event_count,
+        scoring_events=[SimEventOut.model_validate(e) for e in view.scoring_events], provenance=view.provenance,
+    )
+
+
+@router.post("/games/{daily_game_id}/start", response_model=SimStateOut)
+def start_game(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner only. Begins the real-time window of a published game. Idempotent."""
+    game = _game(db, daily_game_id)
+    assert_commissioner(db, user, game.series.league_id)
+    sim = _sim(db, daily_game_id)
+    service.start_game(db, sim, service.utcnow())
+    db.commit()
+    return _state_out(service.view_state(db, sim, user.id, service.utcnow()))

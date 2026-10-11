@@ -478,3 +478,73 @@ class GameScoresOut(BaseModel):
     league_id: int
     weights: dict[str, float]
     games: list[GameScoreOut]
+
+
+# --- Progressive simulator (FS-025) -----------------------------------------
+
+class SimStateOut(BaseModel):
+    """The viewer's scoreboard. Everything but the lifecycle fields is null while the viewer is behind the veil."""
+    contract_version: str
+    daily_game_id: int
+    published: bool
+    status: str  # SCHEDULED / LIVE / FINAL
+    veiled: bool
+    reveal_mode: str | None
+    periods: int | None
+    period_seconds: int | None
+    window_seconds: int | None
+    period: int | None
+    seconds_remaining: int | None
+    home_score: int | None
+    away_score: int | None
+    home_shots: int | None
+    away_shots: int | None
+    shown_seq: int
+    cursor_seq: int
+    has_more: bool
+    is_complete: bool
+    can_skip: bool
+    provenance: dict | None
+
+
+class SimEventOut(ORMModel):
+    seq: int
+    kind: str
+    period: int
+    game_second: int
+    team_side: str | None
+    home_score: int
+    away_score: int
+    home_shots: int
+    away_shots: int
+    headline: str
+    detail: dict
+
+
+class SimEventsOut(BaseModel):
+    contract_version: str
+    daily_game_id: int
+    status: str
+    after_seq: int
+    next_seq: int  # pass as after_seq to continue; equals after_seq when nothing new
+    available_through: int
+    has_more: bool
+    events: list[SimEventOut]
+
+
+class SimProgressRequest(BaseModel):
+    cursor_seq: int
+
+
+class SimFinalOut(BaseModel):
+    contract_version: str
+    daily_game_id: int
+    status: str
+    home_score: int
+    away_score: int
+    home_shots: int
+    away_shots: int
+    periods: int
+    event_count: int
+    scoring_events: list[SimEventOut]
+    provenance: dict
