@@ -659,3 +659,50 @@ class BankFallbackOut(BaseModel):
     assigned: list[dict]
     expired: list[int]
     waiting: int
+
+
+# --- Draft broadcast room (FS-031) --------------------------------------------
+
+class AnnouncementTeamOut(BaseModel):
+    id: int
+    name: str
+
+
+class AnnouncementPlayerOut(BaseModel):
+    asset_id: int
+    name: str
+    position: str | None
+
+
+class AnnouncementCommentaryOut(BaseModel):
+    provider: str
+    text: str
+    tags: list[str]
+    value_label: str            # value / fair / reach / unknown
+    unavailable: list[str]      # inputs that were missing, so the text does not claim them
+    inputs: dict
+
+
+class PickAnnouncementOut(BaseModel):
+    """Versioned pick-announcement event. event_id is stable per pick, so a client can drop duplicates."""
+    version: str
+    event_id: str
+    draft_id: int
+    pick_number: int
+    round: int
+    team: AnnouncementTeamOut
+    player: AnnouncementPlayerOut
+    is_autopick: bool
+    picked_at: datetime.datetime | None
+    commentary: AnnouncementCommentaryOut
+    spoken_text: str
+
+
+class AnnouncementsOut(BaseModel):
+    version: str
+    draft_id: int
+    provider: str
+    after_pick: int
+    next_pick: int              # pass as after_pick to continue; equals after_pick when nothing is new
+    picks_made: int
+    announcements: list[PickAnnouncementOut]

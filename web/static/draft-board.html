@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/styles.css">
 <script src="/static/session.js"></script>
 <script src="/static/draft-clock-logic.js"></script>
+<script src="/static/draft-broadcast-logic.js"></script>
 <style>body{margin:0}</style>
 </head>
 <body>
@@ -44,6 +45,18 @@
       </div>
 
       <div>
+        <section id="broadcast" class="card elev-sm" aria-labelledby="bc-h" style="padding:var(--space-4);margin-bottom:var(--space-5);gap:var(--space-2)">
+          <div style="display:flex;justify-content:space-between;gap:var(--space-2);align-items:baseline;flex-wrap:wrap">
+            <h4 id="bc-h" style="margin:0">Broadcast</h4>
+            <span style="display:flex;gap:var(--space-2);flex-wrap:wrap">
+              <button type="button" class="btn btn-secondary" id="bc-sound" aria-pressed="false">Sound off</button>
+              <button type="button" class="btn btn-secondary" id="bc-replay" disabled>Replay last pick</button>
+            </span>
+          </div>
+          <div id="bc-banner" style="min-height:64px" aria-hidden="false"><span class="text-muted">The announcer is waiting for the first pick.</span></div>
+          <div id="bc-live" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden"></div>
+          <p class="text-muted" style="margin:0;font-size:12px">Commentary is generated locally from this draft's own picks and last-season points when stored. Where a number is missing it says so.</p>
+        </section>
         <h4 style="margin-bottom:var(--space-3)">Pick history</h4>
         <div style="max-height:640px;overflow:auto">
           <table class="table">
@@ -103,6 +116,7 @@ async function loadAll() {
   render();
   refreshClock();
   if (!tickTimer) tickClock();
+  if (!bcTimer) pollAnnouncements();
 }
 
 function isCommissioner() { return !!(me && league && me.user_id === league.commissioner_user_id); }
@@ -244,6 +258,64 @@ function renderClock() {
   }
   renderClockLine();
 }
+
+// ---- broadcast room (see draft-broadcast-logic.js) ----
+const BC = window.DraftBroadcast;
+let announcements = [], bcLastPick = 0, bcFailures = 0, bcTimer = null, bcFirst = true;
+const speechSupported = typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
+let soundOn = false;
+try { soundOn = speechSupported && localStorage.getItem('fsc_draft_sound') === '1'; } catch (e) { soundOn = false; }
+
+function renderSoundButton() {
+  const b = document.getElementById('bc-sound'), l = BC.soundLabel(soundOn, speechSupported);
+  b.textContent = l.text; b.disabled = l.disabled; b.setAttribute('aria-pressed', String(l.pressed));
+}
+
+function showAnnouncement(a, speak) {
+  const tone = BC.toneOf(a);
+  document.getElementById('bc-banner').innerHTML = `<div style="border-left:4px solid var(--color-${tone === 'good' ? 'accent' : tone === 'warn' ? 'accent-2' : 'divider'});padding-left:var(--space-3)">
+    <div style="font-family:var(--font-heading);font-size:18px">${esc(BC.headline(a))}</div>
+    <div><span class="tag tag-neutral">${esc(BC.toneLabel(a))}</span>${a.is_autopick ? ' <span class="tag tag-accent-2">AUTO</span>' : ''}</div>
+    <div style="margin-top:4px">${esc(a.commentary.text)}</div>
+    ${BC.unavailableNote(a) ? `<div class="text-muted" style="font-size:12px">${esc(BC.unavailableNote(a))}</div>` : ''}</div>`;
+  const live = document.getElementById('bc-live');
+  live.textContent = '';
+  setTimeout(() => { live.textContent = BC.announcementText(a); }, 30);
+  if (speak && soundOn && speechSupported) {
+    try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(a.spoken_text)); } catch (e) { /* speech is optional */ }
+  }
+}
+
+async function pollAnnouncements() {
+  clearTimeout(bcTimer);
+  if (!DRAFT_ID) return;
+  try {
+    const d = await api(`/drafts/${DRAFT_ID}/announcements?after_pick=${bcLastPick}`);
+    const m = BC.merge(announcements, d.announcements);
+    announcements = m.list; bcLastPick = m.lastPick;
+    const backfill = bcFirst || bcFailures > 0;
+    bcFirst = false; bcFailures = 0;
+    if (m.fresh.length) {
+      const last = m.fresh[m.fresh.length - 1];
+      showAnnouncement(last, BC.toSpeak(m.fresh, {soundOn, supported: speechSupported, backfill}).length > 0);
+      document.getElementById('bc-replay').disabled = false;
+      if (!backfill && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); }
+    }
+  } catch (e) { bcFailures++; }
+  bcTimer = setTimeout(pollAnnouncements, BC.pollDelayMs(bcFailures));
+}
+
+document.getElementById('bc-sound').onclick = () => {
+  soundOn = !soundOn;
+  try { localStorage.setItem('fsc_draft_sound', soundOn ? '1' : '0'); } catch (e) { /* not persisted */ }
+  if (!soundOn && speechSupported) window.speechSynthesis.cancel();
+  renderSoundButton();
+};
+document.getElementById('bc-replay').onclick = () => {
+  const a = announcements[announcements.length - 1];
+  if (a) showAnnouncement(a, true);
+};
+renderSoundButton();
 
 // ---- pick clock display (server-owned; see draft-clock-logic.js) ----
 let clock = null, clockFetchedAt = 0, clockPoll = null, tickTimer = null, processing = false;
