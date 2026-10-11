@@ -706,3 +706,79 @@ class AnnouncementsOut(BaseModel):
     next_pick: int              # pass as after_pick to continue; equals after_pick when nothing is new
     picks_made: int
     announcements: list[PickAnnouncementOut]
+
+
+# --- Weekly salary-cap redraft (FS-033) ---------------------------------------
+
+class RedraftEnableRequest(BaseModel):
+    base_cap: int | None = None       # salary units; omitted = the neutral fixed cap
+
+
+class RedraftContestCreateRequest(BaseModel):
+    start_date: datetime.date
+    end_date: datetime.date
+    lock_at: datetime.datetime        # naive UTC
+
+
+class RedraftSalariesRequest(BaseModel):
+    salaries: dict[int, int]          # draftable asset id -> salary
+
+
+class RedraftRosterRequest(BaseModel):
+    slots: dict[str, list[int]]       # C / W / D / G -> draftable asset ids
+
+
+class RedraftSlotOut(BaseModel):
+    slot_code: str
+    slot_index: int
+    draftable_asset_id: int
+    player_name: str
+    position: str
+    salary: int
+
+
+class RedraftEntryOut(BaseModel):
+    team_id: int
+    status: str                       # DRAFT / SUBMITTED
+    salary_total: int
+    cap: int
+    cap_remaining: int
+    submitted_at: datetime.datetime | None
+    slots: list[RedraftSlotOut]
+
+
+class RedraftPairingOut(BaseModel):
+    team_a_id: int
+    team_b_id: int
+    team_a_status: str                # NO_ENTRY / DRAFT / SUBMITTED
+    team_b_status: str
+
+
+class RedraftContestOut(BaseModel):
+    id: int
+    league_id: int
+    week_index: int
+    start_date: datetime.date
+    end_date: datetime.date
+    lock_at: datetime.datetime
+    status: str                       # OPEN / LOCKED
+    cap: int
+    cap_policy: str
+    salaries_published: int
+    pairings: list[RedraftPairingOut]
+
+
+class RedraftLeagueOut(BaseModel):
+    league_id: int
+    league_mode: str
+    base_cap: int | None
+    cap_policy: str | None
+    contests: list[RedraftContestOut]
+    note: str
+
+
+class RedraftContestViewOut(BaseModel):
+    contest: RedraftContestOut
+    opponent_team_id: int | None
+    my_entry: RedraftEntryOut | None
+    opponent_entry: RedraftEntryOut | None     # null until the contest locks (rosters are private before then)

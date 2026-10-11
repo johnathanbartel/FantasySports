@@ -98,6 +98,8 @@ def generate_schedule(db: Session, league: League, start_date: datetime.date, cy
     """Create the series and daily-game rows. Flushes but does not commit. Raises ValueError."""
     if not league_is_nhl(db, league.id) or league.series_length_days is None:
         raise ValueError("Series schedules are only available for NHL leagues")
+    if getattr(league, "league_mode", "standard") == "weekly_redraft":
+        raise ValueError("This league plays weekly redraft contests, not series")
     team_ids = [t.id for t in db.query(Team).filter_by(league_id=league.id)]
     plan = plan_series(team_ids, league.series_length_days, start_date, cycles)
     if has_schedule(db, league.id):

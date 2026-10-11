@@ -263,3 +263,7 @@ Verification: `scripts/verify_draft_broadcast.py`. Manual check 2026-10-10 in th
 ### Draft media provider seams (FS-032)
 
 Disabled-by-default interfaces for AI commentary, shared music and video/audio chat; full rules, security/privacy requirements and the owner decision checklist are in `docs/draft_media_providers.md`. Code: `platform/media_providers.py` (protocols, status, fail-closed `get_provider`, `commentary_provider` fallback), `platform/media_fakes.py` (tests only), `api/routers/media.py` (`GET /media/capabilities`, `POST /media/{shared_music|av_chat}/session` -> 503 unless fully configured), "Draft room extras" panel in `draft-board.html`. The provider registry is empty, so nothing can be `available`; no vendor package, credential or outbound call exists. Verification: `scripts/verify_draft_media_seams.py` (blocks non-loopback sockets for the whole run).
+
+### Weekly salary-cap redraft (FS-033)
+
+Separate league mode with contests, pairings, per-contest salaries, draft/submitted rosters and a fixed cap; migration `d6f0b4c8e2a5` (adds `leagues.league_mode` and six tables). The cap-adjustment formula is an open product decision and is not implemented; salaries are a commissioner-supplied input. Full rules, routes and the decision record are in `docs/weekly_redraft.md`. Verification: `scripts/verify_weekly_redraft.py`.

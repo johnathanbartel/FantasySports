@@ -35,6 +35,12 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     SimulatorEvent,
     SimulatorReveal,
     BankedCredit,
+    WeeklyRedraftSettings,
+    WeeklyContest,
+    WeeklyContestPairing,
+    WeeklyPlayerSalary,
+    WeeklyContestEntry,
+    WeeklyContestSlot,
 )
 from fantasy_sports.sports.football.models import (  # noqa: F401
     Play,

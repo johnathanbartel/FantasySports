@@ -91,6 +91,7 @@ class League(Base):
             "series_length_days IS NULL OR series_length_days IN (5, 7, 10)",
             name="ck_league_series_length_days",
         ),
+        CheckConstraint("league_mode IN ('standard', 'weekly_redraft')", name="ck_league_mode"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -123,6 +124,8 @@ class League(Base):
     # NHL leagues play repeated daily games against the same opponent. Null
     # keeps football and other universes on their existing weekly format.
     series_length_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "standard" = the league's normal format; "weekly_redraft" = weekly salary-cap head-to-head rosters (FS-033).
+    league_mode: Mapped[str] = mapped_column(String(20), default="standard", server_default="standard")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
@@ -1046,3 +1049,113 @@ class BankedCredit(Base):
 
     draftable_asset: Mapped["DraftableAsset"] = relationship()
     assigned_game: Mapped["SeriesDailyGame | None"] = relationship()
+
+
+class WeeklyRedraftSettings(Base):
+    """Settings of a league in weekly-redraft mode (leagues.league_mode = 'weekly_redraft'; platform/weekly_redraft.py).
+    cap_policy FIXED is the only implemented policy: the prior-finish cap adjustment is an open product decision."""
+
+    __tablename__ = "weekly_redraft_settings"
+    __table_args__ = (
+        CheckConstraint("base_cap > 0", name="ck_weekly_settings_cap"),
+        CheckConstraint("cap_policy IN ('FIXED')", name="ck_weekly_settings_policy"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), unique=True)
+    base_cap: Mapped[int] = mapped_column(Integer)
+    cap_policy: Mapped[str] = mapped_column(String(10), default="FIXED")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WeeklyContest(Base):
+    """One week's private head-to-head round for a weekly-redraft league."""
+
+    __tablename__ = "weekly_contests"
+    __table_args__ = (
+        UniqueConstraint("league_id", "week_index", name="uq_weekly_contest_week"),
+        UniqueConstraint("league_id", "start_date", name="uq_weekly_contest_start"),
+        CheckConstraint("end_date >= start_date", name="ck_weekly_contest_dates"),
+        CheckConstraint("cap_applied > 0", name="ck_weekly_contest_cap"),
+        CheckConstraint("status IN ('OPEN', 'LOCKED')", name="ck_weekly_contest_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    week_index: Mapped[int] = mapped_column(Integer)
+    start_date: Mapped[datetime.date] = mapped_column()
+    end_date: Mapped[datetime.date] = mapped_column()
+    lock_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    cap_applied: Mapped[int] = mapped_column(Integer)   # the cap in force, snapshotted when the contest was created
+    status: Mapped[str] = mapped_column(String(10), default="OPEN")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WeeklyContestPairing(Base):
+    __tablename__ = "weekly_contest_pairings"
+    __table_args__ = (
+        UniqueConstraint("contest_id", "team_a_id", name="uq_weekly_pairing_a"),
+        UniqueConstraint("contest_id", "team_b_id", name="uq_weekly_pairing_b"),
+        CheckConstraint("team_a_id <> team_b_id", name="ck_weekly_pairing_distinct"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("weekly_contests.id"))
+    team_a_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    team_b_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+
+
+class WeeklyPlayerSalary(Base):
+    """A player's price for one contest. Prices are an input (nothing here projects or invents them)."""
+
+    __tablename__ = "weekly_player_salaries"
+    __table_args__ = (
+        UniqueConstraint("contest_id", "draftable_asset_id", name="uq_weekly_salary_asset"),
+        CheckConstraint("salary > 0", name="ck_weekly_salary_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("weekly_contests.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    salary: Mapped[int] = mapped_column(Integer)
+
+
+class WeeklyContestEntry(Base):
+    """A team's roster for a contest. DRAFT entries can be replaced until the lock; SUBMITTED entries are final and
+    carry a snapshot of the salaries and cap they were checked against."""
+
+    __tablename__ = "weekly_contest_entries"
+    __table_args__ = (
+        UniqueConstraint("contest_id", "team_id", name="uq_weekly_entry_team"),
+        CheckConstraint("status IN ('DRAFT', 'SUBMITTED')", name="ck_weekly_entry_status"),
+        CheckConstraint("salary_total >= 0 AND salary_total <= cap", name="ck_weekly_entry_cap"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contest_id: Mapped[int] = mapped_column(ForeignKey("weekly_contests.id"))
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    status: Mapped[str] = mapped_column(String(10), default="DRAFT")
+    salary_total: Mapped[int] = mapped_column(Integer, default=0)
+    cap: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    slots: Mapped[list["WeeklyContestSlot"]] = relationship(order_by="WeeklyContestSlot.id")
+
+
+class WeeklyContestSlot(Base):
+    __tablename__ = "weekly_contest_slots"
+    __table_args__ = (
+        UniqueConstraint("entry_id", "slot_code", "slot_index", name="uq_weekly_slot_position"),
+        UniqueConstraint("entry_id", "draftable_asset_id", name="uq_weekly_slot_asset"),
+        CheckConstraint("salary > 0", name="ck_weekly_slot_salary"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("weekly_contest_entries.id"))
+    slot_code: Mapped[str] = mapped_column(String(2))   # C / W / D / G
+    slot_index: Mapped[int] = mapped_column(Integer, default=1)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    salary: Mapped[int] = mapped_column(Integer)
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
