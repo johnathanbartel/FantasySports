@@ -159,3 +159,25 @@ def rank_new_player(db: Session, team: Team, asset_id: int) -> bool:
     db.add(TeamPeckingOrder(team_id=team.id, position_group=group, priority=existing + 1, draftable_asset_id=asset_id))
     db.flush()
     return True
+
+
+def unrank_player(db: Session, team: Team, asset_id: int) -> bool:
+    """Takes a player off his group's ranking (he was dropped) and closes the gap so the players behind him move up one.
+    Does nothing for a non-NHL team or an unranked player. Flushes, does not commit."""
+    try:
+        assert_hockey_team(db, team)
+    except ValueError:
+        return False
+    row = db.query(TeamPeckingOrder).filter_by(team_id=team.id, draftable_asset_id=asset_id).first()
+    if row is None:
+        return False
+    group, priority = row.position_group, row.priority
+    db.delete(row)
+    db.flush()
+    for later in (db.query(TeamPeckingOrder).filter(TeamPeckingOrder.team_id == team.id,
+                                                    TeamPeckingOrder.position_group == group,
+                                                    TeamPeckingOrder.priority > priority)
+                  .order_by(TeamPeckingOrder.priority)):
+        later.priority -= 1
+        db.flush()
+    return True

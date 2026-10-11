@@ -12,6 +12,7 @@ from fantasy_sports.api.schemas import (
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
 )
 from fantasy_sports.platform import pecking_order as po
+from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import Team, User
 from fantasy_sports.platform.db.session import get_db
 
@@ -29,20 +30,23 @@ def _team(db: Session, team_id: int) -> Team:
     return team
 
 
-def _player_out(roster: dict, pid: int, priority: int | None) -> PeckingOrderPlayerOut:
+def _player_out(roster: dict, pid: int, priority: int | None, rates: dict | None = None) -> PeckingOrderPlayerOut:
     asset_id, player = roster[pid]
+    rate = (rates or {}).get(asset_id, {})
     return PeckingOrderPlayerOut(player_id=pid, draftable_asset_id=asset_id, display_name=player.full_name,
-                                 position=player.position, priority=priority)
+                                 position=player.position, priority=priority, games=rate.get("games"),
+                                 points_per_game=rate.get("points_per_game"))
 
 
 def _read(db: Session, team: Team) -> PeckingOrderOut:
     roster = po.roster_players(db, team.id)
     order = po.load_order(db, team.id)
+    rates = rates_by_asset(db, [asset_id for asset_id, _ in roster.values()])
     groups = []
     for g in po.GROUPS:
-        ranked = [_player_out(roster, pid, i) for i, pid in enumerate(order[g], start=1) if pid in roster]
+        ranked = [_player_out(roster, pid, i, rates) for i, pid in enumerate(order[g], start=1) if pid in roster]
         taken = {p.player_id for p in ranked}
-        unranked = sorted((_player_out(roster, pid, None) for pid, (_, pl) in roster.items()
+        unranked = sorted((_player_out(roster, pid, None, rates) for pid, (_, pl) in roster.items()
                            if po.GROUP_BY_POSITION.get(pl.position) == g and pid not in taken),
                           key=lambda p: (p.display_name, p.player_id))
         groups.append(PeckingOrderGroupOut(position_group=g, max_depth=po.DEPTH[g], starters=po.STARTERS[g],

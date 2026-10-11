@@ -75,6 +75,8 @@ def seed_reference_data(db):
             active=False,
         ),
     ]
+    for i in range(30):   # a draft fills every roster spot (14 per team), so the pool must cover 2 teams x 14
+        players.append(Player(universe_id=nhl.id, real_team_id=leafs.id, full_name=f"Depth Skater {i:02d}", position="C"))
     db.add_all(players)
     db.flush()
 
@@ -106,7 +108,6 @@ def main():
         "commissioner_user_id": ref["commissioner"].id,
         "universe_codes": ["nhl"],
         "size": 2,
-        "draft_rounds": 2,
     }, headers=headers)
     assert resp.status_code == 200, resp.text
     league = resp.json()

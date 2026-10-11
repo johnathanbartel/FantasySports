@@ -45,7 +45,7 @@ seed_nfl_reference_data(db)
 team = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
 db.add(team)
 db.flush()
-for i in range(6):
+for i in range(70):   # a 4-team NHL draft fills 4 x 14 roster spots
     p = Player(universe_id=nhl.id, real_team_id=team.id, full_name=f"Skater {i}", position="C")
     db.add(p)
     db.flush()
@@ -65,7 +65,7 @@ a, b = auth(alice), auth(bob)
 
 def make_league(name, codes, size):
     r = client.post("/leagues", json={"name": name, "commissioner_user_id": alice.id, "universe_codes": codes,
-                                      "size": size, "draft_rounds": 1}, headers=a)
+                                      "size": size}, headers=a)
     assert r.status_code == 200, r.text
     return r.json()
 

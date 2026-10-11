@@ -8,9 +8,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
-from fantasy_sports.platform import rankings, schedule, scoring, season
+from fantasy_sports.platform import auto_schedule, rankings, schedule, scoring, season
 from fantasy_sports.platform.league_features import is_college
-from fantasy_sports.platform.db.models.core import MatchupRequest, Team, User, Week, WeeklyMatchup
+from fantasy_sports.platform.db.models.core import League, MatchupRequest, Team, User, Week, WeeklyMatchup
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(tags=["schedule"])
@@ -51,10 +51,21 @@ def _req_out(db: Session, r: MatchupRequest) -> dict:
 def schedule_state(league_id: int, db: Session = Depends(get_db)):
     weeks = scoring.season_weeks(db, league_id)
     return {"status": schedule.stage_status(db, league_id),
-            "has_schedule": db.query(WeeklyMatchup).filter_by(league_id=league_id).count() > 0,
+            "has_schedule": auto_schedule.has_schedule(db, db.get(League, league_id)),
+            "is_college": is_college(db, league_id),
             "regular_weeks": season.REGULAR_SEASON_WEEKS, "championship_week": season.CHAMPIONSHIP_WEEK,
             "weeks": [{"week_id": w.id, "week_number": w.week_number, "start_date": w.start_date,
                        "locked": scoring.is_locked(w)} for w in weeks if w.week_number <= season.CHAMPIONSHIP_WEEK]}
+
+
+@router.post("/leagues/{league_id}/schedule/generate")
+def generate_schedule(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner action for a league that doesn't set its own schedule (anything but college): creates the schedule
+    if it has none. Normally this already happened when the draft finished."""
+    league = assert_commissioner(db, user, league_id)
+    reason = auto_schedule.ensure_schedule(db, league)
+    db.commit()
+    return {"created": reason is None, "reason": reason}
 
 
 @router.get("/teams/{team_id}/schedule")

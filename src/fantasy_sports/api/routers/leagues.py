@@ -16,6 +16,7 @@ from fantasy_sports.platform.db.models.core import (
     RosterSlotDefinition, Team, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
+from fantasy_sports.platform.league_features import draft_state
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
@@ -91,8 +92,12 @@ def create_league(
 
     first = universes[0]
     draft_rounds = payload.draft_rounds
+    spots = roster_size(db, first.id, payload.defense_modes.get(first.code, "group"))
     if draft_rounds is None:
-        draft_rounds = roster_size(db, first.id, payload.defense_modes.get(first.code, "group")) or 20
+        draft_rounds = spots or 20
+    elif spots and draft_rounds != spots and not any(u.level == "college" for u in universes):
+        # Outside college leagues the draft fills every roster spot, so it has exactly one round per spot.
+        raise HTTPException(400, f"Draft rounds must equal the roster size ({spots}) so every roster spot is filled")
     league = League(
         name=payload.name,
         commissioner_user_id=payload.commissioner_user_id,
@@ -153,13 +158,7 @@ class DashboardLeague(BaseModel):
 
 
 def _draft_state(db: Session, league: League) -> str:
-    """not_started / in_progress / complete across snake, auction and recruiting drafts."""
-    statuses = [d.status for d in db.query(Draft).filter(Draft.league_id == league.id)]
-    statuses += [d.status for d in db.query(AuctionDraft).filter(AuctionDraft.league_id == league.id)]
-    statuses += [d.status for d in db.query(RecruitingDraft).filter(RecruitingDraft.league_id == league.id)]
-    if not statuses:
-        return "not_started"
-    return "complete" if all(s in ("complete", "closed") for s in statuses) else "in_progress"
+    return draft_state(db, league.id)
 
 
 @router.get("/mine/dashboard", response_model=list[DashboardLeague])

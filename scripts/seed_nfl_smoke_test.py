@@ -94,7 +94,7 @@ def seed_reference_data() -> User:
             ))
 
         # individual defenders: ordinary players with real roster positions (not normalized)
-        for index, position in enumerate(["DE", "DT", "OLB", "MLB", "CB", "FS"] * 3):
+        for index, position in enumerate(["DE", "DT", "OLB", "MLB", "CB", "FS"] * 6):
             player = Player(
                 universe_id=nfl.id,
                 real_team_id=real_teams[index % len(real_teams)].id,
