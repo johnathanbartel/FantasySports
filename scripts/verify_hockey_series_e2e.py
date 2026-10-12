@@ -259,7 +259,7 @@ def main() -> None:
 
         # ---- schedule ---------------------------------------------------------------------------------------------------------------
         start = dt.date(2026, 10, 14)
-        r = client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat()}, headers=auth["human"])
+        r = client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat(), "replace": True}, headers=auth["human"])
         check(r.status_code == 200 and len(r.json()["series"]) == 66, "the series schedule has 66 series (11 rounds x 6)")
         check(client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat()}, headers=auth["human"]).status_code == 400,
               "regenerating without replace is refused (idempotency)")
@@ -436,7 +436,7 @@ def main() -> None:
         import shutil
         node = shutil.which("node")
         check(node is not None, "node is available for the page-script checks")
-        for page in ("nhl-schedule.html", "nhl-game.html", "draft-board.html"):
+        for page in ("league.html", "nhl-game.html", "draft-board.html"):
             html = (ROOT / "web" / "static" / page).read_text(encoding="utf-8")
             inline = re.findall(r"<script>(.*?)</script>", html, re.S)[-1]
             f = Path(temp_dir) / f"{page}.js"

@@ -129,7 +129,8 @@ function setHeader() {
   $('kicker').textContent = state && state.calendar_date ? `NHL · ${state.calendar_date}` : 'NHL';
   if (state && state.league_id) {
     $('nav-league').href = `/static/league.html?league_id=${state.league_id}`;
-    $('nav-schedule').href = `/static/nhl-schedule.html?league_id=${state.league_id}${params.get('team_id') ? '&team_id=' + params.get('team_id') : ''}`;
+    $('nav-schedule').href = `/static/league.html?league_id=${state.league_id}&tab=roster${params.get('team_id') ? '&team_id=' + params.get('team_id') : ''}`;
+    $('nav-schedule').textContent = 'Roster & lines';
     $('nav-brand').textContent = 'NHL league';
   }
 }

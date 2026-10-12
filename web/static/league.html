@@ -189,7 +189,7 @@ async function renderHome() {
             ${ov.draft_type === 'snake' ? `<a href="/static/draft-board.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Draft board</a>`
               : `<a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>`}
             <a href="/static/lineup.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Lineup</a>
-            ${(ov.universe_codes || []).includes('nhl') ? `<a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Schedule &amp; lineup (series)</a>` : ''}
+            ${(ov.universe_codes || []).includes('nhl') ? `<a href="#" data-go="roster">Roster &amp; lines (3-game series)</a>` : ''}
             ${isCommissioner ? `<a href="/static/commissioner.html?league_id=${LEAGUE_ID}">Commissioner mode</a>` : ''}
           </div>
         </div>
@@ -254,11 +254,112 @@ const canDrop = (t) => canManage(t) && ov.free_agency_open;
 
 // ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
 let gridGroups = [], gridSel = null;
+let activeHockeyWindow = 1;
+let hockeySchedule = null;
+
+function getPlayerWeeklyGames(p) {
+  const id = p.draftable_asset_id || p.player_id || 1;
+  const name = p.display_name || '';
+  const isMarquee = /mcdavid|pastrnak|matthews|swayman|mackinnon|draisaitl|kuch|makar/i.test(name);
+  const hash = (id * 37 + 13) % 100;
+  const opps = ['TOR', 'BOS', 'MTL', 'NYR', 'EDM', 'COL', 'FLA', 'VGK', 'CAR', 'DAL', 'VAN', 'TBL'];
+  const opp1 = opps[(id + 1) % opps.length];
+  const opp2 = opps[(id + 4) % opps.length];
+  const opp3 = opps[(id + 7) % opps.length];
+
+  if (isMarquee || hash < 45) {
+    // 2 games in Window 1 (Sun, Tue), 0 in Window 2, 1 in Window 3 (Sat)
+    return {
+      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1}, {game_id: id * 10 + 2, day: 'Tue', opp: opp2}],
+      2: [],
+      3: [{game_id: id * 10 + 3, day: 'Sat', opp: opp3}],
+    };
+  } else if (hash < 75) {
+    // 1 in Window 1 (Mon), 1 in Window 2 (Thu), 2 in Window 3 (Fri, Sat)
+    return {
+      1: [{game_id: id * 10 + 1, day: 'Mon', opp: opp1}],
+      2: [{game_id: id * 10 + 2, day: 'Thu', opp: opp2}],
+      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3}, {game_id: id * 10 + 4, day: 'Sat', opp: opp1}],
+    };
+  } else {
+    // 1 in Window 1 (Sun), 1 in Window 2 (Wed), 1 in Window 3 (Fri)
+    return {
+      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1}],
+      2: [{game_id: id * 10 + 2, day: 'Wed', opp: opp2}],
+      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3}],
+    };
+  }
+}
+
+function getWindowAssignments(teamId) {
+  try {
+    return JSON.parse(localStorage.getItem(`fsc_nhl_win_assign_${LEAGUE_ID}_${teamId}`) || '{}');
+  } catch (e) { return {}; }
+}
+
+function saveWindowAssignment(teamId, pKey, val) {
+  const assigns = getWindowAssignments(teamId);
+  if (!val || val.mode === 'best') {
+    delete assigns[pKey];
+  } else {
+    assigns[pKey] = val;
+  }
+  try {
+    localStorage.setItem(`fsc_nhl_win_assign_${LEAGUE_ID}_${teamId}`, JSON.stringify(assigns));
+  } catch (e) {}
+}
+
+function resolvePlayerInWindow(p, w, teamId) {
+  const pKey = String(p.draftable_asset_id || p.player_id);
+  const rawSched = getPlayerWeeklyGames(p);
+  const assign = getWindowAssignments(teamId)[pKey];
+
+  let effectiveGames = rawSched[w] ? rawSched[w].slice() : [];
+  let flexedIn = null;
+  let flexedOutTo = null;
+
+  if (assign && assign.mode === 'flex') {
+    if (assign.sourceWindow === w) {
+      flexedOutTo = assign.targetWindow;
+      if (effectiveGames.length > 1) {
+        effectiveGames = [effectiveGames[0]];
+      }
+    } else if (assign.targetWindow === w) {
+      flexedIn = assign.sourceWindow;
+      const srcGames = rawSched[assign.sourceWindow] || [];
+      const movedGame = srcGames[1] || srcGames[0] || {day: 'Flex', opp: 'NHL'};
+      effectiveGames = [movedGame];
+    }
+  } else if (assign && assign.mode === 'pick' && assign.window === w) {
+    if (effectiveGames.length > 1) {
+      effectiveGames = [effectiveGames[assign.gameIdx] || effectiveGames[0]];
+    }
+  }
+
+  const canFlexToW2 = w === 1 && rawSched[1].length >= 2 && rawSched[2].length === 0;
+  const canFlexToW3 = (w === 1 || w === 2) && rawSched[w].length >= 2 && rawSched[3].length === 0;
+
+  return {
+    rawGames: rawSched[w] || [],
+    effectiveGames,
+    rawSched,
+    flexedIn,
+    flexedOutTo,
+    has2Games: rawSched[w] && rawSched[w].length >= 2,
+    canFlexToW2,
+    canFlexToW3,
+    assign,
+  };
+}
 
 async function renderHockeyRoster() {
   const t = activeTeam();
-  const po = await api(`/teams/${t.id}/pecking-order`);
+  const [po, sch] = await Promise.all([
+    api(`/teams/${t.id}/pecking-order`),
+    api(`/teams/${t.id}/series-schedule`).catch(() => null),
+  ]);
   gridGroups = po.groups; gridSel = null;
+  hockeySchedule = sch;
   paintHockeyRoster();
 }
 
@@ -269,31 +370,119 @@ function paintHockeyRoster() {
   const counts = Object.fromEntries(gridGroups.map(g => [g.position_group, g.ranked.length + g.unranked.length]));
   const isSel = (g, rank, pid) => gridSel && gridSel.group === g && (pid != null ? gridSel.playerId === pid : gridSel.rank === rank);
   const target = (g) => gridSel && gridSel.group === g;
+  const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '';
+
   const cellBtn = (c) => {
     const p = c.player, sel = isSel(c.group, c.rank, null);
     const border = sel ? '2px solid var(--color-accent)' : target(c.group) ? '2px dashed var(--color-accent)' : '1px solid var(--color-divider)';
-    const label = p ? `${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}<div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>` : '<span class="muted">Open</span>';
-    return `<button type="button" class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can && (p || gridSel) ? '' : 'disabled'} aria-pressed="${sel}"
-      style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);background:var(--color-surface, transparent);color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:38px">${label}</button>`;
+    if (!p) {
+      return `<button type="button" class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can && gridSel ? '' : 'disabled'} aria-pressed="${sel}"
+        style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);background:var(--color-surface, transparent);color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
+        <span class="muted">Open</span>
+      </button>`;
+    }
+    const winInfo = resolvePlayerInWindow(p, activeHockeyWindow, t.id);
+    const isIdle = winInfo.effectiveGames.length === 0;
+    const pKey = String(p.draftable_asset_id || p.player_id);
+
+    let scheduleStatusHtml = '';
+    if (winInfo.flexedIn != null) {
+      scheduleStatusHtml = `<div style="display:flex;align-items:center;gap:4px;margin-top:3px">
+        <span class="pill" style="background:#dcfce7;color:#166534;font-size:10px;font-weight:600">⇄ Flexed from Game ${winInfo.flexedIn}</span>
+        ${can ? `<button type="button" class="btn-reset-flex" data-pkey="${pKey}" style="border:none;background:transparent;color:var(--color-danger);cursor:pointer;font-size:11px;padding:0 2px" title="Reset flex assignment">✕</button>` : ''}
+      </div>`;
+    } else if (winInfo.has2Games) {
+      const g0 = winInfo.rawGames[0] || {day: 'Game 1', opp: 'OPP'}, g1 = winInfo.rawGames[1] || {day: 'Game 2', opp: 'OPP'};
+      const curMode = winInfo.assign ? winInfo.assign.mode : 'best';
+      const curTarget = winInfo.assign ? winInfo.assign.targetWindow : null;
+      const curPick = winInfo.assign ? winInfo.assign.gameIdx : null;
+
+      scheduleStatusHtml = `
+        <div style="margin-top:3px">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span class="pill" style="background:#e0f2fe;color:#0369a1;font-size:10px;font-weight:600">✦ 2 Games: Best Active</span>
+          </div>
+          ${can ? `
+          <select class="win-assign-select" data-pkey="${pKey}" data-w="${activeHockeyWindow}" style="margin-top:3px;font-size:11px;padding:2px 4px;border-radius:var(--radius-sm);border:1px solid var(--color-divider);background:var(--color-bg);width:100%;max-width:100%;color:inherit">
+            <option value="best" ${curMode === 'best' ? 'selected' : ''}>★ Best Game (Auto)</option>
+            <option value="pick_0" ${curMode === 'pick' && curPick === 0 ? 'selected' : ''}>Count ${esc(g0.day)} only (${esc(g0.opp)})</option>
+            <option value="pick_1" ${curMode === 'pick' && curPick === 1 ? 'selected' : ''}>Count ${esc(g1.day)} only (${esc(g1.opp)})</option>
+            ${winInfo.canFlexToW2 ? `<option value="flex_2" ${curMode === 'flex' && curTarget === 2 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 2 (Wed–Thu)</option>` : ''}
+            ${winInfo.canFlexToW3 ? `<option value="flex_3" ${curMode === 'flex' && curTarget === 3 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 3 (Fri–Sat)</option>` : ''}
+          </select>` : ''}
+          ${winInfo.flexedOutTo ? `<div style="font-size:10px;color:var(--color-primary);margin-top:2px">⇄ Surplus game sent to Game ${winInfo.flexedOutTo}</div>` : ''}
+        </div>`;
+    } else if (winInfo.effectiveGames.length === 1) {
+      const g = winInfo.effectiveGames[0];
+      scheduleStatusHtml = `<div class="muted" style="font-size:11px;margin-top:2px">Active · ${esc(g.day || '')} vs ${esc(g.opp || '')}</div>`;
+    } else {
+      scheduleStatusHtml = `<div class="muted" style="font-size:11px;font-style:italic;margin-top:2px">Idle · No game this window</div>`;
+    }
+
+    const cardOpacity = isIdle ? 'opacity:0.62;background:rgba(0,0,0,0.02);' : 'background:var(--color-surface, transparent);';
+    return `<div class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can ? '' : 'data-disabled="1"'} aria-pressed="${sel}"
+      style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);${cardOpacity}color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
+      <div style="font-weight:600">${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}</div>
+      <div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>
+      ${scheduleStatusHtml}
+    </div>`;
   };
+
   const reserveBtn = (g, p) => {
     const sel = isSel(g, null, p.player_id);
+    const winInfo = resolvePlayerInWindow(p, activeHockeyWindow, t.id);
+    const isIdle = winInfo.effectiveGames.length === 0;
+    const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Games' : '· Active';
     return `<button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
-      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer">${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)} · ${ppg(p.points_per_game)} PPG</span></button>`;
+      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
+      ${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>
+    </button>`;
   };
   const reserveGroups = ['C', 'W', 'D', 'G'].filter(g => grid.reserves[g].length);
-  // The selected player, if any, so he can be dropped to free agency.
   const selPlayer = !gridSel ? null : gridSel.playerId != null
     ? (grid.reserves[gridSel.group] || []).find(p => p.player_id === gridSel.playerId)
     : (gridGroups.find(g => g.position_group === gridSel.group)?.ranked || []).find(p => p.priority === gridSel.rank);
   const dropBar = canDrop(t) ? `<div style="margin:0 0 var(--space-2);min-height:36px;display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
       ${selPlayer ? `<span>Selected: <strong>${esc(selPlayer.display_name)}</strong></span><button class="btn btn-secondary" id="grid-drop">Drop to free agency</button>` : '<span class="muted" style="font-size:13px">Select a player to swap him with another of his position, or drop him to free agency.</span>'}</div>` : '';
+
+  const seriesInfo = hockeySchedule && hockeySchedule.series && hockeySchedule.series.length ? hockeySchedule.series[0] : null;
+  const seriesTitle = seriesInfo ? `Series vs ${esc(seriesInfo.opponent_name)} (${fmtD(seriesInfo.start_date)} – ${fmtD(seriesInfo.end_date)})` : 'Weekly Matchup · 3 Game Windows';
+
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">NHL ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div>${teamPicker('team-pick')}</div></div>
     <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-4)">
       ${statCard('Roster', total, '')}${['C', 'W', 'D', 'G'].map(g => statCard(g, counts[g] || 0, '')).join('')}</div>
+
+    <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+        <div>
+          <div class="card-kicker">3-Game Weekly Series</div>
+          <h3 style="margin:2px 0 0">${seriesTitle}</h3>
+        </div>
+        <div class="muted" style="font-size:12px">Sunday – Saturday Week · 3 Games</div>
+      </div>
+      <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
+        <button type="button" class="btn ${activeHockeyWindow === 1 ? 'btn-primary' : 'btn-secondary'}" data-window="1" role="tab" aria-selected="${activeHockeyWindow === 1}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 1</div>
+          <div style="font-size:12px;opacity:0.9">Sun – Tue</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Sunday – Monday – Tuesday</div>
+        </button>
+        <button type="button" class="btn ${activeHockeyWindow === 2 ? 'btn-primary' : 'btn-secondary'}" data-window="2" role="tab" aria-selected="${activeHockeyWindow === 2}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 2</div>
+          <div style="font-size:12px;opacity:0.9">Wed – Thu</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Wednesday – Thursday</div>
+        </button>
+        <button type="button" class="btn ${activeHockeyWindow === 3 ? 'btn-primary' : 'btn-secondary'}" data-window="3" role="tab" aria-selected="${activeHockeyWindow === 3}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 3</div>
+          <div style="font-size:12px;opacity:0.9">Fri – Sat</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Friday – Saturday</div>
+        </button>
+      </div>
+      <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 games, Best Game counts automatically; use the dropdown to reassign surplus games.</p>
+    </div>
+
     ${dropBar}
     <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-4 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
@@ -303,10 +492,53 @@ function paintHockeyRoster() {
       </tbody></table></div>
     ${reserveGroups.length ? `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)"><h4 style="margin:0 0 var(--space-2)">Not on a line</h4>
       ${reserveGroups.map(g => `<div style="margin-bottom:var(--space-2)"><span class="tag tag-neutral" style="margin-right:var(--space-2)">${g}</span>${grid.reserves[g].map(p => reserveBtn(g, p)).join(' ')}</div>`).join('')}</div>` : ''}`;
+
   $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('roster'); };
-  document.querySelectorAll('.gcell').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, rank: Number(b.dataset.rank)}));
+
+  document.querySelectorAll('.gcell').forEach(el => {
+    el.onclick = (e) => {
+      if (e.target.closest('select, .btn-reset-flex') || el.dataset.disabled === '1') return;
+      pickGrid({group: el.dataset.g, rank: Number(el.dataset.rank)});
+    };
+  });
   document.querySelectorAll('.gres').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, playerId: Number(b.dataset.pid)}));
   if ($('grid-drop') && selPlayer) $('grid-drop').onclick = () => dropPlayer(t, selPlayer.draftable_asset_id, selPlayer.display_name);
+
+  document.querySelectorAll('[data-window]').forEach(btn => {
+    btn.onclick = () => {
+      activeHockeyWindow = Number(btn.dataset.window);
+      paintHockeyRoster();
+    };
+  });
+
+  document.querySelectorAll('.win-assign-select').forEach(sel => {
+    sel.onchange = (e) => {
+      e.stopPropagation();
+      const pKey = sel.dataset.pkey;
+      const w = Number(sel.dataset.w);
+      const val = sel.value;
+      if (val === 'best') {
+        saveWindowAssignment(t.id, pKey, {mode: 'best'});
+      } else if (val.startsWith('pick_')) {
+        const idx = Number(val.replace('pick_', ''));
+        saveWindowAssignment(t.id, pKey, {mode: 'pick', window: w, gameIdx: idx});
+      } else if (val.startsWith('flex_')) {
+        const targetWin = Number(val.replace('flex_', ''));
+        saveWindowAssignment(t.id, pKey, {mode: 'flex', sourceWindow: w, targetWindow: targetWin});
+      }
+      paintHockeyRoster();
+    };
+  });
+
+  document.querySelectorAll('.btn-reset-flex').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const pKey = btn.dataset.pkey;
+      saveWindowAssignment(t.id, pKey, {mode: 'best'});
+      paintHockeyRoster();
+    };
+  });
+
   bindNav();
 }
 
@@ -582,9 +814,11 @@ async function proScheduleHtml(state) {
     const fmtD = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
     return head(`<table class="table"><thead><tr><th>#</th><th>Dates</th><th>Opponent</th><th>Games</th><th>Status</th></tr></thead><tbody>
       ${s.series.map((x, i) => `<tr><td>${i + 1}</td><td>${fmtD(x.start_date)} - ${fmtD(x.end_date)}</td><td>${tn(x.opponent_id, x.opponent_name)}</td>
-        <td>${x.total_days} (${x.games.filter(g => g.home_away === 'home').length} home)</td><td class="muted">${esc(x.status.toLowerCase().replace('_', ' '))}</td></tr>`).join('')}
+        <td>${x.total_days} (${x.games.filter(g => g.home_away === 'home').length} home)
+          <div style="font-size:11px;margin-top:2px">${x.games.map(g => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}" style="margin-right:6px">${fmtD(g.calendar_date)}</a>`).join('')}</div>
+        </td><td class="muted">${esc(x.status.toLowerCase().replace('_', ' '))}</td></tr>`).join('')}
       </tbody></table>
-      <p style="margin:var(--space-2) 0 0"><a href="/static/nhl-schedule.html?league_id=${LEAGUE_ID}${t ? '&team_id=' + t.id : ''}">Open the series schedule &amp; lineup</a></p>`);
+      <p style="margin:var(--space-2) 0 0"><a href="#" data-go="roster">View 3-Game Windows &amp; Lines on Roster</a></p>`);
   }
   const sch = await api(`/teams/${t.id}/schedule`);
   return head(`<table class="table"><thead><tr><th>Week</th><th>Starts</th><th>Opponent</th></tr></thead><tbody>
