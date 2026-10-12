@@ -6,6 +6,7 @@ from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCreateRequest, TeamOut
 from fantasy_sports.platform import lineups
+from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
@@ -19,6 +20,14 @@ from fantasy_sports.platform.defense_modes import league_pool
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 
 router = APIRouter(prefix="/teams", tags=["teams"])
+
+
+def _ai_tick(db: Session, team_id: int) -> None:
+    """Apply the league's AI teams' due roster decisions before reading a roster (platform/ai/ai_roster.py)."""
+    team = db.get(Team, team_id)
+    if team is not None:
+        ai_roster.tick(db, team.league_id)
+        db.commit()
 
 
 @router.post("", response_model=TeamOut)
@@ -73,6 +82,7 @@ def get_team(team_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{team_id}/roster", response_model=list[RosterEntryOut])
 def get_roster(team_id: int, db: Session = Depends(get_db)):
+    _ai_tick(db, team_id)
     entries = db.query(RosterEntry).filter(RosterEntry.team_id == team_id).all()
     ids = [e.draftable_asset_id for e in entries]
     stats = stats_by_asset(db, ids)       # season points: football's stored points, or hockey's stored xG credit
@@ -126,6 +136,7 @@ class LinesOut(BaseModel):
 def get_lines(team_id: int, db: Session = Depends(get_db)):
     """The team's roster laid out by lineup slot (C, W, D, G, bench... / QB, RB, ...), with open slots shown, so a
     manager can watch the lines fill as the draft goes."""
+    _ai_tick(db, team_id)
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(404, "Team not found")

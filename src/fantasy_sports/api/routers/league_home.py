@@ -15,6 +15,7 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
 from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
+from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
@@ -102,6 +103,8 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    ai_roster.tick(db, league_id)       # AI teams' due roster decisions (platform/ai/ai_roster.py)
+    db.commit()
     draft = _status(db, league_id)
     users = {u.id: u.display_name for u in db.query(User)}
     confs = {c.id: c.name for c in db.query(Conference).filter_by(league_id=league_id)}
@@ -168,6 +171,8 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    ai_roster.tick(db, league_id)
+    db.commit()
     is_open = free_agency.is_open(db, league_id)
     note = ("Asking prices are provisional: each player's recruiting price, revealed once recruiting ends."
             if is_open and is_college(db, league_id) else "Signing is free: any free agent can fill an open roster spot."
@@ -296,6 +301,8 @@ def transactions(league_id: int, limit: int = 300, db: Session = Depends(get_db)
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    ai_roster.tick(db, league_id)
+    db.commit()
     schools = _school_names(db)
     out = [_txn_out(db, t, schools) for t in
            db.query(FreeAgencyTransaction).filter_by(league_id=league_id).order_by(FreeAgencyTransaction.id.desc()).limit(limit)]
