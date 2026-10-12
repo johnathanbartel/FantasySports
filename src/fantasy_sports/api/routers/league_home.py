@@ -15,7 +15,7 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
 from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
-from fantasy_sports.platform.league_features import draft_state, is_college
+from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import (
@@ -110,6 +110,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     for r in db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids or [0])):
         counts[r.team_id] = counts.get(r.team_id, 0) + 1
     college = is_college(db, league_id)
+    limit = roster_limit(db, league)
     poll_ranks = rankings.poll_ranks(db, league_id) if team_ids and college else {}
     teams = [
         TeamSummary(
@@ -117,7 +118,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
             owner_user_id=t.owner_user_id, owner_name=users.get(t.owner_user_id), conference_id=t.conference_id,
             conference_name=confs.get(t.conference_id), season_goal=t.season_goal,
             weekly_budget=STARTING_BUDGET_BY_PROGRAM_SIZE[t.program_size], roster_count=counts.get(t.id, 0),
-            open_spots=max(0, league.draft_rounds - counts.get(t.id, 0)), poll_rank=poll_ranks.get(t.id),
+            open_spots=max(0, limit - counts.get(t.id, 0)), poll_rank=poll_ranks.get(t.id),
         )
         for t in db.query(Team).filter_by(league_id=league_id).order_by(Team.id)
     ]
@@ -127,7 +128,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     ]
     return OverviewOut(
         league_id=league.id, name=league.name, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
-        roster_size=league.draft_rounds, commissioner_user_id=league.commissioner_user_id,
+        roster_size=limit, commissioner_user_id=league.commissioner_user_id,
         commissioner_name=users.get(league.commissioner_user_id), season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
@@ -207,6 +208,7 @@ def fa_summary(team_id: int, db: Session = Depends(get_db), user: User | None = 
         raise HTTPException(404, "Team not found")
     league = db.get(League, team.league_id)
     n = free_agency.roster_count(db, team_id)
+    limit = roster_limit(db, league)
     can_see = user is not None and (
         (not team.is_ai_owned and team.owner_user_id == user.id)
         or (team.is_ai_owned and league.commissioner_user_id == user.id
@@ -214,7 +216,7 @@ def fa_summary(team_id: int, db: Session = Depends(get_db), user: User | None = 
     )
     money = free_agency.team_money(db, team) if can_see and is_college(db, team.league_id) else None
     return FaSummaryOut(
-        team_id=team_id, roster_count=n, roster_size=league.draft_rounds, open_spots=max(0, league.draft_rounds - n),
+        team_id=team_id, roster_count=n, roster_size=limit, open_spots=max(0, limit - n),
         fa_money=money["fa_money"] if money else None, roster_cost=money["roster_cost"] if money else None,
         fa_spent=money["fa_spent"] if money else None)
 
@@ -281,7 +283,8 @@ def run_ai_fill(league_id: int, db: Session = Depends(get_db), user: User = Depe
     assert_commissioner(db, user, league_id)
     if not free_agency.is_open(db, league_id):
         raise HTTPException(400, "Free agency opens when the recruiting draft ends")
-    signed = free_agency.ai_fill_rosters(db, league_id)
+    signed = (free_agency.ai_fill_rosters(db, league_id) if is_college(db, league_id)
+              else free_agency.ai_fill_snake(db, league_id))
     db.commit()
     return {"signed": [{"team_id": t, "players": n} for t, n in signed.items()], "total": sum(signed.values())}
 

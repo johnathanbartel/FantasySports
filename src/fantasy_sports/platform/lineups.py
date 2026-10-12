@@ -38,6 +38,24 @@ from fantasy_sports.sports.football.models import WeeklyPlayerScore
 BENCH = "BENCH"
 
 
+def _heal_nhl_counts(db: Session, universe_id: int, rows: list[RosterSlotDefinition]) -> None:
+    """A database seeded before the 24-player hockey roster has an 8-player bench. Counts only: which positions fit a
+    slot, and which slots a lineup points at, are untouched."""
+    from fantasy_sports.platform.hockey_reference import ROSTER_SLOTS
+    from fantasy_sports.platform.db.models.core import Universe
+    universe = db.get(Universe, universe_id)
+    if universe is None or universe.code != "nhl":
+        return
+    expected = {code: count for code, _, count, _ in ROSTER_SLOTS}
+    changed = False
+    for row in rows:
+        if row.defense_mode is None and row.slot_code in expected and row.slot_count != expected[row.slot_code]:
+            row.slot_count = expected[row.slot_code]
+            changed = True
+    if changed:
+        db.flush()
+
+
 def league_slots(db: Session, league_id: int) -> list[RosterSlotDefinition]:
     """The lineup slots for a league's (first) universe and defense mode, in a
     stable display order: starters first (position slots, then FLEX), bench last."""
@@ -48,6 +66,7 @@ def league_slots(db: Session, league_id: int) -> list[RosterSlotDefinition]:
         s for s in db.query(RosterSlotDefinition).filter_by(universe_id=lu.universe_id)
         if s.defense_mode is None or s.defense_mode == lu.defense_mode
     ]
+    _heal_nhl_counts(db, lu.universe_id, rows)
 
     def order(s: RosterSlotDefinition):
         return (not s.is_starter, len(s.eligible_positions) > 1, s.id)

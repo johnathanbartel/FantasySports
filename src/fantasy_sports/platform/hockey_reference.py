@@ -53,6 +53,9 @@ def seed_hockey_reference_data(db) -> tuple[Universe, int]:
             actual = (row.eligible_positions, row.slot_count, row.is_starter)
             expected = (eligible, count, is_starter)
             if actual != expected:
+                if actual[0] == expected[0] and actual[2] == expected[2]:
+                    row.slot_count = count      # only the count changed: saved lineups stay valid
+                    continue
                 if db.query(LineupEntry).filter_by(roster_slot_id=row.id).first() is not None:
                     raise RuntimeError(
                         f"NHL roster slot {slot_code!r} conflicts with the current spec and "
