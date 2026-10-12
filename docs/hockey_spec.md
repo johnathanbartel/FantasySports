@@ -75,22 +75,37 @@ To guarantee every roster spot is filled over the course of an 82-game season wi
 
 ---
 
-## 5. Predictable Calendar, Off Days & Point Banking
+## 5. The 3-Game Weekly Schedule & Multi-Game Window Resolution
 
-### 5.1 The $\ge 7$ Games Matchup Day Rule
-- **Matchup Day**: Calendar dates with **$\ge 7$ NHL games** (~14 to 28 teams active) run official daily head-to-head series games.
-- **League Off Day**: Calendar dates with **$< 7$ NHL games** (typically 1 to 5 games, or league freeze days) are designated official Off Days across the league.
-- **Predictable Cadence**: Produces **~77 Matchup Days** across a 26-week season (~3 games per week, predominantly Tuesdays, Thursdays, and Saturdays), mirroring the 82-game NHL calendar.
+Hockey standardizes the regular season into **3 distinct game windows per week**, completely eliminating off-day roster voids while mirroring the real NHL cadence.
 
-### 5.2 Off-Day Point Banking & Smart Reassignment
-- **Banking**: Real points earned by rostered players active on an Off Day accumulate in `off_day_banked_credits`.
-- **Smart Reassignment Engine**:
-  - The platform alerts the manager and recommends the optimal game within the ongoing series (or next 7 days) to receive the banked points.
-  - Evaluation factors: projected point margin, opponent difficulty, and win-probability swing ($+\Delta P(\text{Win})$).
-  - *Example UI*: *"Connor McDavid earned **1.35 pts** on Wednesday's Off Day. Recommended: Bank to **Thursday vs. Bruins** (+1.35 pts swings win probability to 64%). [Accept Recommendation] or [Choose Another Game]"*
-- **Guardrails**:
-  - Unclaimed points auto-bank to the immediate next series game after 24 hours (passive manager protection).
-  - Maximum **1 banked player credit (cap +1.50 points)** per game to preserve competitive integrity.
+### 5.1 The 3-Window Weekly Schedule
+Every fantasy week is partitioned into three fixed multi-day game windows:
+- **Window 1 (Game 1)**: **Sunday – Monday – Tuesday** (14–23 real NHL games scheduled across the league).
+- **Window 2 (Game 2)**: **Wednesday – Thursday** (11–18 real NHL games scheduled across the league).
+- **Window 3 (Game 3)**: **Friday – Saturday** (13–20 real NHL games scheduled across the league).
+
+Each window runs as a standalone fantasy game within the week's series, producing **3 games per week** and **78 games per season** across 26 regular-season weeks.
+
+### 5.2 Multi-Game Window Resolution & Scoring Rules
+In the NHL, teams play 3 to 4 games a week, meaning a player frequently has 1 real game in every window, and occasionally plays 2 real games within the same window (e.g. Edmonton plays both Sunday and Tuesday in Window 1).
+
+1. **The One-Game-Per-Window Invariant**:
+   A player can contribute **at most one game score** to any single fantasy window.
+2. **Automated Default ("Best Game")**:
+   When a player plays multiple real NHL games within the same window:
+   - The scoring engine automatically awards the game with the **highest fantasy score** (`MAX(points)` based on xG attribution).
+   - **Zero User Maintenance**: Casual or inactive managers are guaranteed their star player's best performance without having to log in or configure settings.
+3. **Optional Surplus Game Flex (Reassignment)**:
+   For managers who want active tactical control:
+   - A manager can take the **surplus game** from that window and reassign it to count for **Window 2 or Window 3**.
+   - *Example*: McDavid plays on Sunday and Tuesday (Window 1), but Edmonton is idle on Thursday (Window 2). The manager can leave Tuesday's game in Window 1 and reassign Sunday's game to cover Window 2!
+   - *Guardrail*: A surplus game can only be assigned to a window where the player does not already have an active game scheduled.
+   - *Direction*: a surplus game moves **forward only** (Window 1 to 2 or 3, Window 2 to 3), so a game never rewrites a window that has already finished. One moved game per target window, and at least one game always stays where it was played.
+   - *"Has a game"* means the player's real team plays in that window, whether or not he earned credit in it: a scheduled game occupies its window. Such a game still never beats a game he earned credit in, so staying out of a game cannot be used to dodge a bad night (goalie GSAx).
+   - *Ties*: equal scores go to the earlier game, then the lower game id, so the result never depends on input order.
+4. **Off-Day Point Banking**:
+   On rare league-wide freeze days (e.g. Christmas Eve/Day, 3-day holiday breaks), any points from isolated games enter the off-day bank (`off_day_banked_credits`) and can be applied as a bench spark (capped at +1.50 pts).
 
 ---
 
@@ -168,44 +183,43 @@ A proprietary playoff-implication algorithm assigns every upcoming matchup a **G
 The frontend Schedule and Lineup interface is structured into three dedicated functional zones:
 
 ```
-+------------------------+-------------------------------------------------------------------------------+
-|  POSITION PECKING      |  SERIES TABS (NEXT 7 DAYS)                                                    |
-|  ORDER (FAR LEFT)      |  [ Tue 10/14 | Wed 10/15 | Thu 10/16 | Fri 10/17 | Sat 10/18 | Sun 10/19 ]     |
-|                        |  vs BOS (42) | OFF DAY   | vs BOS (88)| OFF DAY   | vs BOS (96)| vs BOS (65)     |
-|------------------------+-------------------------------------------------------------------------------+
-| LINE 1 (STARTERS)      |  ACTIVE SIMULATION / MATCHUP PANEL                                            |
-| C : A. Matthews  (TOR) |                                                                               |
-| W : D. Pastrnak  (BOS) |  PERIOD 2 — 14:22 REMAINING                         SHOTS: TOR 24 | BOS 19    |
-| W : W. Nylander  (TOR) |                                                                               |
-| D : C. McAvoy    (BOS) |  TORONTO MAPLE LEAFS                          BOSTON BRUINS                   |
-| D : Q. Hughes    (VAN) |             [ 3 ]                                         [ 2 ]               |
-| G : J. Swayman   (BOS) |                                                                               |
-|                        |  ON-ICE TICKER:                                                               |
-| LINE 2 (PRIORITY 2)    |  12:04 P2 - GOAL! Pastrnak one-timer (Assists: McAvoy)                        |
-| C : S. Crosby    (PIT) |  08:15 P2 - BANKED CREDIT: McDavid off-day surge leads to PP snipe!           |
-| ...                    |                                                                               |
-| LINE 3 (PRIORITY 3)    |  [ Watch Live Rink Highlights ]                [ Box Score & Attribution ]    |
-| ...                    |                                                                               |
-| LINE 4 (PRIORITY 4)    |                                                                               |
-+------------------------+-------------------------------------------------------------------------------+
++---------------------------------------------------------------------------------------------------------------+
+|  ROSTER WINDOW TABS (TOP NAVIGATION)                                                                          |
+|  [ Game 1: Sun 10/12 – Tue 10/14 vs BOS (GS: 72) ]   [ Game 2: Wed – Thu vs BOS (GS: 85) ]   [ Game 3: Fri – Sat (GS: 96) ] |
++---------------------------------------------------------------------------------------------------------------+
+|  POSITION PECKING ORDER (4 LINES GRID)                       |  ACTIVE SIMULATION / MATCHUP PANEL             |
+|                                                              |                                                |
+|  LINE 1 (STARTERS)                                           |  PERIOD 2 — 14:22 REMAINING    SHOTS: 24 - 19  |
+|  C : Connor McDavid  (EDM)  Tue vs BOS  ✦ 2 Games [⇄ Flex]   |  TORONTO MAPLE LEAFS           BOSTON BRUINS   |
+|  W : Cole Caufield   (MTL)  Mon @ NYR                        |             [ 3 ]                   [ 2 ]      |
+|  W : Dylan Guenther  (UTA)  Sun @ CHI                        |                                                |
+|  D : Evan Bouchard   (EDM)  Tue vs BOS                       |  ON-ICE TICKER:                                |
+|  D : Zach Werenski   (CBJ)  Tue vs PIT                       |  12:04 P2 - GOAL! McDavid one-timer (Assists:   |
+|  G : Jakub Dobes     (MTL)  Mon @ NYR (Confirmed Start)      |             Bouchard)                          |
+|                                                              |  08:15 P2 - POWER-PLAY SURGE! Werenski point-  |
+|  LINE 2 (PRIORITY 2)                                         |             shot deflected home (+1.10 pts)    |
+|  C : Nathan MacKinnon (COL) Mon @ DAL                        |                                                |
+|  ...                                                         |  [ Watch Live Highlights ]    [ Box Score ]    |
++---------------------------------------------------------------------------------------------------------------+
 ```
 
 ### 9.1 UI Elements
-1. **Far Left Column — Position Pecking Order**:
-   - Displays the 4-line hierarchy (Line 1 down to Line 4).
-   - Drag-and-drop handles allowing users to reorder priorities at any time.
-   - Status indicators showing who is confirmed active, who is idle, and which goalies have confirmed starts.
-2. **Top Navigation Bar — 7-Day Series Tabs**:
-   - Tabs for each day of the current multi-day series.
-   - Header shows: Date, Opponent Name/Logo, and **The Game Score**.
-   - **Game Score Color Ramp**:
-     - `0 – 40`: Neutral charcoal / black.
-     - `41 – 70`: Amber / orange.
-     - `71 – 100`: **Vivid bright red** (`#FF1E27`) to immediately draw the eye to high-stakes series showdowns.
-3. **Main Matchup Canvas**:
-   - Real-time simulation state: period clock, live scoreboard, and shot counters.
-   - 2D ice rink view or detailed play-by-play narrative ticker.
-   - Banked points badge showing active off-day reserve contributions.
+1. **Roster Window Tabs (Top Bar)**:
+   - Three persistent tabs for each weekly matchup:
+     `[ Game 1: Sun–Tue ]  [ Game 2: Wed–Thu ]  [ Game 3: Fri–Sat ]`.
+   - Each tab displays the date range, opponent team, and **The Game Score** in its dynamic heat color (`#FF1E27` for marquee matchups).
+2. **Pecking Order 4-Line Grid**:
+   - Displays the 4-line hierarchy (Line 1 Starters, Line 2–4 Backups).
+   - Inactive/idle players in that 2–3 day window are dimmed (`Idle`), visually explaining why Line 2 or 3 stepped into the starting spot.
+3. **Multi-Game Indicator & Flex Popover**:
+   - When a player has 2 real NHL games in a window, their card displays a subtle badge:
+     `✦ 2 Games: Best Active [⇄ Flex]`.
+   - Clicking `[⇄ Flex]` opens a lightweight popover without disrupting the grid:
+     - Shows the 2 scheduled real games.
+     - Option to keep "Best Game" default for this window.
+     - Option to reassign the surplus game to an open target window (Window 2 or 3).
+4. **Main Matchup Canvas**:
+   - Real-time progressive simulation view: period clock, live scoreboard, shots on goal, and on-ice narrative ticker.
 
 ---
 
@@ -229,8 +243,9 @@ CREATE TABLE league_series (
 CREATE TABLE series_daily_games (
     id INTEGER PRIMARY KEY,
     series_id INTEGER REFERENCES league_series(id),
-    calendar_date DATE NOT NULL,
-    is_matchup_day BOOLEAN NOT NULL DEFAULT TRUE,
+    window_index INTEGER NOT NULL, -- 1 (Sun-Tue), 2 (Wed-Thu), 3 (Fri-Sat)
+    calendar_date_start DATE NOT NULL,
+    calendar_date_end DATE NOT NULL,
     game_score_rating INTEGER NOT NULL DEFAULT 50, -- 0-100 leverage scale
     home_team_id INTEGER REFERENCES teams(id),
     away_team_id INTEGER REFERENCES teams(id),
@@ -242,7 +257,21 @@ CREATE TABLE series_daily_games (
 );
 ```
 
-### 10.2 Pecking Order & Off-Day Banking
+### 10.2 Multi-Game Window Assignments (`player_window_assignments`)
+```sql
+CREATE TABLE player_window_assignments (
+    id INTEGER PRIMARY KEY,
+    series_id INTEGER REFERENCES league_series(id),
+    team_id INTEGER REFERENCES teams(id),
+    draftable_asset_id INTEGER REFERENCES draftable_assets(id),
+    window_index INTEGER NOT NULL, -- 1, 2, or 3
+    source_game_id INTEGER REFERENCES games(id),
+    is_manual_override BOOLEAN DEFAULT FALSE,
+    UNIQUE(series_id, draftable_asset_id, window_index)
+);
+```
+
+### 10.3 Pecking Order & Off-Day Banking
 ```sql
 CREATE TABLE lineup_pecking_orders (
     id INTEGER PRIMARY KEY,

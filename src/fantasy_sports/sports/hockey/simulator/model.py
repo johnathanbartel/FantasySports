@@ -63,6 +63,7 @@ class CreditLine:
     xg: float | None = None  # pre-shot xG of the underlying shot, when there is one
     is_goal: bool = False    # the underlying shot was a goal
     empty_net: bool = False  # the underlying shot was into an empty net (never creditable to a goalie)
+    game_id: int | None = None  # the real NHL game the credit came from (set for window scoring; None for a single date)
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class ShotAttempt:
     player_name: str
     real_second: int = 0
     xg: float = 0.0
+    game_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,10 @@ class HockeyGameInputs:
     calendar_date: str
     home: SideInput
     away: SideInput
+    # Window scoring (docs/hockey_spec.md section 5): which fantasy window this game is - 1 (Sun-Tue), 2 (Wed-Thu) or
+    # 3 (Fri-Sat) of the week starting on `week_start` (ISO date of the Sunday). None for a plain single-date game.
+    window_index: int | None = None
+    week_start: str | None = None
 
     def side(self, key: str) -> SideInput:
         return self.home if key == "home" else self.away
@@ -115,6 +121,17 @@ def validate_inputs(inputs: HockeyGameInputs) -> None:
         for a in inputs.side(key).attempts:
             if not math.isfinite(a.xg) or a.xg < 0:
                 raise InputError(f"{a.attempt_id}: attempt xg must be a non-negative number")
+    # The one-game-per-window invariant: a player's credit in one game script comes from one real game. Several games
+    # must be resolved first (hockey/simulator/windows.py: Best Game, or a manager's surplus-game move).
+    games: dict[int, set[int]] = {}
+    for key in ("home", "away"):
+        for item in (*inputs.side(key).lines, *inputs.side(key).attempts):
+            if item.game_id is not None:
+                games.setdefault(item.asset_id, set()).add(item.game_id)
+    for asset_id, ids in games.items():
+        if len(ids) > 1:
+            raise InputError(f"asset {asset_id} has credit from {len(ids)} real games ({sorted(ids)}) in one window: "
+                             "resolve to one game first (one game per player per window)")
 
 
 @dataclass
