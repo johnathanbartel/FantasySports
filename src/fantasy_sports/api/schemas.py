@@ -375,7 +375,14 @@ class SeriesDailyGameOut(ORMModel):
     is_matchup_day: bool
     home_team_id: int
     away_team_id: int
+    home_score: int = 0
+    away_score: int = 0
+    current_period: int = 0
+    seconds_remaining: int = 1200
+    game_score_rating: int = 50
     status: str
+    owner_watched: bool = False
+
 
 
 class LeagueSeriesOut(ORMModel):

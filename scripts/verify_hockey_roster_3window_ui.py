@@ -89,6 +89,13 @@ def main() -> None:
     check("data-swindow=" in league_html, "scoreboard game window selectors present")
     check("/static/nhl-game.html?daily_game_id=" in league_html, "scoreboard links to live simulator viewer")
     check("scoreboardAutoRefreshTimer" in league_html, "live scoreboard auto-refresh timer present")
+    check("Period 1 in progress" in league_html, "Period in progress status label present")
+    check("0 - 0 in progress" in league_html, "0 - 0 in progress status for underway period 1 present")
+    check("Highlights" in league_html, "highlights button present on scoreboard")
+    check("Box score" in league_html, "box score button present on scoreboard")
+    check("#boxscore" in league_html, "box score button targets #boxscore hash")
+    check("btn-skip-score" in league_html, "skip to score button present")
+    check("Owner hasn't watched highlights yet" in league_html, "reminder when owner hasn't watched highlights present")
 
     # 7. JS Syntax check under Node
     node = shutil.which("node")

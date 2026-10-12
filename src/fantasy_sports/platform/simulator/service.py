@@ -188,7 +188,10 @@ def view_state(db: Session, sim: SimulatorGame, user_id: int, now: datetime.date
     view = StateView(
         daily_game_id=sim.daily_game_id, published=True, contract_version=sim.contract_version, status=sim.status,
         veiled=mode is None, reveal_mode=mode, periods=shape.periods, period_seconds=shape.period_seconds,
-        window_seconds=shape.window_seconds, can_skip=sim.status == st.FINAL,
+        window_seconds=shape.window_seconds,
+        can_skip=sim.status == st.FINAL or (
+            sim.status == st.LIVE and (st.public_elapsed(shape, sim.status, sim.started_at, now) // shape.period_seconds) > 0
+        ),
     )
     if mode is None:
         return view
@@ -261,20 +264,33 @@ def progress(db: Session, sim: SimulatorGame, user_id: int, now: datetime.dateti
 
 
 def skip(db: Session, sim: SimulatorGame, user_id: int, now: datetime.datetime) -> SimulatorReveal:
-    """Jump to the box score. Only a FINAL game can be skipped to; SKIPPED is terminal and idempotent."""
+    """Jump to the box score / latest completed period. When FINAL, skips to end. When LIVE, skips to latest completed period."""
     events = _events(db, sim)
     sync(db, sim, now, events)
-    if sim.status != st.FINAL:
-        raise SimulatorError("The game is not final yet; watch it live or come back when it ends", "NOT_FINAL")
+    shape = shape_of(sim)
+    if sim.status == st.FINAL:
+        target_seq = len(events)
+    elif sim.status == st.LIVE:
+        elapsed = st.public_elapsed(shape, sim.status, sim.started_at, now)
+        completed_periods = elapsed // shape.period_seconds
+        if completed_periods <= 0:
+            raise SimulatorError("No period has completed yet; watch live highlights", "NOT_FINAL")
+        target_game_second = completed_periods * shape.period_seconds
+        target_seq = st.count_through([e.game_second for e in events], target_game_second)
+    else:
+        raise SimulatorError("This game has not started", "NOT_STARTED")
+
     reveal = get_reveal(db, sim, user_id)
     if reveal is None:
-        reveal = SimulatorReveal(simulator_game_id=sim.id, user_id=user_id, mode=st.SKIPPED, cursor_seq=len(events))
+        reveal = SimulatorReveal(simulator_game_id=sim.id, user_id=user_id, mode=st.SKIPPED, cursor_seq=target_seq)
         db.add(reveal)
     else:
         reveal.mode = st.SKIPPED
-        reveal.cursor_seq = len(events)
+        if target_seq > reveal.cursor_seq:
+            reveal.cursor_seq = target_seq
     db.flush()
     return reveal
+
 
 
 @dataclass

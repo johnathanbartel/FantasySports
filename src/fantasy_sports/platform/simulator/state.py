@@ -91,7 +91,7 @@ def shown_seq(status: str, mode: str | None, cursor_seq: int, public_seq: int, t
     if mode is None or status == SCHEDULED:
         return 0
     if mode == SKIPPED:
-        return total if status == FINAL else 0
+        return total if status == FINAL else min(max(cursor_seq, 0), total)
     if status == LIVE:
         return public_seq
     return min(max(cursor_seq, 0), total)

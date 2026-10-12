@@ -472,11 +472,15 @@ async function finalScreen() {
     `<div class="cols"><section class="card elev-sm" style="padding:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2>${tickerHtml(events)}</section>
      <section class="card elev-sm" style="padding:var(--space-4)"><h2 style="font-size:20px">Scoring plays</h2>
        ${snap.scoring_events.length ? `<ol class="ticker">${snap.scoring_events.map(evHtml).join('')}</ol>` : '<p class="muted" style="margin:0">No goals.</p>'}</section></div>
-     <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="box-h"><h2 id="box-h" style="font-size:20px">Attribution box score</h2>
+     <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="box-h" id="boxscore"><h2 id="box-h" style="font-size:20px">Attribution box score</h2>
        <p class="muted" style="margin-top:0">Points are each player's credited value. The scoreboard is built from them but never changes them.</p>${boxes}
        <details class="prov"><summary>Data provenance</summary><ul>${G.provenanceLines(prov).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
        <p class="muted" style="font-size:12px">Contract ${esc(snap.contract_version)} · ${snap.event_count} events</p></details></section>`;
   const h = $('board-h'); if (h) h.focus();
+  if (location.hash === '#boxscore') {
+    const el = $('boxscore');
+    if (el) el.scrollIntoView();
+  }
 }
 
 // ---------- entry ----------
@@ -492,6 +496,12 @@ async function enter() {
     $('screen').innerHTML = `<div class="state-card card">${chip('SCHEDULED')}<h2>Scheduled</h2><p class="muted">This game has not started. This page checks again on its own.</p></div>`;
     schedulePollState();
   } else if (screen === 'live-veiled' || screen === 'final-veiled') {
+    if (location.hash === '#boxscore' && screen === 'final-veiled') {
+      try {
+        state = await api(`${base}/skip`, {method: 'POST'});
+        return enter();
+      } catch (e) { /* ignore and show veil */ }
+    }
     veilScreen(screen);
   } else if (screen === 'live') {
     await liveScreen();

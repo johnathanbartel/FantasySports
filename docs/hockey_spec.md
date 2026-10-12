@@ -222,6 +222,14 @@ The frontend Schedule and Lineup interface is structured into three dedicated fu
      - Whichever matchup is kept remains active in the originating window.
 4. **Main Matchup Canvas**:
    - Real-time progressive simulation view: period clock, live scoreboard, shots on goal, and on-ice narrative ticker.
+5. **Matchup Scoreboard Card & Period Spoiler Veil**:
+   - Header indicates period status (e.g., `Period 1 in progress`, `Period 2 in progress`, `Final`).
+   - Clean horizontal line layout: `<Road Team> <Road Goals> — <Home Goals> <Home Team>`.
+   - During Period 1 (first third of game/players underway): scoreboard displays `0 - 0 in progress`.
+   - Period 2+ and Final: scores remain veiled (`? - ?`) until a competing team owner watches the highlights or skips.
+   - Once a team owner watches or skips, the completed period score is unlocked and visible to everyone in the league.
+   - Other managers can watch highlights at any time and are shown a reminder when the owner has not seen the results.
+   - Direct action buttons below: `[ Highlights ]`, `[ Box score ]` (anchored to `#boxscore`), and `[ Skip to Score ]`.
 
 ---
 
