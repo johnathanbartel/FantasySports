@@ -299,8 +299,8 @@ def main() -> None:
         check(not re.search(r"home_score\s*\+|away_score\s*\+|home_score\s*=[^=]|away_score\s*=[^=]", html),
               "the page never computes or assigns a score")
         check(client.get("/static/nhl-game-logic.js").status_code == 200, "logic module is served")
-        check("nhl-game.html?daily_game_id=" in client.get("/static/nhl-schedule.html").text,
-              "the schedule viewer links each game day to the game page")
+        check("nhl-game.html?daily_game_id=" in client.get("/static/league.html").text,
+              "the league viewer links each game day to the game page")
         check(client.get("/static/session.js").text.count("err.code") >= 1, "session.js passes structured error codes to pages")
 
         # ---- logic over the live payloads under Node --------------------------------------------------------
