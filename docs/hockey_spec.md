@@ -101,6 +101,9 @@ In the NHL, teams play 3 to 4 games a week, meaning a player frequently has 1 re
    - A manager can take the **surplus game** from that window and reassign it to count for **Window 2 or Window 3**.
    - *Example*: McDavid plays on Sunday and Tuesday (Window 1), but Edmonton is idle on Thursday (Window 2). The manager can leave Tuesday's game in Window 1 and reassign Sunday's game to cover Window 2!
    - *Guardrail*: A surplus game can only be assigned to a window where the player does not already have an active game scheduled.
+   - *Direction*: a surplus game moves **forward only** (Window 1 to 2 or 3, Window 2 to 3), so a game never rewrites a window that has already finished. One moved game per target window, and at least one game always stays where it was played.
+   - *"Has a game"* means the player's real team plays in that window, whether or not he earned credit in it: a scheduled game occupies its window. Such a game still never beats a game he earned credit in, so staying out of a game cannot be used to dodge a bad night (goalie GSAx).
+   - *Ties*: equal scores go to the earlier game, then the lower game id, so the result never depends on input order.
 4. **Off-Day Point Banking**:
    On rare league-wide freeze days (e.g. Christmas Eve/Day, 3-day holiday breaks), any points from isolated games enter the off-day bank (`off_day_banked_credits`) and can be applied as a bench spark (capped at +1.50 pts).
 

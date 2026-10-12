@@ -9,12 +9,13 @@ Pipeline: validate inputs -> ledger (raw totals, inversion) -> tie-outs -> norma
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimScript, validate_script
-from fantasy_sports.sports.hockey.simulator import model
+from fantasy_sports.sports.hockey.simulator import model, windows
 from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger, tie_out_ledger
 from fantasy_sports.sports.hockey.simulator.model import (
     ADAPTER_ID, ADAPTER_VERSION, DEFAULT_WINDOW_SECONDS, GAME_SECONDS, PERIOD_SECONDS, PERIODS, HockeyGameInputs,
@@ -30,11 +31,14 @@ def inputs_digest(inputs: HockeyGameInputs) -> str:
         s = inputs.side(side)
         payload.append({
             "team_id": s.team_id, "name": s.name,
-            "lines": [[l.line_id, l.group_id, l.asset_id, l.role, round(l.points, 9), l.real_second] for l in
-                      sorted(s.lines, key=lambda l: l.line_id)],
-            "attempts": [[a.attempt_id, a.asset_id, round(a.xg, 9), a.real_second] for a in
+            "lines": [[l.line_id, l.group_id, l.asset_id, l.role, round(l.points, 9), l.real_second]
+                      + ([l.game_id] if l.game_id is not None else []) for l in sorted(s.lines, key=lambda l: l.line_id)],
+            "attempts": [[a.attempt_id, a.asset_id, round(a.xg, 9), a.real_second]
+                         + ([a.game_id] if a.game_id is not None else []) for a in
                          sorted(s.attempts, key=lambda a: a.attempt_id)],
         })
+    if inputs.window_index is not None:      # only window games: a plain game's digest is unchanged
+        payload.append({"window": inputs.window_index, "week_start": inputs.week_start})
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -60,7 +64,16 @@ class HockeySimulatorAdapter:
     def __init__(self, window_seconds: int = DEFAULT_WINDOW_SECONDS):
         self.window_seconds = window_seconds
 
-    def build_script(self, game_inputs: Mapping | HockeyGameInputs, seed: int) -> SimScript:
+    def build_window_script(self, game_inputs: HockeyGameInputs, game_dates: Mapping[int, datetime.date], seed: int,
+                            assignments=(), scheduled_games: Mapping[int, Iterable[int]] | None = None) -> SimScript:
+        """A window game from ALL of the week's credit for the starters: each player's one counting game is chosen
+        (Best Game, or the manager's surplus-game moves in `assignments`: pipeline.WindowAssignment), only that game's
+        credit is kept, and the usual script is built from it. `game_dates` maps real game id -> calendar date."""
+        resolved, report = windows.resolve_window_inputs(game_inputs, game_dates, assignments, scheduled_games)
+        return self.build_script(resolved, seed, extra_provenance={"window": report})
+
+    def build_script(self, game_inputs: Mapping | HockeyGameInputs, seed: int,
+                     extra_provenance: Mapping | None = None) -> SimScript:
         if not isinstance(game_inputs, HockeyGameInputs):
             raise model.InputError("game_inputs must be a HockeyGameInputs")
         inputs = game_inputs
@@ -85,6 +98,8 @@ class HockeySimulatorAdapter:
                       "away": {"team_id": inputs.away.team_id, "name": inputs.away.name}},
             "box_score": box_score(inputs),
         }
+        if extra_provenance:
+            provenance.update(extra_provenance)
         script = SimScript(
             contract_version=CONTRACT_VERSION, sport=self.sport, periods=PERIODS, period_seconds=PERIOD_SECONDS,
             window_seconds=self.window_seconds, events=tuple(events), provenance=provenance)

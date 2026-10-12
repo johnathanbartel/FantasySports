@@ -299,3 +299,196 @@ def _give(result: GameResult, shot: ShotRecord, asset_id: int | None, role: str,
 # FS-013 entry point, kept for callers that have shots only.
 def process_shots(shots) -> GameResult:
     return process_game(shots)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Fantasy windows (docs/hockey_spec.md section 5). Pure functions: no database, no clock, no network.
+#
+# A fantasy week runs Sunday to Saturday and has three windows - 1: Sun-Mon-Tue, 2: Wed-Thu, 3: Fri-Sat - each a
+# standalone game. A player contributes AT MOST ONE real game's score to a window:
+#   * one real game in the window: that game;
+#   * several: the "Best Game", the highest fantasy score (ties: the earlier game, then the lower game id);
+#   * a manager may move a SURPLUS game (a window with two or more of the player's games) to a LATER window (2 or 3)
+#     in which the player has no real game of his own; the other game stays and still counts where it was.
+# A game's score is the sum of the credit lines it earned the player; a goalie's can be negative, and Best Game is
+# still the maximum (the least bad), never skipped.
+# ---------------------------------------------------------------------------------------------------------------
+import datetime  # noqa: E402
+
+WINDOWS = (1, 2, 3)
+# Python weekday(): Monday = 0 ... Sunday = 6
+WINDOW_WEEKDAYS = {1: (6, 0, 1), 2: (2, 3), 3: (4, 5)}
+FLEX_TARGETS = (2, 3)
+
+
+class WindowError(ValueError):
+    """A window assignment that breaks the rules (the message is meant for the manager)."""
+
+
+def week_start(day: datetime.date) -> datetime.date:
+    """The Sunday that begins the fantasy week containing `day`."""
+    return day - datetime.timedelta(days=(day.weekday() + 1) % 7)
+
+
+def window_of(day: datetime.date) -> tuple[datetime.date, int]:
+    """(week start, window 1-3) for a calendar date."""
+    weekday = day.weekday()
+    for index, weekdays in WINDOW_WEEKDAYS.items():
+        if weekday in weekdays:
+            return week_start(day), index
+    raise AssertionError("every weekday belongs to a window")
+
+
+def window_dates(start: datetime.date, window: int) -> list[datetime.date]:
+    """The calendar dates of a window, earliest first (`start` is the week's Sunday)."""
+    if window not in WINDOW_WEEKDAYS:
+        raise WindowError(f"Window must be 1, 2 or 3, got {window}")
+    days = [start + datetime.timedelta(days=i) for i in range(7)]
+    return [d for d in days if d.weekday() in WINDOW_WEEKDAYS[window]]
+
+
+@dataclass(frozen=True)
+class PlayerGame:
+    """One player's score in one real game."""
+    asset_id: int
+    game_id: int
+    game_date: datetime.date
+    points: float
+    # True for a game his team played in which he earned no credit at all. It still OCCUPIES its window (a surplus game
+    # cannot be moved onto it) but is never the Best Game while a game with credit competes: not playing is not a
+    # way to dodge a bad night.
+    scheduled_only: bool = False
+
+    @property
+    def window(self) -> tuple[datetime.date, int]:
+        return window_of(self.game_date)
+
+
+@dataclass(frozen=True)
+class WindowAssignment:
+    """A manager's choice to count a surplus game in a later window of the same week."""
+    asset_id: int
+    game_id: int
+    target_window: int
+
+
+@dataclass(frozen=True)
+class WindowScore:
+    """What one player contributes to one window."""
+    asset_id: int
+    week_start: datetime.date
+    window: int
+    game_id: int | None          # the game that counts (None = the player has no game in this window)
+    points: float                # 0.0 when no game counts
+    source: str                  # none / single / best_game / reassigned
+    candidates: tuple[int, ...]  # the games that competed for this window
+    dropped: tuple[int, ...]     # candidates that lost to the Best Game
+
+
+def player_game_points(credits, scheduled=()) -> list[PlayerGame]:
+    """Sums credit lines into per-game scores. `credits` yields (asset_id, game_id, game_date, points). `scheduled`
+    yields (asset_id, game_id, game_date) for every game a player's team played; one with no credit line becomes a
+    scheduled-only game (0.0). Exact (math.fsum) and sorted, so the same credits always give the same games."""
+    parts: dict[tuple[int, int, datetime.date], list[float]] = defaultdict(list)
+    for asset_id, game_id, game_date, points in credits:
+        parts[(asset_id, game_id, game_date)].append(points)
+    games = [PlayerGame(a, g, d, math.fsum(p)) for (a, g, d), p in parts.items()]
+    have = {(g.asset_id, g.game_id) for g in games}
+    games += [PlayerGame(a, g, d, 0.0, scheduled_only=True) for a, g, d in set(scheduled) if (a, g) not in have]
+    return sorted(games, key=lambda g: (g.asset_id, g.game_date, g.game_id))
+
+
+def _best(games: list[PlayerGame]) -> PlayerGame:
+    played = [g for g in games if not g.scheduled_only] or games      # a game he earned credit in beats one he did not
+    return max(played, key=lambda g: (g.points, -g.game_date.toordinal(), -g.game_id))
+
+
+def resolve_player_week(games, assignments=()) -> tuple[WindowScore, WindowScore, WindowScore]:
+    """One player's three windows for one week, from all his real games that week."""
+    games = sorted(games, key=lambda g: (g.game_date, g.game_id))
+    if not games:
+        raise WindowError("No games to resolve")
+    asset_id = games[0].asset_id
+    start = games[0].window[0]
+    if any(g.asset_id != asset_id or g.window[0] != start for g in games):
+        raise WindowError("resolve_player_week takes one player's games from one fantasy week")
+    if len({g.game_id for g in games}) != len(games):
+        raise WindowError("A game appears twice for the same player")
+    native = {w: [g for g in games if g.window[1] == w] for w in WINDOWS}
+    by_id = {g.game_id: g for g in games}
+
+    moved: dict[int, int] = {}            # game id -> target window
+    target_taken: dict[int, int] = {}     # target window -> game id
+    for a in assignments:
+        if a.asset_id != asset_id:
+            continue
+        game = by_id.get(a.game_id)
+        if game is None:
+            raise WindowError(f"Game {a.game_id} is not one of this player's games this week")
+        if a.target_window not in FLEX_TARGETS:
+            raise WindowError("A surplus game can only be moved to Window 2 or Window 3")
+        source = game.window[1]
+        if a.target_window <= source:
+            raise WindowError(f"A game from Window {source} can only move to a later window, not Window {a.target_window}")
+        if len(native[source]) < 2:
+            raise WindowError(f"Window {source} has only one game for this player: there is no surplus game to move")
+        if native[a.target_window]:
+            raise WindowError(f"The player already has a game in Window {a.target_window}: a surplus game can only go to an open window")
+        if a.game_id in moved:
+            raise WindowError("That game is already moved")
+        if a.target_window in target_taken:
+            raise WindowError(f"Window {a.target_window} already has a moved game: one game per window")
+        moved[a.game_id] = a.target_window
+        target_taken[a.target_window] = a.game_id
+    for w in WINDOWS:
+        if native[w] and all(g.game_id in moved for g in native[w]):
+            raise WindowError(f"At least one game must stay in Window {w}")
+
+    out = []
+    for w in WINDOWS:
+        if w in target_taken:
+            game = by_id[target_taken[w]]
+            out.append(WindowScore(asset_id, start, w, game.game_id, game.points, "reassigned", (game.game_id,), ()))
+            continue
+        pool = [g for g in native[w] if g.game_id not in moved]
+        if not pool:
+            out.append(WindowScore(asset_id, start, w, None, 0.0, "none", (), ()))
+            continue
+        best = _best(pool)
+        out.append(WindowScore(
+            asset_id, start, w, best.game_id, best.points, "single" if len(pool) == 1 else "best_game",
+            tuple(g.game_id for g in pool), tuple(g.game_id for g in pool if g.game_id != best.game_id)))
+    assert_one_game_per_window(out)
+    return tuple(out)  # type: ignore[return-value]
+
+
+def resolve_windows(player_games, assignments=()) -> dict[tuple[int, datetime.date], tuple[WindowScore, ...]]:
+    """Resolves every player-week in `player_games`. Keys are (asset_id, week_start)."""
+    grouped: dict[tuple[int, datetime.date], list[PlayerGame]] = defaultdict(list)
+    for g in player_games:
+        grouped[(g.asset_id, g.window[0])].append(g)
+    assignments = tuple(assignments)
+    for a in assignments:
+        if not any(k[0] == a.asset_id and any(g.game_id == a.game_id for g in v) for k, v in grouped.items()):
+            raise WindowError(f"Player {a.asset_id} has no game {a.game_id} to move")
+    return {key: resolve_player_week(games, [a for a in assignments if a.asset_id == key[0]])
+            for key, games in sorted(grouped.items())}
+
+
+def assert_one_game_per_window(scores) -> None:
+    """The invariant: a window holds at most one game per player, and no game counts in two windows."""
+    counted = [s.game_id for s in scores if s.game_id is not None]
+    if len(counted) != len(set(counted)):
+        raise WindowError("A game counts in more than one window")
+    if len({s.window for s in scores}) != len(scores):
+        raise WindowError("A window is listed twice")
+
+
+def window_totals(resolved) -> dict[tuple[datetime.date, int], dict[int, float]]:
+    """(week start, window) -> {asset_id: points that count}: the numbers a team's window score is built from."""
+    out: dict[tuple[datetime.date, int], dict[int, float]] = defaultdict(dict)
+    for (asset_id, start), scores in resolved.items():
+        for s in scores:
+            if s.game_id is not None:
+                out[(start, s.window)][asset_id] = s.points
+    return dict(out)
