@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset
-from fantasy_sports.platform import lineups
+from fantasy_sports.platform import lineups, pecking_order
 from fantasy_sports.platform.db.models.core import Draft, League, RosterEntry, Team
 from fantasy_sports.platform.roster_fill import fill_slots
 
@@ -97,10 +97,28 @@ def choose_pick(db: Session, draft: Draft, team_id: int, board: list[DraftBoardA
             have[p] += 1
     starter_slots_for = {p: sum(s.slot_count for s in slots if s.is_starter and p in s.eligible_positions) for p in on_board}
 
+    # A hockey roster is exactly the four lines (C 4, W 8, D 8, G 4 = 24): a player beyond his group's depth would sit
+    # on no line, so take one only when nothing else is left.
+    depth_have: dict[str, int] = defaultdict(int)
+    hockey = False
+    try:
+        pecking_order.assert_hockey_team(db, db.get(Team, team_id))
+        hockey = True
+        for _, p in rosters[team_id]:
+            depth_have[pecking_order.GROUP_BY_POSITION.get(p)] += 1
+    except ValueError:
+        pass
+
     best, best_key = None, None
     for i, a in enumerate(board):
         p = a.position
         vorp = _pts(a) - replacement.get(p, 0.0)
+        group = pecking_order.GROUP_BY_POSITION.get(p)
+        if hockey and group and depth_have[group] >= pecking_order.DEPTH[group] and not forced:
+            key = (-1e9, _pts(a), -i)
+            if best_key is None or key > best_key:
+                best, best_key = a, key
+            continue
         if p in need_positions:
             value = vorp + STARTER_BONUS
         elif forced:

@@ -48,7 +48,7 @@ club = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
 db.add(club)
 db.flush()
 asset_of = {}
-for pos, n in (("C", 24), ("LW", 16), ("RW", 16), ("D", 30), ("G", 12)):
+for pos, n in (("C", 40), ("LW", 28), ("RW", 28), ("D", 60), ("G", 28)):
     for i in range(n):
         p = Player(universe_id=nhl.id, real_team_id=club.id, full_name=f"{pos} Player {i:02d}", position=pos)
         db.add(p)
@@ -79,7 +79,7 @@ def new_league(name, size, **extra):
 r = new_league("Short", 6, draft_rounds=5)
 check(r.status_code == 400 and "roster size" in r.json()["detail"], "fewer rounds than roster spots is refused for an NHL league")
 lg = new_league("Pro", 6).json()
-check(lg["draft_rounds"] == 14, "default rounds = 14 roster spots (6 starters + 8 bench)")
+check(lg["draft_rounds"] == 24, "default rounds = 24 roster spots (6 starters + 18 bench)")
 big = new_league("Too big", 8).json()
 client.post(f"/leagues/{big['id']}/ai-teams", headers=auth)
 r = client.post("/drafts/start", json={"league_id": big["id"]})
@@ -100,15 +100,15 @@ d = client.post("/drafts/start", json={"league_id": lg["id"]}).json()
 n = 0
 while client.post(f"/drafts/{d['id']}/autopick").status_code == 200:
     n += 1
-check(n == 84, f"84 picks made (6 teams x 14 rounds): {n}")
+check(n == 144, f"144 picks made (6 teams x 24 rounds): {n}")
 counts = [db.query(RosterEntry).filter_by(team_id=t.id).count() for t in db.query(Team).filter_by(league_id=lg["id"])]
-check(counts == [14] * 6, f"every team's roster is full: {counts}")
+check(counts == [24] * 6, f"every team's roster is full: {counts}")
 
 # ---- free agency opens immediately; schedule is generated ----
 ov = client.get(f"/leagues/{lg['id']}/overview").json()
 check(ov["free_agency_open"] and ov["draft_state"] == "complete" and ov["is_college"] is False, "free agency opens the moment the draft ends")
 fa = client.get(f"/leagues/{lg['id']}/free-agents").json()
-check(fa["open"] and len(fa["players"]) == 98 - 84 and all(p["asking_price"] == 0 for p in fa["players"]), "14 free agents, all free to sign")
+check(fa["open"] and len(fa["players"]) == 184 - 144 and all(p["asking_price"] == 0 for p in fa["players"]), "40 free agents, all free to sign")
 series = client.get(f"/leagues/{lg['id']}/series-schedule").json()["series"]
 check(len(series) == 5 * 3 and all(len(s["daily_games"]) == s["total_days"] for s in series),
       f"the series schedule was generated automatically ({len(series)} series, 5 rounds x 3 pairings)")
@@ -120,7 +120,7 @@ check(r["created"] is True and len(client.get(f"/leagues/{lg['id']}/series-sched
 
 # ---- points per game ----
 roster = client.get(f"/teams/{mine.id}/roster").json()
-check(len(roster) == 14 and all("points_per_game" in r for r in roster), "roster payload carries points per game")
+check(len(roster) == 24 and all("points_per_game" in r for r in roster), "roster payload carries points per game")
 check(all(r["points_per_game"] is None for r in roster), "with no stored credit there is no rate (never invented)")
 star = roster[0]
 for game, pts in ((901, 1.0), (902, 3.0)):

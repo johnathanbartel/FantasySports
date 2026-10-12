@@ -55,22 +55,20 @@ value created relative to that expectation, not raw counting stats:
 - **Penalties drawn/taken, faceoffs**: out of scope for v1, same as
   offensive line scoring being out of scope for football v1.
 
-## Roster (20 players: 12 starters, 8 bench)
+## Roster (24 players: 6 starters, 18 bench)
 
 | Slot | Eligible positions | Count |
 |---|---|---|
-| C | C | 2 |
-| LW | LW | 2 |
-| RW | RW | 2 |
-| D | D | 4 |
-| UTIL (flex skater) | C/LW/RW/D | 1 |
+| C | C | 1 |
+| W | W/LW/RW | 2 |
+| D | D | 2 |
 | G | G | 1 |
-| BENCH | any | 8 |
+| BENCH | any | 18 |
 
-20 total matches `League.draft_rounds`'s existing platform-wide default (see
-`platform/db/models/core.py`), so a snake draft for an NHL league fills
-every roster slot in exactly 20 rounds with no leftover picks, same as the
-football module's 20-round default.
+The maximum roster is 24 players: four lines of depth (C 4, W 8, D 8, G 4; see `docs/hockey_spec.md` section 4).
+A snake draft for an NHL league runs one round per roster spot, so `League.draft_rounds` is 24 and the draft fills
+every spot. The AI drafts toward that depth and does not take a player beyond his position's line depth until
+nothing else is left.
 
 Open questions (mirrors football's own open-roster-question style):
 same draft pool for all positions, or goalie-specific draft rounds -

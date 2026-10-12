@@ -50,7 +50,7 @@ club = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
 db.add(club)
 db.flush()
 assets = {}   # position -> [asset ids]
-for pos, n in (("C", 24), ("LW", 16), ("RW", 16), ("D", 30), ("G", 12)):
+for pos, n in (("C", 40), ("LW", 28), ("RW", 28), ("D", 60), ("G", 28)):
     for i in range(n):
         p = Player(universe_id=nhl.id, real_team_id=club.id, full_name=f"{pos} Player {i:02d}", position=pos)
         db.add(p)
@@ -99,14 +99,15 @@ db.commit()
 pick = choose_pick(db, draft, team_ids[0], b)
 check(pick.position != "G", f"no second goalie while other starting spots are open: picked {pick.position}")
 
-# forced: a team holding W, W, D, D, G and a full bench (13 of 14 picks) has one pick left and one open starting spot (C),
+# forced: a team holding W, W, D, D, G and a full bench (23 of 24 picks) has one pick left and one open starting spot (C),
 # so it must take a centre even though a defenceman scores far more
 for pos, idx in (("LW", 0), ("RW", 0), ("D", 0), ("D", 1), ("G", 2),                     # starters except C
-                 ("D", 2), ("D", 3), ("D", 4), ("D", 5), ("LW", 1), ("LW", 2), ("RW", 1), ("RW", 2)):   # full bench
+                 *[("D", i) for i in range(2, 10)], *[("LW", i) for i in range(1, 5)], *[("RW", i) for i in range(1, 5)],
+                 ("G", 3), ("G", 4)):   # full bench (18)
     db.add(RosterEntry(team_id=team_ids[1], draftable_asset_id=assets[pos][idx], acquired_via="draft"))
 db.commit()
 n_roster = db.query(RosterEntry).filter_by(team_id=team_ids[1]).count()
-check(n_roster == 13, f"setup: team has {n_roster} of 14")
+check(n_roster == 23, f"setup: team has {n_roster} of 24")
 forced = choose_pick(db, draft, team_ids[1], board(("D", 90), ("G", 80), ("C", 10), ("C", 5)))
 check(forced.position == "C", f"last pick goes to the open starting slot: picked {forced.position} over a D scoring 90")
 
@@ -136,13 +137,20 @@ for t in teams:
         bad.append((t, lines["starters_filled"], lines["starters_total"]))
 check(not bad, f"every team ends with a full starting lineup (6 of 6) {bad}")
 sample = client.get(f"/teams/{teams[0]}/lines").json()
-goalies = sum(1 for s in sample["slots"] for p in s["players"] if p["position"] == "G")
-check(goalies <= 2, f"a team holds {goalies} goalie(s), not a stack of them")
+depth = {}
+for t in teams:
+    for s in client.get(f"/teams/{t}/lines").json()["slots"]:
+        for p in s["players"]:
+            g = {"LW": "W", "RW": "W"}.get(p["position"], p["position"])
+            depth.setdefault(t, {}).setdefault(g, 0)
+            depth[t][g] += 1
+check(all(d == {"C": 4, "W": 8, "D": 8, "G": 4} for d in depth.values()),
+      "every team drafts exactly the four lines' depth: C 4, W 8, D 8, G 4 (24 players)")
 
 # ---- C. lines layout ----
 codes = [(s["slot_code"], s["capacity"], s["is_starter"]) for s in sample["slots"]]
-check(codes == [("C", 1, True), ("W", 2, True), ("D", 2, True), ("G", 1, True), ("BENCH", 8, False)], f"slots: {codes}")
-check(all(len(s["players"]) == s["capacity"] for s in sample["slots"]), "all 14 spots filled after the draft")
+check(codes == [("C", 1, True), ("W", 2, True), ("D", 2, True), ("G", 1, True), ("BENCH", 18, False)], f"slots: {codes}")
+check(all(len(s["players"]) == s["capacity"] for s in sample["slots"]), "all 24 spots filled after the draft")
 empty = client.get(f"/teams/{new_league('Empty')['id'] and db.query(Team).order_by(Team.id.desc()).first().id}/lines").json()
 check(empty["starters_filled"] == 0 and empty["starters_total"] == 6, "a team with no picks shows 0 of 6 starting spots")
 check(client.get("/teams/99999/lines").status_code == 404, "unknown team is a 404")
