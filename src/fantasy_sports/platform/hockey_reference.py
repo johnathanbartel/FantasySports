@@ -14,7 +14,7 @@ ROSTER_SLOTS = [
     ("W", ["W", "LW", "RW"], 2, True),
     ("D", ["D"], 2, True),
     ("G", ["G"], 1, True),
-    ("BENCH", ["C", "W", "LW", "RW", "D", "G"], 8, False),
+    ("BENCH", ["C", "W", "LW", "RW", "D", "G"], 18, False),   # 6 starters + 18 bench = the 24-player roster (docs/hockey_spec.md 4.2)
 ]
 
 

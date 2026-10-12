@@ -49,7 +49,7 @@ nhl, _ = seed_hockey_reference_data(db)
 club = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
 db.add(club)
 db.flush()
-for pos, n in (("C", 24), ("LW", 16), ("RW", 16), ("D", 30), ("G", 12)):
+for pos, n in (("C", 40), ("LW", 28), ("RW", 28), ("D", 60), ("G", 28)):
     for i in range(n):
         p = Player(universe_id=nhl.id, real_team_id=club.id, full_name=f"{pos} Player {i:02d}", position=pos)
         db.add(p)
@@ -72,7 +72,7 @@ team = db.query(Team).filter_by(league_id=lg["id"]).order_by(Team.id).first()
 # ---- drafting fills the lines ----
 po = client.get(f"/teams/{team.id}/pecking-order").json()
 sizes = {g["position_group"]: len(g["ranked"]) for g in po["groups"]}
-check(sizes["C"] >= 1 and sizes["W"] >= 2 and sizes["D"] >= 2 and sizes["G"] >= 1, f"every drafted player is ranked in his group: {sizes}")
+check(sizes == {"C": 4, "W": 8, "D": 8, "G": 4}, f"all 24 drafted players are ranked on the four lines: {sizes}")
 check(all(not g["unranked"] or len(g["ranked"]) == g["max_depth"] for g in po["groups"]), "only players beyond a full group are left unranked")
 
 # ---- grid logic under Node ----
@@ -91,7 +91,7 @@ const w = groups.find(g => g.position_group === 'W');
 out.swapWW = G.swap(groups, {group: 'W', rank: 1}, {group: 'W', rank: 2});
 out.cross = G.swap(groups, {group: 'C', rank: 1}, {group: 'W', rank: 1});
 out.same = G.swap(groups, {group: 'W', rank: 1}, {group: 'W', rank: 1});
-out.empty = G.swap(groups, {group: 'G', rank: 4}, {group: 'G', rank: 1});
+out.empty = G.swap(groups, {group: 'G', rank: 5}, {group: 'G', rank: 1});
 const c = groups.find(g => g.position_group === 'C');
 out.emptyTarget = c.ranked.length < 4 ? G.swap(groups, {group: 'C', rank: 1}, {group: 'C', rank: c.ranked.length + 1}) : null;
 process.stdout.write(JSON.stringify(out));
