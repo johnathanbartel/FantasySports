@@ -159,9 +159,10 @@ async function renderHome() {
       ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'))}
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}
     </div>
-    ${fillNeeded && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
-      <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. ${ov.is_college ? 'AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.' : `The roster limit is ${ov.roster_size}; the AI signs the best free agents for its lineup to fill them.`}</span>
+    ${fillNeeded && ov.is_college && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+      <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.</span>
       <button class="btn btn-primary" id="run-fill">Run AI free agency now</button></div>` : ''}
+    ${fillNeeded && !ov.is_college ? `<div class="note" style="margin-bottom:var(--space-5)"><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams manage their own rosters and lines: each checks the free-agent pool every few hours and signs one player at a time, so they fill out over the next few days.</div>` : ''}
     <div class="grid2">
       <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
         <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Recent transactions</h3><a href="#" id="all-txns">See all</a></div>
@@ -384,7 +385,7 @@ async function renderTransactions() {
       <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap">
         <span style="font-size:14px"><strong>${sum.roster_count} / ${sum.roster_size}</strong> players${sum.open_spots ? ` · <strong>${sum.open_spots} open</strong>` : ''}</span>
         ${sum.fa_money != null ? `<span style="font-size:14px" title="Season Budget (Total) less Roster Cost">Free-agency money: <strong>${money(sum.fa_money)}</strong></span>` : ''}
-        ${isCommissioner && fa.open && ov.ai_teams_with_open_spots > 0 ? '<button class="btn btn-secondary" id="run-fill">Run AI free agency now</button>' : ''}
+        ${isCommissioner && fa.open && ov.is_college && ov.ai_teams_with_open_spots > 0 ? '<button class="btn btn-secondary" id="run-fill">Run AI free agency now</button>' : ''}
       </div>
     </div>
     ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">

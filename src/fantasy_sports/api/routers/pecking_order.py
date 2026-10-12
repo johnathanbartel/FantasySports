@@ -12,6 +12,7 @@ from fantasy_sports.api.schemas import (
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
 )
 from fantasy_sports.platform import pecking_order as po
+from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import Team, User
 from fantasy_sports.platform.db.session import get_db
@@ -56,7 +57,10 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
 
 @router.get("/{team_id}/pecking-order", response_model=PeckingOrderOut)
 def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
-    return _read(db, _team(db, team_id))
+    team = _team(db, team_id)
+    ai_roster.tick(db, team.league_id)      # AI teams set their own lines (platform/ai/ai_roster.py)
+    db.commit()
+    return _read(db, team)
 
 
 @router.put("/{team_id}/pecking-order", response_model=PeckingOrderOut)
