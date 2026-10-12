@@ -30,13 +30,22 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
         return "College leagues arrange their own schedule in the schedule stage"
     if has_schedule(db, league):
         return None
-    today = today or datetime.date.today()
+    if today is None:
+        try:
+            from zoneinfo import ZoneInfo
+            # Adjust to user/North American timezone so evening drafts don't prematurely roll over
+            today = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+        except Exception:
+            today = datetime.date.today()
     try:
         with db.begin_nested():            # a failed attempt leaves nothing behind
             if series_schedule.league_is_nhl(db, league.id):
                 if getattr(league, "league_mode", "standard") == "weekly_redraft":
                     raise ValueError("This league plays weekly redraft contests, not series")
-                series_schedule.generate_schedule(db, league, today + datetime.timedelta(days=1), 1)
+                from fantasy_sports.sports.hockey.pipeline import week_start
+                # NHL fantasy weeks run Sunday to Saturday. The series schedule begins on the Sunday of the fantasy week.
+                series_start = week_start(today)
+                series_schedule.generate_schedule(db, league, series_start, 1)
             else:
                 schedule.create_schedule(db, league.id)
     except ValueError as e:

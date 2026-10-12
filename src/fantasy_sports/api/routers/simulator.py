@@ -136,7 +136,64 @@ def start_game(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     """Commissioner only. Begins the real-time window of a published game. Idempotent."""
     game = _game(db, daily_game_id)
     assert_commissioner(db, user, game.series.league_id)
-    sim = _sim(db, daily_game_id)
+    sim = service.get_sim(db, daily_game_id)
+    if sim is None:
+        from fantasy_sports.sports.hockey.simulator import loader
+        sim = loader.publish_game(db, game)
     service.start_game(db, sim, service.utcnow())
     db.commit()
     return _state_out(service.view_state(db, sim, user.id, service.utcnow()), game)
+
+
+@router.post("/leagues/{league_id}/simulate-date")
+def simulate_league_date(
+    league_id: int,
+    date: str | None = None,
+    finish: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Commissioner only. Publishes and starts (or skips to final) all scheduled daily games for the league on that calendar date."""
+    assert_commissioner(db, user, league_id)
+    import datetime
+    if date:
+        try:
+            target_date = datetime.date.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(400, "Invalid date format, expected YYYY-MM-DD")
+    else:
+        try:
+            from zoneinfo import ZoneInfo
+            target_date = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+        except Exception:
+            target_date = datetime.date.today()
+
+    from fantasy_sports.platform.db.models.core import LeagueSeries
+    from fantasy_sports.sports.hockey.simulator import loader
+
+    daily_games = (
+        db.query(SeriesDailyGame)
+        .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+        .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.calendar_date == target_date)
+        .all()
+    )
+    if not daily_games:
+        raise HTTPException(404, f"No daily games scheduled for date {target_date.isoformat()}")
+
+    count = 0
+    now_utc = service.utcnow()
+    for dg in daily_games:
+        sim = service.get_sim(db, dg.id)
+        if sim is None:
+            try:
+                sim = loader.publish_game(db, dg)
+            except Exception:
+                continue
+        if dg.status == "SCHEDULED":
+            service.start_game(db, sim, now_utc)
+        if finish and dg.status != "FINAL":
+            service.skip_game(db, sim)
+        count += 1
+
+    db.commit()
+    return {"status": "ok", "date": target_date.isoformat(), "games_simulated": count}
