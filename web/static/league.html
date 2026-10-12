@@ -459,10 +459,11 @@ function paintHockeyRoster() {
       scheduleStatusHtml = `<div class="muted" style="font-size:11px;font-style:italic;margin-top:2px">Idle · No game this window</div>`;
     }
 
+    const teamDisplay = p.real_team_code || p.real_team || '';
     const cardOpacity = isIdle ? 'opacity:0.62;background:rgba(0,0,0,0.02);' : 'background:var(--color-surface, transparent);';
     return `<div class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can ? '' : 'data-disabled="1"'} aria-pressed="${sel}"
       style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);${cardOpacity}color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
-      <div style="font-weight:600">${esc(p.display_name)}${p.position !== c.group ? ` <span class="muted" style="font-size:11px">${esc(p.position)}</span>` : ''}</div>
+      <div style="font-weight:600">${esc(p.display_name)} <span class="muted" style="font-size:11px;font-weight:normal">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''}</span></div>
       <div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>
       ${scheduleStatusHtml}
     </div>`;
@@ -472,10 +473,11 @@ function paintHockeyRoster() {
     const sel = isSel(g, null, p.player_id);
     const winInfo = resolvePlayerInWindow(p, activeHockeyWindow, t.id);
     const isIdle = winInfo.effectiveGames.length === 0;
+    const teamDisplay = p.real_team_code || p.real_team || '';
     const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Matchups' : '· Active';
     return `<button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
       style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
-      ${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>
+      ${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>
     </button>`;
   };
   const reserveGroups = ['C', 'W', 'D', 'G'].filter(g => grid.reserves[g].length);
@@ -843,7 +845,11 @@ async function renderHockeyScoreboard() {
         }
         const todayStr = new Date().toLocaleDateString('en-CA');
         const res = await api(`/simulator/leagues/${LEAGUE_ID}/simulate-date?date=${todayStr}&finish=true`, {method: 'POST'});
-        showResult(`Simulated ${res.games_simulated} games for today (${fmtD(todayStr)}).`);
+        if (res.games_simulated === 0) {
+          showError(`Simulated 0 games: ${res.message || 'No real NHL game credits stored for today. Ingest the daily slate first.'}`);
+        } else {
+          showResult(`Simulated ${res.games_simulated} games for today (${fmtD(todayStr)}).`);
+        }
         await renderHockeyScoreboard();
       } catch (err) {
         showError(err.message || 'Could not simulate games');

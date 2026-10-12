@@ -182,12 +182,14 @@ def simulate_league_date(
 
     count = 0
     now_utc = service.utcnow()
+    errors: list[str] = []
     for dg in daily_games:
         sim = service.get_sim(db, dg.id)
         if sim is None:
             try:
                 sim = loader.publish_game(db, dg)
-            except Exception:
+            except Exception as e:
+                errors.append(str(e))
                 continue
         if dg.status == "SCHEDULED":
             service.start_game(db, sim, now_utc)
@@ -196,4 +198,10 @@ def simulate_league_date(
         count += 1
 
     db.commit()
-    return {"status": "ok", "date": target_date.isoformat(), "games_simulated": count}
+    return {
+        "status": "ok",
+        "date": target_date.isoformat(),
+        "games_simulated": count,
+        "message": errors[0] if (count == 0 and errors) else None,
+        "errors": errors,
+    }

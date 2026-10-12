@@ -94,8 +94,8 @@ function renderRoster(entries) {
     row.className = 'card elev-sm';
     row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
     row.innerHTML = `
-      <span class="tag tag-neutral" style="min-width:70px;justify-content:center">${e.asset_type === 'defense_group' ? 'DEF' : ''}</span>
-      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${e.display_name}</span>
+      <span class="tag tag-neutral" style="min-width:70px;justify-content:center">${e.asset_type === 'defense_group' ? 'DEF' : (e.position || '')}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${esc(e.display_name)} ${e.real_team ? `<span class="text-muted" style="font-size:13px;font-family:var(--font-body)">· ${esc(e.real_team)}</span>` : ''}</span>
     `;
     list.appendChild(row);
   });

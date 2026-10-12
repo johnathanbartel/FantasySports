@@ -441,6 +441,8 @@ class PeckingOrderPlayerOut(BaseModel):
     priority: int | None  # None = on the roster but unranked
     games: int | None = None
     points_per_game: float | None = None
+    real_team: str | None = None
+    real_team_code: str | None = None
 
 
 class PeckingOrderGroupOut(BaseModel):
