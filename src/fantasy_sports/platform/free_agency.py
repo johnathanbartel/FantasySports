@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
 from fantasy_sports.platform import pecking_order, season
-from fantasy_sports.platform.league_features import is_college
+from fantasy_sports.platform.league_features import is_college, roster_limit
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
@@ -150,8 +150,9 @@ def add_player(
         raise ValueError("That player isn't in this league's pool")
     if asset_id in rostered_ids(db, league.id):
         raise ValueError("That player is already on a team's roster")
-    if roster_count(db, team.id) >= league.draft_rounds:
-        raise ValueError(f"Roster is full ({league.draft_rounds}) - drop a player first")
+    limit = roster_limit(db, league)
+    if roster_count(db, team.id) >= limit:
+        raise ValueError(f"Roster is full ({limit}) - drop a player first")
     price = asking_prices(db, league)[asset_id]
     money = team_money(db, team)["fa_money"]
     if is_college(db, league.id) and price > money:
@@ -236,4 +237,43 @@ def ai_fill_rosters(db: Session, league_id: int, now: datetime.datetime | None =
             room = [a for a in free if position[a] in POSITION_CAP and st["have"][position[a]] < POSITION_CAP[position[a]]]
             pick_from(st, room or list(free))
     db.flush()
+    return signed
+
+
+def ai_fill_snake(db: Session, league_id: int, now: datetime.datetime | None = None) -> dict[int, int]:
+    """The AI's fill for a non-college league whose roster limit went up (or after drops): every AI team with open spots
+    signs the free agent that best fills its lineup (platform/ai/snake_ai.py), teams taking turns, until its roster is
+    full or the pool runs out. Signing is free. Returns team_id -> players signed."""
+    from types import SimpleNamespace
+
+    from fantasy_sports.api.helpers import draftable_asset_display_name
+    from fantasy_sports.api.schemas import DraftBoardAsset
+    from fantasy_sports.platform.ai import snake_ai
+    from fantasy_sports.platform.draft_stats import stats_by_asset
+
+    now = now or datetime.datetime.utcnow()
+    league = db.get(League, league_id)
+    limit = roster_limit(db, league)
+    free_ids = [a for a in pool_ids(db, league_id) if a not in rostered_ids(db, league_id)]
+    stats = stats_by_asset(db, free_ids)
+    assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(free_ids or [0]))}
+    board = sorted((DraftBoardAsset(
+        draftable_asset_id=a.id, asset_type=a.asset_type, display_name=draftable_asset_display_name(a),
+        position=draftable_asset_position(a), points=stats.get(a.id, {}).get("points")) for a in assets.values()),
+        key=lambda b: (-(b.points if b.points is not None else -1.0), b.display_name))
+    stub = SimpleNamespace(league_id=league_id)
+    teams = [t for t in db.query(Team).filter_by(league_id=league_id, is_ai_owned=True).order_by(Team.id)]
+    signed: dict[int, int] = {}
+    progress = True
+    while board and progress:
+        progress = False
+        for team in teams:
+            if not board or roster_count(db, team.id) >= limit:
+                continue
+            pick = snake_ai.choose_pick(db, stub, team.id, board)
+            board.remove(pick)
+            _sign(db, team, pick.draftable_asset_id, 0, AI_FILL, now)
+            db.flush()
+            signed[team.id] = signed.get(team.id, 0) + 1
+            progress = True
     return signed

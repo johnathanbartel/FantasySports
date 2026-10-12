@@ -27,6 +27,7 @@ from fantasy_sports.api.helpers import draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset
 from fantasy_sports.platform import lineups, pecking_order
 from fantasy_sports.platform.db.models.core import Draft, League, RosterEntry, Team
+from fantasy_sports.platform.league_features import roster_limit
 from fantasy_sports.platform.roster_fill import fill_slots
 
 BENCH_WEIGHT = 0.25
@@ -83,7 +84,7 @@ def choose_pick(db: Session, draft: Draft, team_id: int, board: list[DraftBoardA
     specific_positions = {p for s, _ in mine if not set(s.eligible_positions) & flex_positions
                           for p in s.eligible_positions}
     open_total = sum(free for _, free in mine)
-    picks_left = (league.draft_rounds if league else 0) - len(rosters[team_id])
+    picks_left = (roster_limit(db, league) if league else 0) - len(rosters[team_id])
     forced = open_total > 0 and picks_left <= open_total
     if forced:
         allowed = (specific_positions or need_positions)

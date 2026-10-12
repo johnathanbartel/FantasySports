@@ -157,6 +157,39 @@ check(w["ranked"][-1]["player_id"] == victim["player_id"] if False else any(p["p
 r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": fa["players"][1]["draftable_asset_id"]}, headers=auth)
 check(r.status_code == 400 and "full" in r.json()["detail"], "a full roster can't sign more: drop first")
 
+# ---- a league created under the old 14-player roster follows the 24-player limit ----
+from fantasy_sports.platform.db.models.core import League, RosterSlotDefinition, TeamPeckingOrder
+old = db.get(League, lg["id"])
+old.draft_rounds = 14                                                    # what the league stored when it was created
+bench = db.query(RosterSlotDefinition).filter_by(universe_id=nhl.id, slot_code="BENCH").one()
+bench.slot_count = 8                                                     # and what the database's bench slot said
+for t in db.query(Team).filter_by(league_id=lg["id"]):                   # every team holds 14 players, as it did then
+    keep = [e.id for e in db.query(RosterEntry).filter_by(team_id=t.id).order_by(RosterEntry.id)][:14]
+    kept_assets = [e.draftable_asset_id for e in db.query(RosterEntry).filter(RosterEntry.id.in_(keep))]
+    db.query(RosterEntry).filter(RosterEntry.team_id == t.id, ~RosterEntry.id.in_(keep)).delete(synchronize_session=False)
+    db.query(TeamPeckingOrder).filter(TeamPeckingOrder.team_id == t.id, ~TeamPeckingOrder.draftable_asset_id.in_(kept_assets)).delete(synchronize_session=False)
+db.commit()
+db.expire_all()
+ov = client.get(f"/leagues/{lg['id']}/overview").json()
+check(ov["roster_size"] == 24, f"the league's roster limit reads 24, not its stored 14: {ov['roster_size']}")
+mine_row = next(t for t in ov["teams"] if t["id"] == mine.id)
+check(mine_row["roster_count"] == 14 and mine_row["open_spots"] == 10, "a 14-man team shows 10 open spots")
+summary = client.get(f"/teams/{mine.id}/free-agency/summary", headers=auth).json()
+check(summary["roster_size"] == 24 and summary["open_spots"] == 10, "free agency summary agrees")
+fa = client.get(f"/leagues/{lg['id']}/free-agents").json()["players"]
+for p in fa[:10]:
+    r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": p["draftable_asset_id"]}, headers=auth)
+    assert r.status_code == 200, r.text
+check(db.query(RosterEntry).filter_by(team_id=mine.id).count() == 24, "the manager can sign up to 24 players")
+r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": fa[10]["draftable_asset_id"]}, headers=auth)
+check(r.status_code == 400 and "24" in r.json()["detail"], "...and no more than 24")
+check(ov["ai_teams_with_open_spots"] == 5, "the five AI teams show open spots")
+r = client.post(f"/leagues/{lg['id']}/free-agency/ai-fill", headers=auth).json()
+check(r["total"] == 5 * 10, f"the commissioner's AI fill signs {r['total']} players: 10 for each AI team")
+counts = sorted(db.query(RosterEntry).filter_by(team_id=t.id).count() for t in db.query(Team).filter_by(league_id=lg["id"]))
+check(counts == [24] * 6, f"every roster is now 24: {counts}")
+check(client.post(f"/leagues/{lg['id']}/free-agency/ai-fill", headers=auth).json()["total"] == 0, "running the AI fill again does nothing")
+
 # ---- pages ----
 page = (ROOT / "web/static/league.html").read_text(encoding="utf-8")
 check("dropPlayer" in page and "PPG" in page and "proScheduleHtml" in page, "league page has drop, PPG and the schedule view")

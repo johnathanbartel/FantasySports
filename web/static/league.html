@@ -160,7 +160,7 @@ async function renderHome() {
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}
     </div>
     ${fillNeeded && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
-      <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.</span>
+      <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. ${ov.is_college ? 'AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.' : `The roster limit is ${ov.roster_size}; the AI signs the best free agents for its lineup to fill them.`}</span>
       <button class="btn btn-primary" id="run-fill">Run AI free agency now</button></div>` : ''}
     <div class="grid2">
       <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">

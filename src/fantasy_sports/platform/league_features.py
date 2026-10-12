@@ -29,3 +29,16 @@ def roster_spots(db: Session, league_id: int) -> int:
         return sum(s.slot_count for s in lineups.league_slots(db, league_id))
     except ValueError:
         return 0
+
+
+def roster_limit(db: Session, league) -> int:
+    """The most players a team can hold. Outside college leagues it is the number of lineup slots (24 for hockey), which
+    wins over the league's stored draft_rounds so a league created under an older roster size follows the current one.
+    College leagues keep draft_rounds (they may recruit fewer and fill through free agency)."""
+    if not is_college(db, league.id):
+        spots = roster_spots(db, league.id)
+        if spots:
+            if league.draft_rounds != spots:
+                league.draft_rounds = spots
+            return spots
+    return league.draft_rounds
