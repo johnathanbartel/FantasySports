@@ -28,6 +28,7 @@ from fantasy_sports.platform.simulator import service
 from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, Shot, ShotCredit
 from fantasy_sports.sports.hockey.pipeline import (
     BlockXgEstimator, EventRecord, ShotRecord, process_game, week_start,
+    window_of, window_dates,
 )
 from fantasy_sports.sports.hockey.simulator import loader
 
@@ -290,6 +291,77 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
     return games_inserted
 
 
+def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: datetime.date) -> None:
+    """Ensure upcoming games in this week are recorded with kickoff times and 'scheduled' status so Pecking Order resolves properly."""
+    w_start = week_start(target_date)
+    w_end = w_start + datetime.timedelta(days=7)
+    start_dt = datetime.datetime.combine(w_start, datetime.time.min)
+    end_dt = datetime.datetime.combine(w_end, datetime.time.min)
+    count = db.query(Game).filter(Game.universe_id == nhl.id, Game.kickoff_at >= start_dt, Game.kickoff_at < end_dt).count()
+    if count >= 15:
+        return
+
+    sched_data = _fetch_json(SCHEDULE_URL.format(date=w_start.isoformat()))
+    if not sched_data:
+        return
+
+    teams = db.query(RealTeam).filter_by(universe_id=nhl.id).all()
+    teams_by_ref = {t.external_ref: t for t in teams if t.external_ref}
+
+    season_year = w_start.year if w_start.month >= 9 else w_start.year - 1
+    week = db.query(Week).filter(
+        Week.universe_id == nhl.id, Week.season_year == season_year, Week.start_date <= w_start, Week.end_date >= w_start
+    ).first()
+    if not week:
+        week = Week(universe_id=nhl.id, season_year=season_year, week_number=1, start_date=w_start, end_date=w_start + datetime.timedelta(days=6), is_playoffs=False)
+        db.add(week)
+        db.flush()
+
+    for day_obj in sched_data.get("gameWeek", []):
+        day_str = day_obj.get("date")
+        if not day_str:
+            continue
+        try:
+            d_date = datetime.date.fromisoformat(day_str)
+        except Exception:
+            continue
+        for g_meta in day_obj.get("games", []):
+            away_abbrev = g_meta.get("awayTeam", {}).get("abbrev")
+            home_abbrev = g_meta.get("homeTeam", {}).get("abbrev")
+            home_team = teams_by_ref.get(home_abbrev)
+            away_team = teams_by_ref.get(away_abbrev)
+            if not home_team or not away_team:
+                continue
+
+            game_start_utc = None
+            if g_meta.get("startTimeUTC"):
+                try:
+                    game_start_utc = datetime.datetime.fromisoformat(g_meta["startTimeUTC"].replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            if not game_start_utc:
+                game_start_utc = datetime.datetime.combine(d_date, datetime.time(19, 0))
+
+            kickoff_naive = game_start_utc.replace(tzinfo=None)
+            game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "scheduled"
+            home_score = g_meta.get("homeTeam", {}).get("score", 0)
+            away_score = g_meta.get("awayTeam", {}).get("score", 0)
+
+            day_start = datetime.datetime.combine(d_date, datetime.time.min)
+            day_end = day_start + datetime.timedelta(days=1)
+            existing = db.query(Game).filter(
+                Game.universe_id == nhl.id, Game.home_team_id == home_team.id,
+                Game.away_team_id == away_team.id, Game.kickoff_at >= day_start, Game.kickoff_at < day_end
+            ).first()
+            if not existing:
+                new_game = Game(
+                    universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
+                    home_score=home_score, away_score=away_score, kickoff_at=kickoff_naive, status=game_status
+                )
+                db.add(new_game)
+    db.flush()
+
+
 def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     """Safe, idempotent auto-sync called on read for an NHL league. Ensures schedule alignment, slate ingestion, and simulation."""
     league = db.get(League, league_id)
@@ -330,6 +402,13 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                 db.flush()
             except Exception:
                 pass
+
+    # Ensure this week's full schedule is seeded so Pecking Order accurately sees all games in the window
+    try:
+        seed_week_schedule_if_needed(db, nhl, max_active_date)
+        db.flush()
+    except Exception:
+        pass
 
     # 2. Check unfinalized fantasy daily games up to max_active_date
     unfinalized_dates = [
@@ -387,14 +466,20 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                     service.start_game(db, sim, now_utc)
                 except Exception:
                     pass
-            if all_real_final and dg.status != "FINAL":
+
+            # Check whether this game's multi-day window has concluded
+            w_start_d, w_idx = window_of(dg.calendar_date)
+            w_dates = window_dates(w_start_d, w_idx)
+            is_window_concluded = (max_active_date >= w_dates[-1])
+
+            if is_window_concluded and all_real_final and dg.status != "FINAL":
                 try:
                     shape = service.shape_of(sim)
                     sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds + 120)
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass
-            elif any_real_started:
+            elif any_real_started or all_real_final:
                 try:
                     service.sync(db, sim, now_utc)
                 except Exception:
