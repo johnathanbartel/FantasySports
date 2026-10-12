@@ -223,11 +223,11 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 goalie_asset_id = asset_by_ref.get(str(goalie_ref)) if goalie_ref else None
                 shot_row = Shot(
                     game_id=game.id, source="nhl_api", external_shot_id=f"{nhl_game_id}:{play.get('eventId', len(shots_to_add))}",
-                    shooting_team_id=shooting_team_id, defending_team_id=defending_team_id,
+                    shooting_team_id=shooting_team_id, goalie_team_id=defending_team_id,
                     shooter_asset_id=act_id, goalie_asset_id=goalie_asset_id,
                     pre_shot_xg=pre_shot_xg, is_goal=is_goal, is_empty_net=is_empty_net,
                     period=period, clock=str(game_seconds), shot_type=shot_type,
-                    x_coord=x_coord, y_coord=y_coord, strength_state="ev",
+                    strength_state="ev",
                 )
                 shots_to_add.append(shot_row)
                 shot_records.append(ShotRecord(
@@ -237,7 +237,8 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 ))
 
             evt_row = GameEvent(
-                game_id=game.id, event_type=kind, period=period, game_seconds=game_seconds,
+                game_id=game.id, source="nhl_api", external_event_id=f"{nhl_game_id}:{play.get('eventId', len(events_to_add))}",
+                event_type=kind, period=period, game_seconds=game_seconds,
                 team_id=shooting_team_id, actor_ref=str(refs[0]) if refs[0] else None,
                 secondary_ref=str(refs[1]) if refs[1] else None, tertiary_ref=str(refs[2]) if refs[2] else None,
                 actor_asset_id=act_id, secondary_asset_id=sec_id, tertiary_asset_id=ter_id,
@@ -271,11 +272,11 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 x=event_records[idx].x, y=event_records[idx].y,
             )
 
-        estimator = BlockXgEstimator()
-        result = process_game(shot_records, event_records, estimator)
+        estimator = BlockXgEstimator.fit(event_records) if event_records else None
+        result = process_game(shot_records, event_records, estimator, teams=(home_team.id, away_team.id))
         shot_credit_rows = [
             ShotCredit(shot_id=row.shot_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
-            for row in result.shot_credits
+            for row in result.credits
         ]
         event_credit_rows = [
             EventCredit(event_id=row.event_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
@@ -302,12 +303,19 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
         return
 
     try:
-        now_na = datetime.datetime.now(ZoneInfo("America/New_York"))
-        today = now_na.date()
+        now_et = datetime.datetime.now(ZoneInfo("America/New_York"))
+        today_et = now_et.date()
     except Exception:
-        today = datetime.date.today()
+        today_et = datetime.date.today()
 
-    sunday = today - datetime.timedelta(days=today.weekday() + 1 if today.weekday() != 6 else 0)
+    try:
+        now_pt = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
+        today_pt = now_pt.date()
+    except Exception:
+        today_pt = today_et
+
+    max_active_date = max(today_et, today_pt)
+    sunday = today_pt - datetime.timedelta(days=today_pt.weekday() + 1 if today_pt.weekday() != 6 else 0)
 
     # 1. Check schedule alignment
     first_series = db.query(LeagueSeries).filter_by(league_id=league_id).order_by(LeagueSeries.id).first()
@@ -323,53 +331,73 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
             except Exception:
                 pass
 
-    # 2. Check today's fantasy daily games
-    daily_games = (
-        db.query(SeriesDailyGame)
-        .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
-        .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.calendar_date == today)
-        .all()
-    )
-    if not daily_games:
+    # 2. Check unfinalized fantasy daily games up to max_active_date
+    unfinalized_dates = [
+        d[0] for d in (
+            db.query(SeriesDailyGame.calendar_date)
+            .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+            .filter(
+                LeagueSeries.league_id == league_id,
+                SeriesDailyGame.calendar_date <= max_active_date,
+                SeriesDailyGame.status != "FINAL",
+            )
+            .distinct()
+            .order_by(SeriesDailyGame.calendar_date)
+            .all()
+        )
+    ]
+    if not unfinalized_dates:
         return
 
-    needs_sim = any(dg.status != "FINAL" for dg in daily_games)
-    if not needs_sim:
-        return
-
-    # Ingest today's slate if not stored
-    try:
-        ingest_daily_slate_if_needed(db, nhl, today)
-        db.flush()
-    except Exception:
-        pass
-
-    # 3. Simulate / finalize games
     now_utc = service.utcnow()
-    # Check if real games for today are final
-    start_day = datetime.datetime.combine(today, datetime.time.min)
-    end_day = start_day + datetime.timedelta(days=1)
-    real_games = db.query(Game).filter(
-        Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
-    ).all()
-    all_real_final = bool(real_games) and all(g.status == "final" for g in real_games)
 
-    for dg in daily_games:
-        sim = service.get_sim(db, dg.id)
-        if sim is None:
-            try:
-                sim = loader.publish_game(db, dg)
-            except Exception:
-                continue
-        if dg.status == "SCHEDULED":
-            try:
-                service.start_game(db, sim, now_utc)
-            except Exception:
-                pass
-        if all_real_final and dg.status != "FINAL":
-            try:
-                service.skip_game(db, sim)
-            except Exception:
-                pass
+    for sync_date in unfinalized_dates:
+        # Ingest today's slate if not stored
+        try:
+            ingest_daily_slate_if_needed(db, nhl, sync_date)
+            db.flush()
+        except Exception:
+            pass
+
+        # Check if real games for sync_date are final
+        start_day = datetime.datetime.combine(sync_date, datetime.time.min)
+        end_day = start_day + datetime.timedelta(days=1)
+        real_games = db.query(Game).filter(
+            Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
+        ).all()
+        any_real_started = bool(real_games) and any(g.status in ("live", "final") for g in real_games)
+        all_real_final = bool(real_games) and all(g.status == "final" for g in real_games)
+
+        daily_games = (
+            db.query(SeriesDailyGame)
+            .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+            .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.calendar_date == sync_date)
+            .all()
+        )
+
+        for dg in daily_games:
+            sim = service.get_sim(db, dg.id)
+            if sim is None:
+                try:
+                    sim = loader.publish_game(db, dg)
+                except Exception:
+                    continue
+            if dg.status == "SCHEDULED" and (any_real_started or all_real_final):
+                try:
+                    service.start_game(db, sim, now_utc)
+                except Exception:
+                    pass
+            if all_real_final and dg.status != "FINAL":
+                try:
+                    shape = service.shape_of(sim)
+                    sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds + 120)
+                    service.sync(db, sim, now_utc)
+                except Exception:
+                    pass
+            elif any_real_started:
+                try:
+                    service.sync(db, sim, now_utc)
+                except Exception:
+                    pass
 
     db.commit()
