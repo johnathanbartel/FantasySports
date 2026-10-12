@@ -758,14 +758,6 @@ async function renderHockeyScoreboard() {
     `;
   }).join('');
 
-  const isCommish = Boolean(isCommissioner || canActForAi || (ov && (ov.commissioner_user_id === me || !ov.commissioner_user_id)));
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const sundayDate = new Date(now);
-  sundayDate.setDate(now.getDate() - dayOfWeek);
-  const sundayStr = sundayDate.toLocaleDateString('en-CA');
-  const needsScheduleReset = Boolean(firstS && firstS.start_date !== sundayStr);
-
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div>
@@ -773,8 +765,6 @@ async function renderHockeyScoreboard() {
         <h2 style="margin:2px 0 0">Matchup Scoreboard</h2>
       </div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
-        ${needsScheduleReset ? `<button type="button" class="btn btn-secondary" id="btn-reset-sched" style="cursor:pointer;font-size:12px">📅 Set Start to Sun (${fmtD(sundayStr)})</button>` : ''}
-        <button type="button" class="btn btn-primary" id="btn-sim-today" style="cursor:pointer;font-size:12px">🏒 Start &amp; Score Today's Games</button>
         <button type="button" class="btn btn-secondary" id="btn-refresh-score" style="cursor:pointer">⟳ Refresh Scores</button>
         <span class="muted" style="font-size:12px">Auto-refreshes live every 10s</span>
       </div>
@@ -818,44 +808,6 @@ async function renderHockeyScoreboard() {
       renderHockeyScoreboard();
     };
   });
-  if ($('btn-reset-sched')) {
-    $('btn-reset-sched').onclick = async () => {
-      try {
-        await api(`/leagues/${LEAGUE_ID}/series-schedule`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({start_date: sundayStr, replace: true}),
-        });
-        showResult(`Series schedule reset to begin on Sunday ${fmtD(sundayStr)}.`);
-        await renderHockeyScoreboard();
-      } catch (err) {
-        showError(err.message || 'Could not reset schedule');
-      }
-    };
-  }
-  if ($('btn-sim-today')) {
-    $('btn-sim-today').onclick = async () => {
-      try {
-        if (needsScheduleReset) {
-          await api(`/leagues/${LEAGUE_ID}/series-schedule`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({start_date: sundayStr, replace: true}),
-          });
-        }
-        const todayStr = new Date().toLocaleDateString('en-CA');
-        const res = await api(`/simulator/leagues/${LEAGUE_ID}/simulate-date?date=${todayStr}&finish=true`, {method: 'POST'});
-        if (res.games_simulated === 0) {
-          showError(`Simulated 0 games: ${res.message || 'No real NHL game credits stored for today. Ingest the daily slate first.'}`);
-        } else {
-          showResult(`Simulated ${res.games_simulated} games for today (${fmtD(todayStr)}).`);
-        }
-        await renderHockeyScoreboard();
-      } catch (err) {
-        showError(err.message || 'Could not simulate games');
-      }
-    };
-  }
   if ($('btn-refresh-score')) {
     $('btn-refresh-score').onclick = () => renderHockeyScoreboard();
   }

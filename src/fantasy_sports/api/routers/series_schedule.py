@@ -86,6 +86,11 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "League not found")
     if league.series_length_days is None:
         raise HTTPException(400, "Series schedules are only available for NHL leagues")
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, league_id)
+    except Exception:
+        pass
     return _out(league, _league_series(db, league_id), db)
 
 
