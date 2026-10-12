@@ -1,5 +1,5 @@
 """
-Verification for NHL 3-Window Roster UI and Schedule/Lineup Page Removal.
+Verification for NHL 3-Window Roster UI, Best Matchup, NHL Team wording, and Scoreboard Tab.
 
 Checks:
 1. Removal of deprecated series schedule viewer files (nhl-schedule.html, nhl-schedule-logic.js, nhl-banking-logic.js).
@@ -8,14 +8,16 @@ Checks:
    - Game 1 (Sun - Tue)
    - Game 2 (Wed - Thu)
    - Game 3 (Fri - Sat)
-4. Multi-game player resolution elements:
-   - "✦ 2 Games: Best Active" indicator
-   - "★ Best Game (Auto)" default option
-   - Dropdown options to pick specific games
+4. Multi-matchup player resolution elements:
+   - "✦ 2 Matchups:" indicator with "Better Matchup ★"
+   - "★ Best Matchup (Auto)" default option
+   - Dropdown options to pick specific matchups
    - Forward-only surplus game flex options (Game 2 / Game 3)
    - "⇄ Flexed from Game" badge for flexed players
    - "Idle · No game this window" for inactive players in that window
-5. JavaScript syntax check on inline script in league.html under Node.
+5. NHL Team terminology in place of school in Fantasy Hockey.
+6. Scoreboard tab registration and live simulator scoring links.
+7. JavaScript syntax check on inline script in league.html under Node.
 """
 
 from __future__ import annotations
@@ -62,16 +64,33 @@ def main() -> None:
     check('data-window="3"' in league_html and "Game 3" in league_html and "Fri – Sat" in league_html,
           "Game 3 (Fri - Sat) tab present in league.html")
 
-    # 4. Multi-game resolution & flex elements
-    check("✦ 2 Games: Best Active" in league_html, "multi-game badge present")
+    # 4. Multi-matchup resolution & flex elements
+    check("✦ 2 Matchups:" in league_html, "multi-game matchup badge present")
+    check("Better Matchup ★" in league_html, "Better Matchup indicator present")
     check("win-assign-select" in league_html, "multi-game assignment dropdown present")
-    check("★ Best Game (Auto)" in league_html, "Best Game automated default option present")
+    check("★ Best Matchup (Auto" in league_html, "Best Matchup automated default option present")
     check("⇄ Send" in league_html, "surplus game forward flex options present")
     check("⇄ Flexed from Game" in league_html, "flex destination badge present")
     check("Idle · No game this window" in league_html, "idle indicator present for players without games")
     check("btn-reset-flex" in league_html, "reset flex control present")
 
-    # 5. JS Syntax check under Node
+    # 5. NHL Team terminology instead of school in Fantasy Hockey
+    check("isHockey() ? 'Search players or NHL teams...'" in league_html,
+          "free agency search placeholder uses NHL teams for hockey")
+    check("isHockey() ? 'Search players, NHL teams or fantasy teams...'" in league_html,
+          "stats search placeholder uses NHL teams for hockey")
+    check("['real_team', isHockey() ? 'NHL Team' : 'School']" in league_html,
+          "stats table header uses NHL Team for hockey")
+
+    # 6. Scoreboard tab & live scoring
+    check("['scoreboard', 'Scoreboard']" in league_html, "scoreboard tab registered in ALL_TABS")
+    check("renderScoreboard" in league_html, "renderScoreboard dispatcher present")
+    check("renderHockeyScoreboard" in league_html, "renderHockeyScoreboard present")
+    check("data-swindow=" in league_html, "scoreboard game window selectors present")
+    check("/static/nhl-game.html?daily_game_id=" in league_html, "scoreboard links to live simulator viewer")
+    check("scoreboardAutoRefreshTimer" in league_html, "live scoreboard auto-refresh timer present")
+
+    # 7. JS Syntax check under Node
     node = shutil.which("node")
     check(node is not None, "node is available")
     inline_scripts = re.findall(r"<script>([\s\S]*?)</script>", league_html)

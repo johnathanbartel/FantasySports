@@ -83,7 +83,7 @@ const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
-const ALL_TABS = [['home', 'Home'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
+const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
 const tabList = () => ALL_TABS.filter(([id]) => id !== 'rankings' || (ov && ov.has_rankings));
@@ -114,6 +114,10 @@ function renderTabs() {
 
 async function go(id, extra = {}) {
   tab = id;
+  if (typeof scoreboardAutoRefreshTimer !== 'undefined' && scoreboardAutoRefreshTimer) {
+    clearInterval(scoreboardAutoRefreshTimer);
+    scoreboardAutoRefreshTimer = null;
+  }
   if (extra.team_id) activeTeamId = extra.team_id;
   showError(''); showResult('');
   const u = new URL(location.href); u.searchParams.set('tab', id);
@@ -121,7 +125,7 @@ async function go(id, extra = {}) {
   history.replaceState(null, '', u);
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
-  try { await ({home: renderHome, roster: renderRoster, transactions: renderTransactions, schedule: renderSchedule,
+  try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, schedule: renderSchedule,
                 standings: renderStandings, stats: renderStats, teams: renderTeams, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
@@ -253,6 +257,22 @@ async function dropPlayer(team, assetId, name) {
 const canDrop = (t) => canManage(t) && ov.free_agency_open;
 
 // ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
+// ---- Opponent favorability for hockey matchups (higher = softer defense / better matchup for scoring) ----
+const OPP_FAVORABILITY = {
+  SJS: 9.2, CHI: 9.0, ANA: 8.7, MTL: 8.5, CBJ: 8.2, BUF: 7.8, OTT: 7.5,
+  DET: 6.8, CAL: 6.5, CGY: 6.5, SEA: 6.2, WSH: 6.0, PIT: 5.8,
+  EDM: 5.5, TOR: 5.4, COL: 5.0, TBL: 4.8, NYI: 4.6, NSH: 4.5,
+  MIN: 4.2, VAN: 4.0, DAL: 3.6, NYR: 3.5, VGK: 3.2, CAR: 3.0,
+  BOS: 2.8, FLA: 2.5, WPG: 2.4,
+};
+
+function matchupRating(game) {
+  if (!game) return 5.0;
+  const base = OPP_FAVORABILITY[game.opp] || 5.0;
+  return base + (game.is_home ? 1.0 : -0.5);
+}
+
+// ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
 let gridGroups = [], gridSel = null;
 let activeHockeyWindow = 1;
 let hockeySchedule = null;
@@ -270,23 +290,23 @@ function getPlayerWeeklyGames(p) {
   if (isMarquee || hash < 45) {
     // 2 games in Window 1 (Sun, Tue), 0 in Window 2, 1 in Window 3 (Sat)
     return {
-      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1}, {game_id: id * 10 + 2, day: 'Tue', opp: opp2}],
+      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1, is_home: true}, {game_id: id * 10 + 2, day: 'Tue', opp: opp2, is_home: false}],
       2: [],
-      3: [{game_id: id * 10 + 3, day: 'Sat', opp: opp3}],
+      3: [{game_id: id * 10 + 3, day: 'Sat', opp: opp3, is_home: true}],
     };
   } else if (hash < 75) {
     // 1 in Window 1 (Mon), 1 in Window 2 (Thu), 2 in Window 3 (Fri, Sat)
     return {
-      1: [{game_id: id * 10 + 1, day: 'Mon', opp: opp1}],
-      2: [{game_id: id * 10 + 2, day: 'Thu', opp: opp2}],
-      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3}, {game_id: id * 10 + 4, day: 'Sat', opp: opp1}],
+      1: [{game_id: id * 10 + 1, day: 'Mon', opp: opp1, is_home: false}],
+      2: [{game_id: id * 10 + 2, day: 'Thu', opp: opp2, is_home: true}],
+      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3, is_home: true}, {game_id: id * 10 + 4, day: 'Sat', opp: opp1, is_home: false}],
     };
   } else {
     // 1 in Window 1 (Sun), 1 in Window 2 (Wed), 1 in Window 3 (Fri)
     return {
-      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1}],
-      2: [{game_id: id * 10 + 2, day: 'Wed', opp: opp2}],
-      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3}],
+      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1, is_home: true}],
+      2: [{game_id: id * 10 + 2, day: 'Wed', opp: opp2, is_home: false}],
+      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3, is_home: true}],
     };
   }
 }
@@ -317,17 +337,22 @@ function resolvePlayerInWindow(p, w, teamId) {
   let effectiveGames = rawSched[w] ? rawSched[w].slice() : [];
   let flexedIn = null;
   let flexedOutTo = null;
+  let flexedOutGame = null;
 
   if (assign && assign.mode === 'flex') {
     if (assign.sourceWindow === w) {
       flexedOutTo = assign.targetWindow;
+      const movedIdx = assign.movedGameIdx != null ? assign.movedGameIdx : 1;
+      flexedOutGame = rawSched[w] && rawSched[w][movedIdx] ? rawSched[w][movedIdx] : null;
       if (effectiveGames.length > 1) {
-        effectiveGames = [effectiveGames[0]];
+        const keptIdx = movedIdx === 0 ? 1 : 0;
+        effectiveGames = [effectiveGames[keptIdx] || effectiveGames[0]];
       }
     } else if (assign.targetWindow === w) {
       flexedIn = assign.sourceWindow;
       const srcGames = rawSched[assign.sourceWindow] || [];
-      const movedGame = srcGames[1] || srcGames[0] || {day: 'Flex', opp: 'NHL'};
+      const movedIdx = assign.movedGameIdx != null ? assign.movedGameIdx : 1;
+      const movedGame = srcGames[movedIdx] || srcGames[0] || {day: 'Flex', opp: 'NHL', is_home: true};
       effectiveGames = [movedGame];
     }
   } else if (assign && assign.mode === 'pick' && assign.window === w) {
@@ -345,6 +370,7 @@ function resolvePlayerInWindow(p, w, teamId) {
     rawSched,
     flexedIn,
     flexedOutTo,
+    flexedOutGame,
     has2Games: rawSched[w] && rawSched[w].length >= 2,
     canFlexToW2,
     canFlexToW3,
@@ -387,30 +413,44 @@ function paintHockeyRoster() {
 
     let scheduleStatusHtml = '';
     if (winInfo.flexedIn != null) {
+      const g = winInfo.effectiveGames[0] || {day: 'Flex', opp: 'NHL'};
       scheduleStatusHtml = `<div style="display:flex;align-items:center;gap:4px;margin-top:3px">
-        <span class="pill" style="background:#dcfce7;color:#166534;font-size:10px;font-weight:600">⇄ Flexed from Game ${winInfo.flexedIn}</span>
+        <span class="pill" style="background:#dcfce7;color:#166534;font-size:10px;font-weight:600">⇄ Flexed from Game ${winInfo.flexedIn} (${esc(g.day)} vs ${esc(g.opp)}) · Active</span>
         ${can ? `<button type="button" class="btn-reset-flex" data-pkey="${pKey}" style="border:none;background:transparent;color:var(--color-danger);cursor:pointer;font-size:11px;padding:0 2px" title="Reset flex assignment">✕</button>` : ''}
       </div>`;
     } else if (winInfo.has2Games) {
-      const g0 = winInfo.rawGames[0] || {day: 'Game 1', opp: 'OPP'}, g1 = winInfo.rawGames[1] || {day: 'Game 2', opp: 'OPP'};
+      const g0 = winInfo.rawGames[0] || {day: 'Game 1', opp: 'OPP', is_home: true};
+      const g1 = winInfo.rawGames[1] || {day: 'Game 2', opp: 'OPP', is_home: false};
+      const r0 = matchupRating(g0);
+      const r1 = matchupRating(g1);
+      const betterIdx = r0 >= r1 ? 0 : 1;
+      const betterG = betterIdx === 0 ? g0 : g1;
+
       const curMode = winInfo.assign ? winInfo.assign.mode : 'best';
       const curTarget = winInfo.assign ? winInfo.assign.targetWindow : null;
+      const curMovedIdx = winInfo.assign ? winInfo.assign.movedGameIdx : null;
       const curPick = winInfo.assign ? winInfo.assign.gameIdx : null;
 
       scheduleStatusHtml = `
         <div style="margin-top:3px">
           <div style="display:flex;align-items:center;gap:4px">
-            <span class="pill" style="background:#e0f2fe;color:#0369a1;font-size:10px;font-weight:600">✦ 2 Games: Best Active</span>
+            <span class="pill" style="background:#e0f2fe;color:#0369a1;font-size:10px;font-weight:600">✦ 2 Matchups: ${esc(betterG.day)} vs ${esc(betterG.opp)} (Better Matchup ★)</span>
           </div>
           ${can ? `
           <select class="win-assign-select" data-pkey="${pKey}" data-w="${activeHockeyWindow}" style="margin-top:3px;font-size:11px;padding:2px 4px;border-radius:var(--radius-sm);border:1px solid var(--color-divider);background:var(--color-bg);width:100%;max-width:100%;color:inherit">
-            <option value="best" ${curMode === 'best' ? 'selected' : ''}>★ Best Game (Auto)</option>
-            <option value="pick_0" ${curMode === 'pick' && curPick === 0 ? 'selected' : ''}>Count ${esc(g0.day)} only (${esc(g0.opp)})</option>
-            <option value="pick_1" ${curMode === 'pick' && curPick === 1 ? 'selected' : ''}>Count ${esc(g1.day)} only (${esc(g1.opp)})</option>
-            ${winInfo.canFlexToW2 ? `<option value="flex_2" ${curMode === 'flex' && curTarget === 2 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 2 (Wed–Thu)</option>` : ''}
-            ${winInfo.canFlexToW3 ? `<option value="flex_3" ${curMode === 'flex' && curTarget === 3 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 3 (Fri–Sat)</option>` : ''}
+            <option value="best" ${curMode === 'best' ? 'selected' : ''}>★ Best Matchup (Auto · ${esc(betterG.day)} vs ${esc(betterG.opp)})</option>
+            <option value="pick_0" ${curMode === 'pick' && curPick === 0 ? 'selected' : ''}>Count ${esc(g0.day)} vs ${esc(g0.opp)} only${betterIdx === 0 ? ' (Better Matchup ★)' : ''}</option>
+            <option value="pick_1" ${curMode === 'pick' && curPick === 1 ? 'selected' : ''}>Count ${esc(g1.day)} vs ${esc(g1.opp)} only${betterIdx === 1 ? ' (Better Matchup ★)' : ''}</option>
+            ${winInfo.canFlexToW2 ? `
+              <option value="flex_2_0" ${curMode === 'flex' && curTarget === 2 && curMovedIdx === 0 ? 'selected' : ''}>⇄ Send ${esc(g0.day)} to Game 2 (Wed–Thu) · keep ${esc(g1.day)}</option>
+              <option value="flex_2_1" ${curMode === 'flex' && curTarget === 2 && curMovedIdx === 1 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 2 (Wed–Thu) · keep ${esc(g0.day)}</option>
+            ` : ''}
+            ${winInfo.canFlexToW3 ? `
+              <option value="flex_3_0" ${curMode === 'flex' && curTarget === 3 && curMovedIdx === 0 ? 'selected' : ''}>⇄ Send ${esc(g0.day)} to Game 3 (Fri–Sat) · keep ${esc(g1.day)}</option>
+              <option value="flex_3_1" ${curMode === 'flex' && curTarget === 3 && curMovedIdx === 1 ? 'selected' : ''}>⇄ Send ${esc(g1.day)} to Game 3 (Fri–Sat) · keep ${esc(g0.day)}</option>
+            ` : ''}
           </select>` : ''}
-          ${winInfo.flexedOutTo ? `<div style="font-size:10px;color:var(--color-primary);margin-top:2px">⇄ Surplus game sent to Game ${winInfo.flexedOutTo}</div>` : ''}
+          ${winInfo.flexedOutTo && winInfo.flexedOutGame ? `<div style="font-size:10px;color:var(--color-primary);margin-top:2px">⇄ Surplus sent: ${esc(winInfo.flexedOutGame.day)} vs ${esc(winInfo.flexedOutGame.opp)} moved to Game ${winInfo.flexedOutTo}</div>` : ''}
         </div>`;
     } else if (winInfo.effectiveGames.length === 1) {
       const g = winInfo.effectiveGames[0];
@@ -432,7 +472,7 @@ function paintHockeyRoster() {
     const sel = isSel(g, null, p.player_id);
     const winInfo = resolvePlayerInWindow(p, activeHockeyWindow, t.id);
     const isIdle = winInfo.effectiveGames.length === 0;
-    const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Games' : '· Active';
+    const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Matchups' : '· Active';
     return `<button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
       style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
       ${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>
@@ -480,7 +520,7 @@ function paintHockeyRoster() {
           <div class="muted" style="font-size:11px;margin-top:2px">Friday – Saturday</div>
         </button>
       </div>
-      <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 games, Best Game counts automatically; use the dropdown to reassign surplus games.</p>
+      <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 matchups, Best Matchup counts automatically; use the dropdown to reassign either matchup to open windows.</p>
     </div>
 
     ${dropBar}
@@ -523,8 +563,10 @@ function paintHockeyRoster() {
         const idx = Number(val.replace('pick_', ''));
         saveWindowAssignment(t.id, pKey, {mode: 'pick', window: w, gameIdx: idx});
       } else if (val.startsWith('flex_')) {
-        const targetWin = Number(val.replace('flex_', ''));
-        saveWindowAssignment(t.id, pKey, {mode: 'flex', sourceWindow: w, targetWindow: targetWin});
+        const parts = val.split('_'); // 'flex', targetWindow, movedIdx
+        const targetWin = Number(parts[1]);
+        const movedIdx = Number(parts[2]);
+        saveWindowAssignment(t.id, pKey, {mode: 'flex', sourceWindow: w, targetWindow: targetWin, movedGameIdx: movedIdx});
       }
       paintHockeyRoster();
     };
@@ -540,6 +582,249 @@ function paintHockeyRoster() {
   });
 
   bindNav();
+}
+
+// ---- SCOREBOARD & LIVE SCORING ----------------------------------------------------------------------
+let scoreboardAutoRefreshTimer = null;
+let activeScoreboardWindow = 1;
+
+async function renderScoreboard() {
+  await refreshOverview();
+  if (isHockey()) return renderHockeyScoreboard();
+  return renderFootballScoreboard();
+}
+
+async function renderHockeyScoreboard() {
+  const [sch, scoresRes] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/series-schedule`).catch(() => null),
+    api(`/leagues/${LEAGUE_ID}/game-scores`).catch(() => null),
+  ]);
+
+  const seriesList = sch && sch.series ? sch.series : [];
+  const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '';
+  const scoreMap = {};
+  if (scoresRes && scoresRes.games) {
+    scoresRes.games.forEach(g => {
+      scoreMap[g.daily_game_id] = g;
+    });
+  }
+
+  const windowDays = {
+    1: 'Sunday – Tuesday',
+    2: 'Wednesday – Thursday',
+    3: 'Friday – Saturday',
+  };
+
+  if (!seriesList.length) {
+    $('content').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+        <div><div class="card-kicker">NHL Live Scoreboard</div><h2 style="margin:2px 0 0">Matchup Scoreboard</h2></div>
+      </div>
+      <div class="card elev-sm" style="padding:var(--space-5);text-align:center">
+        <h3 style="margin:0 0 var(--space-2)">No Live Games Scheduled Yet</h3>
+        <p class="muted" style="margin:0 0 var(--space-4)">The series schedule is generated automatically when the draft completes. Live simulations and in-game scoring will broadcast here.</p>
+        <button class="btn btn-secondary" onclick="go('roster')">View Team Lines &amp; Matchups</button>
+      </div>`;
+    return;
+  }
+
+  const curSeriesIdx = view.scoreboardSeriesIdx || 0;
+  const seriesPerRound = Math.max(1, Math.floor(ov.teams.length / 2));
+  const roundIdx = Math.floor(curSeriesIdx / seriesPerRound);
+  const currentRoundSeries = seriesList.slice(roundIdx * seriesPerRound, (roundIdx + 1) * seriesPerRound);
+  const firstS = currentRoundSeries[0] || seriesList[0];
+
+  const matchupCards = currentRoundSeries.map(s => {
+    const tA = teamsById[s.team_a_id] || {id: s.team_a_id, name: 'Team ' + s.team_a_id};
+    const tB = teamsById[s.team_b_id] || {id: s.team_b_id, name: 'Team ' + s.team_b_id};
+    
+    const dayOffsets = {1: [0, 1, 2], 2: [3, 4], 3: [5, 6]};
+    const eligibleOffsets = dayOffsets[activeScoreboardWindow] || [0];
+    const dailyGame = s.games.find((_, idx) => eligibleOffsets.includes(idx)) || s.games[0] || {};
+    const gameRatingObj = scoreMap[dailyGame.daily_game_id];
+    const gs = gameRatingObj ? gameRatingObj.score : (dailyGame.game_score_rating || 50);
+
+    const heatColor = gs >= 75 ? '#FF1E27' : gs >= 55 ? '#ea580c' : gs >= 40 ? '#0284c7' : '#64748b';
+    const isLive = dailyGame.status === 'LIVE_SIMULATING';
+    const isFinal = dailyGame.status === 'FINAL';
+
+    const homeScore = dailyGame.home_score != null ? dailyGame.home_score : 0;
+    const awayScore = dailyGame.away_score != null ? dailyGame.away_score : 0;
+
+    const statusBadge = isLive
+      ? `<span class="pill" style="background:#ef4444;color:white;font-weight:700">● LIVE · Period ${dailyGame.current_period || 2} (${Math.floor((dailyGame.seconds_remaining || 720) / 60)}:${String((dailyGame.seconds_remaining || 720) % 60).padStart(2,'0')} left)</span>`
+      : isFinal
+      ? `<span class="pill good">FINAL</span>`
+      : `<span class="pill muted">SCHEDULED · ${fmtD(dailyGame.calendar_date)}</span>`;
+
+    const isMine = (myTeam() && (myTeam().id === tA.id || myTeam().id === tB.id));
+
+    return `
+      <div class="card elev-sm" style="padding:var(--space-4);border-left:4px solid ${heatColor};display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-3)">
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2);flex-wrap:wrap;gap:4px">
+            <span class="muted" style="font-size:11px;font-weight:600">WINDOW ${activeScoreboardWindow} · ${esc(windowDays[activeScoreboardWindow])}</span>
+            <div style="display:flex;gap:4px;align-items:center">
+              <span class="pill" style="background:${heatColor};color:white;font-weight:700;font-size:11px" title="The Game Score (0-100 leverage rating)">Game Score ${gs}</span>
+              ${statusBadge}
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:var(--space-2);margin:var(--space-3) 0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:var(--space-2)">
+                <span style="font-weight:${tA.id === dailyGame.home_team_id ? 400 : 700};font-size:16px">${tn(tA.id, tA.name)}</span>
+                ${tA.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}
+                ${isMine && myTeam().id === tA.id ? '<span class="pill good">You</span>' : ''}
+              </div>
+              <span style="font-size:22px;font-weight:800;font-variant-numeric:tabular-nums">${isFinal || isLive ? (tA.id === dailyGame.home_team_id ? homeScore : awayScore) : '-'}</span>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="display:flex;align-items:center;gap:var(--space-2)">
+                <span style="font-weight:${tB.id === dailyGame.home_team_id ? 700 : 400};font-size:16px">${tn(tB.id, tB.name)}</span>
+                ${tB.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}
+                ${isMine && myTeam().id === tB.id ? '<span class="pill good">You</span>' : ''}
+              </div>
+              <span style="font-size:22px;font-weight:800;font-variant-numeric:tabular-nums">${isFinal || isLive ? (tB.id === dailyGame.home_team_id ? homeScore : awayScore) : '-'}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--color-divider)">
+          <div class="muted" style="font-size:11px">${dailyGame.daily_game_id ? `Daily Game #${dailyGame.daily_game_id}` : ''}</div>
+          <div style="display:flex;gap:6px">
+            ${dailyGame.daily_game_id ? `<a href="/static/nhl-game.html?daily_game_id=${dailyGame.daily_game_id}" class="btn btn-primary" style="font-size:12px;padding:4px 10px">Watch Live Sim ›</a>` : ''}
+            <a href="#" data-go="roster" data-team="${tA.id}" class="btn btn-secondary" style="font-size:12px;padding:4px 10px">Lines</a>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  $('content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div>
+        <div class="card-kicker">NHL Live Scoreboard · Series ${roundIdx + 1}</div>
+        <h2 style="margin:2px 0 0">Matchup Scoreboard</h2>
+      </div>
+      <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary" id="btn-refresh-score" style="cursor:pointer">⟳ Refresh Scores</button>
+        <span class="muted" style="font-size:12px">Auto-refreshes live every 10s</span>
+      </div>
+    </div>
+
+    <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+        <div>
+          <span style="font-weight:700;font-size:14px">3-Game Series Windows</span>
+          <span class="muted" style="font-size:12px;margin-left:8px">${fmtD(firstS.start_date)} – ${fmtD(firstS.end_date)}</span>
+        </div>
+        <div class="muted" style="font-size:12px">Authentic NHL Cadence · Strict Monotonic Scoreboards</div>
+      </div>
+      <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
+        <button type="button" class="btn ${activeScoreboardWindow === 1 ? 'btn-primary' : 'btn-secondary'}" data-swindow="1" role="tab" aria-selected="${activeScoreboardWindow === 1}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 1</div>
+          <div style="font-size:12px;opacity:0.9">Sun – Tue</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Sunday – Monday – Tuesday</div>
+        </button>
+        <button type="button" class="btn ${activeScoreboardWindow === 2 ? 'btn-primary' : 'btn-secondary'}" data-swindow="2" role="tab" aria-selected="${activeScoreboardWindow === 2}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 2</div>
+          <div style="font-size:12px;opacity:0.9">Wed – Thu</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Wednesday – Thursday</div>
+        </button>
+        <button type="button" class="btn ${activeScoreboardWindow === 3 ? 'btn-primary' : 'btn-secondary'}" data-swindow="3" role="tab" aria-selected="${activeScoreboardWindow === 3}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+          <div style="font-weight:700;font-size:14px">Game 3</div>
+          <div style="font-size:12px;opacity:0.9">Fri – Sat</div>
+          <div class="muted" style="font-size:11px;margin-top:2px">Friday – Saturday</div>
+        </button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--space-4);margin-bottom:var(--space-6)">
+      ${matchupCards}
+    </div>
+  `;
+
+  document.querySelectorAll('[data-swindow]').forEach(b => {
+    b.onclick = () => {
+      activeScoreboardWindow = Number(b.dataset.swindow);
+      renderHockeyScoreboard();
+    };
+  });
+  if ($('btn-refresh-score')) {
+    $('btn-refresh-score').onclick = () => renderHockeyScoreboard();
+  }
+  bindNav();
+
+  if (!scoreboardAutoRefreshTimer) {
+    scoreboardAutoRefreshTimer = setInterval(() => {
+      if (tab === 'scoreboard') {
+        renderHockeyScoreboard();
+      } else {
+        clearInterval(scoreboardAutoRefreshTimer);
+        scoreboardAutoRefreshTimer = null;
+      }
+    }, 10000);
+  }
+}
+
+async function renderFootballScoreboard() {
+  const [state, matchups, weeks] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/schedule/state`).catch(() => ({has_schedule: false})),
+    api(`/leagues/${LEAGUE_ID}/matchups`).catch(() => []),
+    api(`/leagues/${LEAGUE_ID}/weeks`).catch(() => []),
+  ]);
+
+  const withGames = weeks.filter(w => matchups.some(m => m.week_id === w.id));
+  if (!withGames.length) {
+    $('content').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+        <div><div class="card-kicker">Live Scoreboard</div><h2 style="margin:2px 0 0">Matchup Scoreboard</h2></div>
+      </div>
+      <div class="card elev-sm" style="padding:var(--space-5);text-align:center">
+        <h3 style="margin:0 0 var(--space-2)">No Matchups Scheduled Yet</h3>
+        <p class="muted" style="margin:0">Weekly matchups will be listed here once the schedule is arranged.</p>
+      </div>`;
+    return;
+  }
+
+  if (view.schedWeek === undefined || !withGames.some(w => w.id === view.schedWeek))
+    view.schedWeek = (withGames.filter(w => w.scored).pop() || withGames[0]).id;
+  const wk = withGames.find(w => w.id === view.schedWeek);
+  const list = matchups.filter(m => m.week_id === wk.id);
+
+  const card = (m) => {
+    const win = (id) => m.winner_team_id === id ? 'font-weight:700' : '';
+    return `<div class="card elev-sm" style="padding:var(--space-4);display:flex;flex-direction:column;justify-content:space-between">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+          <span class="muted" style="font-size:11px;font-weight:600">WEEK ${wk.week_number}</span>
+          <span class="pill ${m.scored ? 'good' : 'muted'}">${m.scored ? 'FINAL' : 'SCHEDULED'}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:var(--space-2) 0">
+          <span style="${win(m.team_a_id)};font-size:16px">${tn(m.team_a_id, m.team_a_name)}</span>
+          <span class="pts" style="${win(m.team_a_id)};font-size:18px">${m.scored ? m.team_a_score.toFixed(1) : '-'}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:var(--space-2) 0">
+          <span style="${win(m.team_b_id)};font-size:16px">${tn(m.team_b_id, m.team_b_name)}</span>
+          <span class="pts" style="${win(m.team_b_id)};font-size:18px">${m.scored ? m.team_b_score.toFixed(1) : '-'}</span>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--color-divider)">
+        <a href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${m.team_a_id}&week_id=${wk.id}" class="btn btn-secondary" style="font-size:11px;padding:3px 8px">Lineup</a>
+      </div>
+    </div>`;
+  };
+
+  $('content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div><div class="card-kicker">Live Scoreboard</div><h2 style="margin:2px 0 0">Matchup Scoreboard</h2></div>
+      <div><select id="fb-sched-week" class="inp">${withGames.map(w => `<option value="${w.id}"${w.id === wk.id ? ' selected' : ''}>Week ${w.week_number} - ${w.start_date || ''}${w.scored ? ' (Final)' : ''}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-3)">${list.map(card).join('')}</div>
+  `;
+  $('fb-sched-week').onchange = () => { view.schedWeek = Number($('fb-sched-week').value); renderFootballScoreboard(); };
 }
 
 async function pickGrid(sel) {
@@ -623,7 +908,7 @@ async function renderTransactions() {
     ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
-        <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)"><input id="fa-q" class="inp" placeholder="Search players or schools..." style="flex:1" value="${esc(view.fa.q)}">
+        <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)"><input id="fa-q" class="inp" placeholder="${isHockey() ? 'Search players or NHL teams...' : 'Search players or schools...'}" style="flex:1" value="${esc(view.fa.q)}">
           <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option>${ov.is_college ? '<option value="price">Sort: asking price (low)</option>' : ''}<option value="name">Sort: name</option></select></div>
         <div id="fa-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-2)"></div>
         <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="fa-list"></div>
@@ -915,7 +1200,7 @@ async function renderStats() {
   cache.weeks = [...new Set(cache.stats.flatMap(r => Object.keys(r.weekly).map(Number)))].sort((a, b) => a - b);
   $('content').innerHTML = `
     <p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Every player in the league's pool. <strong>${LAST} pts</strong> is last season under ESPN standard scoring; <strong>W1, W2, ...</strong> are this platform's own weekly fantasy points for the weeks it has scored. Click a column to sort.${cache.weeks.length ? '' : ' No weekly scores exist for the current season yet, so there are no W columns.'}</p>
-    <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-2)"><input id="st-q" class="inp" placeholder="Search players, schools or teams..." style="flex:1;min-width:200px" value="${esc(view.stats.q)}">
+    <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-2)"><input id="st-q" class="inp" placeholder="${isHockey() ? 'Search players, NHL teams or fantasy teams...' : 'Search players, schools or teams...'}" style="flex:1;min-width:200px" value="${esc(view.stats.q)}">
       <select id="st-who" class="inp"><option value="all">All players</option><option value="rostered">On a roster</option><option value="fa">Free agents</option></select></div>
     <div id="st-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-3)"></div>
     <div class="card elev-sm" style="padding:var(--space-2) var(--space-4);overflow-x:auto"><table class="table" style="min-width:640px"><thead id="st-head"></thead><tbody id="st-body"></tbody></table></div>
@@ -943,7 +1228,7 @@ function drawStats() {
     if (x == null) return 1; if (y == null) return -1;     // blanks always last
     return (x < y ? -1 : x > y ? 1 : 0) * v.dir || a.display_name.localeCompare(b.display_name);
   });
-  const cols = [['display_name', 'Player'], ['position', 'Pos'], ['real_team', 'School'], ['team', 'Team'], ['last_season_points', LAST + ' pts']].concat(cache.weeks.map(w => ['w' + w, 'W' + w]));
+  const cols = [['display_name', 'Player'], ['position', 'Pos'], ['real_team', isHockey() ? 'NHL Team' : 'School'], ['team', 'Team'], ['last_season_points', LAST + ' pts']].concat(cache.weeks.map(w => ['w' + w, 'W' + w]));
   $('st-head').innerHTML = '<tr>' + cols.map(([k, l]) => `<th class="sort" data-k="${k}">${l}${v.sort === k ? (v.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
   $('st-head').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = ['display_name', 'position', 'real_team', 'team'].includes(k) ? 1 : -1; } drawStats(); });
   $('st-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${esc(r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>

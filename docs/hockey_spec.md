@@ -92,14 +92,16 @@ In the NHL, teams play 3 to 4 games a week, meaning a player frequently has 1 re
 
 1. **The One-Game-Per-Window Invariant**:
    A player can contribute **at most one game score** to any single fantasy window.
-2. **Automated Default ("Best Game")**:
+2. **Automated Default ("Best Matchup")**:
    When a player plays multiple real NHL games within the same window:
+   - The interface highlights which matchup is favorable (`Better Matchup ★`) based on opponent defensive rating and home/away status.
    - The scoring engine automatically awards the game with the **highest fantasy score** (`MAX(points)` based on xG attribution).
    - **Zero User Maintenance**: Casual or inactive managers are guaranteed their star player's best performance without having to log in or configure settings.
 3. **Optional Surplus Game Flex (Reassignment)**:
    For managers who want active tactical control:
-   - A manager can take the **surplus game** from that window and reassign it to count for **Window 2 or Window 3**.
-   - *Example*: McDavid plays on Sunday and Tuesday (Window 1), but Edmonton is idle on Thursday (Window 2). The manager can leave Tuesday's game in Window 1 and reassign Sunday's game to cover Window 2!
+   - A manager can see which matchup is the better matchup and send **either matchup** to count for an open target window (**Window 2 or Window 3**).
+   - Whichever matchup is not moved remains to count in the originating window.
+   - *Example*: McDavid plays on Sunday vs SJS and Tuesday vs BOS (Window 1), but Edmonton is idle on Thursday (Window 2). The manager can send Tuesday's matchup vs BOS to Window 2 while keeping the favorable Sunday matchup vs SJS in Window 1!
    - *Guardrail*: A surplus game can only be assigned to a window where the player does not already have an active game scheduled.
    - *Direction*: a surplus game moves **forward only** (Window 1 to 2 or 3, Window 2 to 3), so a game never rewrites a window that has already finished. One moved game per target window, and at least one game always stays where it was played.
    - *"Has a game"* means the player's real team plays in that window, whether or not he earned credit in it: a scheduled game occupies its window. Such a game still never beats a game he earned credit in, so staying out of a game cannot be used to dodge a bad night (goalie GSAx).
@@ -211,13 +213,13 @@ The frontend Schedule and Lineup interface is structured into three dedicated fu
 2. **Pecking Order 4-Line Grid**:
    - Displays the 4-line hierarchy (Line 1 Starters, Line 2–4 Backups).
    - Inactive/idle players in that 2–3 day window are dimmed (`Idle`), visually explaining why Line 2 or 3 stepped into the starting spot.
-3. **Multi-Game Indicator & Flex Popover**:
-   - When a player has 2 real NHL games in a window, their card displays a subtle badge:
-     `✦ 2 Games: Best Active [⇄ Flex]`.
-   - Clicking `[⇄ Flex]` opens a lightweight popover without disrupting the grid:
-     - Shows the 2 scheduled real games.
-     - Option to keep "Best Game" default for this window.
-     - Option to reassign the surplus game to an open target window (Window 2 or 3).
+3. **Multi-Matchup Indicator & Flex Popover**:
+   - When a player has 2 real NHL games in a window, their card displays:
+     `✦ 2 Matchups: [Day vs Opp] (Better Matchup ★)`.
+   - The dropdown or popover allows:
+     - Selecting "Best Matchup (Auto)" default for this window.
+     - Sending either matchup (Game A or Game B) to an open target window (Window 2 or 3).
+     - Whichever matchup is kept remains active in the originating window.
 4. **Main Matchup Canvas**:
    - Real-time progressive simulation view: period clock, live scoreboard, shots on goal, and on-ice narrative ticker.
 
