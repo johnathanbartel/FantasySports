@@ -93,6 +93,14 @@ function card(l) {
     ? `<div class="text-muted" style="font-size:12px">Scheduled ${esc(new Date(l.draft_scheduled_at + 'Z').toLocaleString())}</div>` : '';
   const draftBtn = l.draft_state === 'complete' ? ''
     : `<a class="btn btn-secondary" href="${draftHref(l)}">${l.draft_state === 'in_progress' ? 'Draft room' : (l.is_commissioner ? 'Set up draft' : 'Draft')}</a>`;
+  const commishActions = l.is_commissioner ? `
+    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--color-divider);align-items:center;justify-content:space-between">
+      <span class="text-muted" style="font-size:12px;font-weight:600">Commissioner tools</span>
+      <div style="display:flex;gap:var(--space-2)">
+        <button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-rename-league="${l.league_id}">Rename</button>
+        <button class="btn btn-secondary" style="font-size:12px;padding:3px 8px;color:#b91c1c;border-color:color-mix(in srgb, #b91c1c 35%, transparent)" data-delete-league="${l.league_id}">Delete</button>
+      </div>
+    </div>` : '';
   return `<div class="card elev-sm" style="padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
     <div style="display:flex;justify-content:space-between;gap:var(--space-2);align-items:baseline">
       <h3 style="margin:0">${esc(l.name)}</h3>
@@ -102,10 +110,49 @@ function card(l) {
     <div style="font-size:14px">${l.teams_filled} of ${l.size} teams${full ? '' : ' · <strong>not full</strong>'}</div>
     <div><span class="tag ${draftTag}">${DRAFT_LABELS[l.draft_state] || esc(l.draft_state)}</span></div>
     ${sched}
-    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2);flex-wrap:wrap">
       <a class="btn btn-primary" href="${leagueHref(l)}">Open league</a>${draftBtn}
     </div>
+    ${commishActions}
   </div>`;
+}
+
+async function onRenameLeague(l) {
+  showError('');
+  const newName = window.prompt('Enter new league name:', l.name);
+  if (newName === null) return;
+  const trimmed = newName.trim();
+  if (!trimmed) {
+    showError('League name cannot be empty');
+    return;
+  }
+  if (trimmed === l.name) return;
+  try {
+    const updated = await FSC.api(`/leagues/${l.league_id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: trimmed})
+    });
+    l.name = (updated && updated.name) || trimmed;
+    render();
+  } catch (err) {
+    showError(err.message || 'Failed to rename league');
+  }
+}
+
+async function onDeleteLeague(l) {
+  showError('');
+  const confirmed = window.confirm(`Are you sure you want to delete "${l.name}"? This cannot be undone and will delete all associated teams, drafts, and records.`);
+  if (!confirmed) return;
+  try {
+    await FSC.api(`/leagues/${l.league_id}`, {
+      method: 'DELETE'
+    });
+    all = all.filter(x => x.league_id !== l.league_id);
+    render();
+  } catch (err) {
+    showError(err.message || 'Failed to delete league');
+  }
 }
 
 function render() {
@@ -114,6 +161,21 @@ function render() {
   const el = document.getElementById('leagues');
   el.innerHTML = shown.length ? shown.map(card).join('')
     : `<p class="text-muted">You're not in any leagues yet. <a href="/static/create-league.html">Create one</a>.</p>`;
+
+  el.querySelectorAll('[data-rename-league]').forEach(btn => {
+    btn.onclick = () => {
+      const lid = Number(btn.getAttribute('data-rename-league'));
+      const lg = all.find(x => x.league_id === lid);
+      if (lg) onRenameLeague(lg);
+    };
+  });
+  el.querySelectorAll('[data-delete-league]').forEach(btn => {
+    btn.onclick = () => {
+      const lid = Number(btn.getAttribute('data-delete-league'));
+      const lg = all.find(x => x.league_id === lid);
+      if (lg) onDeleteLeague(lg);
+    };
+  });
 }
 
 async function start() {

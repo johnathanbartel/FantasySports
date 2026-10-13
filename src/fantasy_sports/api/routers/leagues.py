@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
 from fantasy_sports.api.schemas import (
-    ConferenceOut, LeagueCreateRequest, LeagueOut, RosterSlotOut, SandboxLeagueRequest, StandingsRow, TeamOut, WeekOut,
+    ConferenceOut, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, RosterSlotOut, SandboxLeagueRequest, StandingsRow, TeamOut, WeekOut,
 )
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
@@ -17,6 +17,7 @@ from fantasy_sports.platform.db.models.core import (
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.league_features import draft_state
+from fantasy_sports.platform.league_lifecycle import delete_league as purge_league
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
@@ -279,6 +280,32 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
     if league is None:
         raise HTTPException(404, "League not found")
     return league
+
+
+@router.patch("/{league_id}", response_model=LeagueOut)
+def rename_league(
+    league_id: int, payload: LeagueRenameRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: renames the league."""
+    league = assert_commissioner(db, user, league_id)
+    new_name = payload.name.strip()
+    if not new_name:
+        raise HTTPException(400, "League name cannot be empty")
+    league.name = new_name
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.delete("/{league_id}")
+def delete_league(
+    league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: deletes the league and all associated child records."""
+    assert_commissioner(db, user, league_id)
+    purge_league(db, league_id)
+    db.commit()
+    return {"status": "deleted", "league_id": league_id}
 
 
 @router.get("/{league_id}/teams", response_model=list[TeamOut])

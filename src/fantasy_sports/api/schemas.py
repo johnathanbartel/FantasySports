@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ORMModel(BaseModel):
@@ -48,6 +48,10 @@ class LeagueCreateRequest(BaseModel):
     # NHL only: consecutive daily games against the same opponent.
     # None lets the API apply the NHL default without changing other sports.
     series_length_days: int | None = None
+
+
+class LeagueRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
 
 
 class LeagueOut(ORMModel):

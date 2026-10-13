@@ -1,0 +1,148 @@
+"""Platform lifecycle operations for leagues (deletion, cleanup)."""
+
+from sqlalchemy.orm import Session
+
+from fantasy_sports.platform.db.models.core import (
+    AuctionBid,
+    AuctionDraft,
+    AuctionRound,
+    AuctionTeamBudget,
+    BankedCredit,
+    Conference,
+    Draft,
+    DraftPick,
+    FreeAgencyTransaction,
+    League,
+    LeagueSeries,
+    LeagueUniverse,
+    LineupEntry,
+    MatchupRequest,
+    RecruitingAward,
+    RecruitingBid,
+    RecruitingBidResult,
+    RecruitingCharge,
+    RecruitingDraft,
+    RecruitingResultAck,
+    RecruitingSettings,
+    RecruitingThreshold,
+    RosterEntry,
+    ScheduleSettings,
+    SeriesDailyGame,
+    SimulatorEvent,
+    SimulatorGame,
+    SimulatorReveal,
+    Team,
+    TeamPeckingOrder,
+    WeeklyContest,
+    WeeklyContestEntry,
+    WeeklyContestPairing,
+    WeeklyContestSlot,
+    WeeklyMatchup,
+    WeeklyPlayerSalary,
+    WeeklyRedraftSettings,
+    WeeklyTeamScore,
+)
+
+
+def delete_league(db: Session, league_id: int) -> None:
+    """Deletes a league and all dependent child records in strict reverse foreign key order.
+    Does NOT commit the session so the caller controls transaction boundaries.
+    """
+    league = db.get(League, league_id)
+    if league is None:
+        raise ValueError(f"League {league_id} not found")
+
+    team_ids = [r[0] for r in db.query(Team.id).filter(Team.league_id == league_id).all()]
+    draft_ids = [r[0] for r in db.query(Draft.id).filter(Draft.league_id == league_id).all()]
+    auction_draft_ids = [r[0] for r in db.query(AuctionDraft.id).filter(AuctionDraft.league_id == league_id).all()]
+    recruiting_draft_ids = [r[0] for r in db.query(RecruitingDraft.id).filter(RecruitingDraft.league_id == league_id).all()]
+    league_series_ids = [r[0] for r in db.query(LeagueSeries.id).filter(LeagueSeries.league_id == league_id).all()]
+    daily_game_ids = (
+        [r[0] for r in db.query(SeriesDailyGame.id).filter(SeriesDailyGame.series_id.in_(league_series_ids)).all()]
+        if league_series_ids else []
+    )
+    simulator_game_ids = (
+        [r[0] for r in db.query(SimulatorGame.id).filter(SimulatorGame.daily_game_id.in_(daily_game_ids)).all()]
+        if daily_game_ids else []
+    )
+    auction_round_ids = (
+        [r[0] for r in db.query(AuctionRound.id).filter(AuctionRound.auction_draft_id.in_(auction_draft_ids)).all()]
+        if auction_draft_ids else []
+    )
+    weekly_contest_ids = [r[0] for r in db.query(WeeklyContest.id).filter(WeeklyContest.league_id == league_id).all()]
+    contest_entry_ids = (
+        [r[0] for r in db.query(WeeklyContestEntry.id).filter(WeeklyContestEntry.contest_id.in_(weekly_contest_ids)).all()]
+        if weekly_contest_ids else []
+    )
+
+    # 1. Simulator events & view states
+    if simulator_game_ids:
+        db.query(SimulatorReveal).filter(SimulatorReveal.simulator_game_id.in_(simulator_game_ids)).delete(synchronize_session=False)
+        db.query(SimulatorEvent).filter(SimulatorEvent.simulator_game_id.in_(simulator_game_ids)).delete(synchronize_session=False)
+        db.query(SimulatorGame).filter(SimulatorGame.id.in_(simulator_game_ids)).delete(synchronize_session=False)
+
+    # 2. Banking: Off-day banked credits (points to series_daily_games, leagues, teams)
+    if team_ids:
+        db.query(BankedCredit).filter(
+            (BankedCredit.league_id == league_id) | (BankedCredit.team_id.in_(team_ids))
+        ).delete(synchronize_session=False)
+    else:
+        db.query(BankedCredit).filter(BankedCredit.league_id == league_id).delete(synchronize_session=False)
+
+    # 3. Daily games and series
+    if league_series_ids:
+        db.query(SeriesDailyGame).filter(SeriesDailyGame.series_id.in_(league_series_ids)).delete(synchronize_session=False)
+        db.query(LeagueSeries).filter(LeagueSeries.id.in_(league_series_ids)).delete(synchronize_session=False)
+
+    # 4. Weekly salary-cap redraft
+    if contest_entry_ids:
+        db.query(WeeklyContestSlot).filter(WeeklyContestSlot.entry_id.in_(contest_entry_ids)).delete(synchronize_session=False)
+        db.query(WeeklyContestEntry).filter(WeeklyContestEntry.id.in_(contest_entry_ids)).delete(synchronize_session=False)
+    if weekly_contest_ids:
+        db.query(WeeklyContestPairing).filter(WeeklyContestPairing.contest_id.in_(weekly_contest_ids)).delete(synchronize_session=False)
+        db.query(WeeklyPlayerSalary).filter(WeeklyPlayerSalary.contest_id.in_(weekly_contest_ids)).delete(synchronize_session=False)
+        db.query(WeeklyContest).filter(WeeklyContest.id.in_(weekly_contest_ids)).delete(synchronize_session=False)
+    db.query(WeeklyRedraftSettings).filter(WeeklyRedraftSettings.league_id == league_id).delete(synchronize_session=False)
+
+    # 5. Timed auctions
+    if auction_round_ids:
+        db.query(AuctionBid).filter(AuctionBid.auction_round_id.in_(auction_round_ids)).delete(synchronize_session=False)
+        db.query(AuctionRound).filter(AuctionRound.id.in_(auction_round_ids)).delete(synchronize_session=False)
+    if auction_draft_ids:
+        db.query(AuctionTeamBudget).filter(AuctionTeamBudget.auction_draft_id.in_(auction_draft_ids)).delete(synchronize_session=False)
+        db.query(AuctionDraft).filter(AuctionDraft.id.in_(auction_draft_ids)).delete(synchronize_session=False)
+
+    # 6. Recruiting draft
+    if recruiting_draft_ids:
+        db.query(RecruitingResultAck).filter(RecruitingResultAck.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingBidResult).filter(RecruitingBidResult.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingCharge).filter(RecruitingCharge.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingAward).filter(RecruitingAward.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingBid).filter(RecruitingBid.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingThreshold).filter(RecruitingThreshold.draft_id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+        db.query(RecruitingDraft).filter(RecruitingDraft.id.in_(recruiting_draft_ids)).delete(synchronize_session=False)
+    db.query(RecruitingSettings).filter(RecruitingSettings.league_id == league_id).delete(synchronize_session=False)
+
+    # 7. Snake drafts
+    if draft_ids:
+        db.query(DraftPick).filter(DraftPick.draft_id.in_(draft_ids)).delete(synchronize_session=False)
+        db.query(Draft).filter(Draft.id.in_(draft_ids)).delete(synchronize_session=False)
+
+    # 8. Matchups, requests, settings, transactions
+    db.query(WeeklyMatchup).filter(WeeklyMatchup.league_id == league_id).delete(synchronize_session=False)
+    db.query(MatchupRequest).filter(MatchupRequest.league_id == league_id).delete(synchronize_session=False)
+    db.query(ScheduleSettings).filter(ScheduleSettings.league_id == league_id).delete(synchronize_session=False)
+    db.query(FreeAgencyTransaction).filter(FreeAgencyTransaction.league_id == league_id).delete(synchronize_session=False)
+
+    # 9. Team-level child records
+    if team_ids:
+        db.query(TeamPeckingOrder).filter(TeamPeckingOrder.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(LineupEntry).filter(LineupEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(WeeklyTeamScore).filter(WeeklyTeamScore.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(Team).filter(Team.id.in_(team_ids)).delete(synchronize_session=False)
+
+    # 10. Conferences, universes, and league
+    db.query(Conference).filter(Conference.league_id == league_id).delete(synchronize_session=False)
+    db.query(LeagueUniverse).filter(LeagueUniverse.league_id == league_id).delete(synchronize_session=False)
+    db.query(League).filter(League.id == league_id).delete(synchronize_session=False)
