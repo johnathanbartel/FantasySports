@@ -12,32 +12,106 @@
 
   <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
     <div style="display:flex;align-items:center;gap:var(--space-4)">
-      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">FantasyMotion</a>
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        FantasyMotion
+      </a>
       <a href="/static/index.html" aria-current="page">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/create-league.html">Create league</a>
     </div>
     <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
   </div>
 
   <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
 
-    <div style="margin-bottom:var(--space-6)">
-      <div class="card-kicker" style="margin-bottom:var(--space-1);color:var(--color-accent);font-weight:600">Your league. Your rules. Your universe.</div>
-      <h1 style="margin:0 0 var(--space-2)">Pick a sport</h1>
-      <p class="text-muted" style="max-width:680px;margin:0">
-        FantasyMotion unites college and professional sports on a single modular fantasy engine.
-        Drafting, rosters, customizable scoring, and standings live seamlessly in your universe.
+    <!-- Modern Hero Header -->
+    <div class="hero-box">
+      <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+        <span class="feature-pill">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Multi-Universe Fantasy Platform
+        </span>
+        <span class="feature-pill" style="border-color:color-mix(in srgb, var(--color-accent-2) 35%, transparent);color:var(--color-accent-2)">
+          EPA & xG Analytics Driven
+        </span>
+      </div>
+      <h1 style="font-size:46px;margin:0 0 var(--space-3);letter-spacing:-0.03em;line-height:1.08">
+        Your league. Your rules.<br><span style="color:var(--color-accent)">Your universe.</span>
+      </h1>
+      <p style="font-size:16px;line-height:1.6;color:color-mix(in srgb, var(--color-text) 82%, transparent);max-width:760px;margin:0 0 var(--space-5)">
+        FantasyMotion brings modern play-by-play analytics to fantasy sports across collegiate and professional athletics.
+        Replace flat box-score gimmicks with true Expected Points Added (EPA) and Expected Goals (xG), live interactive draft rooms, flexible program tiers, and seamless commissioner controls.
       </p>
+      <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap">
+        <a class="btn btn-primary" href="/static/create-league.html" style="font-size:15px;padding:10px 22px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          Create a League
+        </a>
+        <a class="btn btn-secondary" href="/static/dashboard.html" style="font-size:15px;padding:10px 20px">
+          My Leagues
+        </a>
+        <a class="btn btn-ghost" href="/static/commissioner.html" style="font-size:14px">
+          Commissioner Mode &rarr;
+        </a>
+      </div>
     </div>
 
-    <div style="margin-bottom:var(--space-5)"><a class="btn btn-primary" href="/static/dashboard.html">My leagues</a>
-      <span class="text-muted" style="margin-left:var(--space-3)">Every league you commission or play in, across all sports.</span></div>
+    <!-- 3 Marketable Value Pillars -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--space-4);margin-bottom:var(--space-8)">
+      <div class="card card-hover elev-sm" style="padding:var(--space-5);border:1px solid var(--color-divider)">
+        <div style="font-size:26px;margin-bottom:var(--space-2)">📈</div>
+        <h3 style="font-size:19px;margin:0 0 var(--space-2)">True Value Attribution</h3>
+        <p class="text-muted" style="font-size:14px;line-height:1.55;margin:0">
+          Powered by Expected Points Added (EPA) and Expected Goals (xG). Real on-field play contribution replaces flat stat bonuses so decisive game plays earn true fantasy rewards.
+        </p>
+      </div>
+      <div class="card card-hover elev-sm" style="padding:var(--space-5);border:1px solid var(--color-divider)">
+        <div style="font-size:26px;margin-bottom:var(--space-2)">⚡</div>
+        <h3 style="font-size:19px;margin:0 0 var(--space-2)">Multi-Format Draft Engine</h3>
+        <p class="text-muted" style="font-size:14px;line-height:1.55;margin:0">
+          Run live Snake drafts with AI autopick, timed sealed-bid Auctions, or multi-period Recruiting drafts with real-time countdown clocks, audio alerts, and draft broadcasts.
+        </p>
+      </div>
+      <div class="card card-hover elev-sm" style="padding:var(--space-5);border:1px solid var(--color-divider)">
+        <div style="font-size:26px;margin-bottom:var(--space-2)">🛡️</div>
+        <h3 style="font-size:19px;margin:0 0 var(--space-2)">Commissioner Freedom</h3>
+        <p class="text-muted" style="font-size:14px;line-height:1.55;margin:0">
+          Set custom capacities, mix AI and human managers, send 1-click email invitations, configure conference tiers, and manage rosters from an intuitive commissioner suite.
+        </p>
+      </div>
+    </div>
 
-    <div id="sport-tabs" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-6)"></div>
+    <!-- Sports Showcase Section -->
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)">
+      <div>
+        <div class="card-kicker" style="margin-bottom:4px">Sports & Universes</div>
+        <h2 style="margin:0;font-size:26px">Choose your universe</h2>
+      </div>
+      <span class="text-muted" style="font-size:13px">All sports share unified draft, roster, and scoring architecture.</span>
+    </div>
+
+    <div id="sport-tabs" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-5)"></div>
 
     <div id="sport-panel"></div>
 
   </div>
+
+  <!-- Global Footer -->
+  <footer class="site-footer">
+    <div style="display:flex;align-items:center;gap:var(--space-3)">
+      <strong style="color:var(--color-text);font-family:var(--font-heading);font-size:15px">FantasyMotion</strong>
+      <span>&bull;</span>
+      <span>Your league. Your rules. Your universe.</span>
+    </div>
+    <div style="display:flex;gap:var(--space-4);align-items:center;font-size:13px">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My Leagues</a>
+      <a href="/static/create-league.html">Create League</a>
+      <a href="/static/commissioner.html">Commissioner Mode</a>
+      <a href="/docs">API Docs</a>
+    </div>
+  </footer>
 </div>
 
 <script src="/static/session.js"></script>
@@ -45,85 +119,92 @@
 const SPORTS = [
   {
     id: 'college-football',
+    icon: '🏈',
     label: 'College Football',
     status: 'live',
-    statusLabel: 'Live',
-    summary: 'The NCAAF universe is the working implementation: real Georgia roster data, a live draft board, a timed sealed-bid auction draft, and Expected-Points-Added (EPA) scoring instead of flat per-stat bonuses.',
+    statusLabel: 'Live & Playable',
+    summary: 'The flagship NCAAF universe: real FBS rosters, interactive live draft board, timed sealed-bid recruiting auction draft, and Expected-Points-Added (EPA) play-by-play scoring.',
     features: [
-      'EPA-based scoring: fantasy points track the real point value a play contributed, not flat stat bonuses',
-      'Live snake draft board with autopick for AI-owned teams',
-      'Timed sealed-bid auction draft: nominate, bid, reveal, debit budget, random tie-break',
-      'Program-size tiers (Large/Moderate/Small) set each team’s auction budget, conference, and season goal',
-      "Defense drafted as position groups (DL/LB/DB) by default",
-      'Demo league seeded with real 2024 CFBD play-by-play and roster data',
+      'EPA-based scoring: fantasy points track true real-game point contribution rather than flat stat bonuses',
+      'Live snake draft board with synchronized countdown clocks and AI autopick',
+      'Timed sealed-bid auction draft: nominate, bid, reveal, debit budget, and tie-break resolution',
+      'Program-size tiers (Large/Moderate/Small) setting auction budget, conference placement, and season goals',
+      'Defense drafted as position groups (DL/LB/DB) from the unified asset pool',
+      'Instant demo seeding with verified 2024 CFBD play-by-play and roster data',
     ],
     links: [
-      { href: '/static/create-league.html', label: 'Create a league', primary: true },
-      { href: '/static/commissioner.html', label: 'Commissioner mode (premium)' },
-      { href: '/static/draft-board.html', label: 'Open draft board' },
-      { href: '/static/auction-board.html', label: 'Open auction draft' },
-      { href: '/docs', label: 'API docs' },
+      { href: '/static/create-league.html', label: 'Create CFB League', primary: true },
+      { href: '/static/commissioner.html', label: 'Commissioner Mode (Premium)' },
+      { href: '/static/draft-board.html', label: 'Draft Board' },
+      { href: '/static/auction-board.html', label: 'Auction Draft' },
+      { href: '/docs', label: 'API Docs' },
     ],
   },
   {
     id: 'football',
-    label: 'Football',
+    icon: '🏈',
+    label: 'Football (NFL)',
     status: 'progress',
-    statusLabel: 'In progress',
-    summary: "The NFL universe shares the platform's EPA scoring model with College Football, and the two are planned to combine into a Dual Universe league. You can create an NFL league, set up your team and run its snake draft in the browser; the player pool comes from the ingested NFL rosters.",
+    statusLabel: 'In Progress (Playable Draft)',
+    summary: "The NFL universe shares the platform's advanced EPA scoring model and roster pipelines. Create an NFL league, configure AI or manager invites, and draft from ingested NFL rosters.",
     features: [
-      "NFL offense attribution pipeline, validated against real 2024 week-1 play-by-play",
-      "Exact QB/receiver EPA splits from nflfastR's per-play yac_epa (no yards-bucket approximation needed)",
-      "Leagues can choose group or individual defensive-player scoring for NFL",
+      'NFL offense play-by-play attribution pipeline validated against real 2024 game stats',
+      "Exact QB/receiver EPA splits from nflfastR's yac_epa (zero yards-bucket approximation)",
+      'Choice between team defense, position group, or individual defensive player (IDP) scoring',
+      'Live snake draft with configurable team sizes and roster spots',
     ],
     links: [
-      { href: '/static/create-league.html?universe=nfl', label: 'Create an NFL league', primary: true },
-      { href: '/docs', label: 'API docs' },
+      { href: '/static/create-league.html?universe=nfl', label: 'Create NFL League', primary: true },
+      { href: '/docs', label: 'API Docs' },
+    ],
+  },
+  {
+    id: 'hockey',
+    icon: '🏒',
+    label: 'Hockey (NHL)',
+    status: 'progress',
+    statusLabel: 'In Progress (Playable Draft)',
+    summary: 'NHL points format featuring a streamlined six-position starting lineup. Full league creation, team assignment, and live snake drafting are available today.',
+    features: [
+      'xG-based scoring: goal credit separates into chance creation (shared with assists) and finishing',
+      'Goalie scoring as Goals Saved Above Expected (GSAx) instead of raw save totals',
+      'Six starting positions (C, W, W, D, D, G) plus bench depth for complete game slates',
+      'Integrated into the shared platform: snake draft, league management, and multi-team rosters',
+    ],
+    links: [
+      { href: '/static/create-league.html?universe=nhl', label: 'Create NHL League', primary: true },
+      { href: '/docs', label: 'API Docs' },
     ],
   },
   {
     id: 'college-basketball',
+    icon: '🏀',
     label: 'College Basketball',
     status: 'planned',
-    statusLabel: 'Coming soon',
-    summary: 'No college basketball work has started yet - only the shared basketball module boundary exists in the codebase.',
+    statusLabel: 'Coming Soon',
+    summary: 'Collegiate basketball architecture is staged in the shared platform boundary. High-tempo possession and efficiency scoring is planned next.',
     features: [],
     links: [],
   },
   {
     id: 'basketball',
-    label: 'Basketball',
+    icon: '🏀',
+    label: 'Basketball (NBA)',
     status: 'planned',
-    statusLabel: 'Coming soon',
-    summary: 'No NBA work has started yet - only the shared basketball module boundary exists in the codebase.',
+    statusLabel: 'Coming Soon',
+    summary: 'NBA module boundaries are configured. Real possession efficiency and player impact models will arrive in the next major sports release.',
     features: [],
     links: [],
   },
   {
     id: 'baseball',
-    label: 'Baseball',
+    icon: '⚾',
+    label: 'Baseball (MLB)',
     status: 'planned',
-    statusLabel: 'Coming soon',
-    summary: 'Module boundary is in place in the codebase. Scoring rules and provider integrations have not been built yet.',
+    statusLabel: 'Coming Soon',
+    summary: 'Baseball module boundary is in place in the platform codebase for upcoming MLB integration and run-expectancy scoring.',
     features: [],
     links: [],
-  },
-  {
-    id: 'hockey',
-    label: 'Hockey',
-    status: 'progress',
-    statusLabel: 'In progress',
-    summary: "Create an NHL points league with a streamlined six-position starting lineup. The shared platform handles league setup, teams and snake drafting; the production player pool is the next data milestone.",
-    features: [
-      'xG-based scoring spec: a goal splits into chance-creation credit (shared with assists) and finishing credit for the shooter',
-      'Goalie scoring as Goals Saved Above Expected (GSAx), not raw save count',
-      'Six starting positions: C, W, W, D, D and G, plus an eighteen-player bench (a 24-player roster)',
-      'Shared platform mechanics - leagues, snake draft, timed sealed-bid auction draft - work unmodified for NHL once player data exists',
-    ],
-    links: [
-      { href: '/static/create-league.html?universe=nhl', label: 'Create an NHL league', primary: true },
-      { href: '/docs', label: 'API docs' },
-    ],
   },
 ];
 
@@ -140,7 +221,9 @@ function renderTabs() {
   SPORTS.forEach(sport => {
     const btn = document.createElement('button');
     btn.className = `btn ${active === sport.id ? 'btn-primary' : 'btn-secondary'}`;
-    btn.textContent = sport.label;
+    btn.style.fontSize = '14px';
+    btn.style.padding = '8px 16px';
+    btn.innerHTML = `<span style="margin-right:4px">${sport.icon}</span> ${sport.label}`;
     btn.onclick = () => { location.hash = sport.id; };
     el.appendChild(btn);
   });
@@ -152,19 +235,32 @@ function renderPanel() {
 
   const tagClass = sport.status === 'live' ? 'tag-accent' : sport.status === 'progress' ? 'tag-accent-2' : 'tag-neutral';
   const featuresHtml = sport.features.length
-    ? `<ul style="margin:var(--space-4) 0 0;padding-left:1.2em">${sport.features.map(f => `<li style="margin-bottom:var(--space-1)">${f}</li>`).join('')}</ul>`
-    : `<p class="text-muted" style="margin-top:var(--space-4)">Nothing to show yet - check back once work on this sport starts.</p>`;
+    ? `<div style="margin-top:var(--space-4);display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--space-2)">
+        ${sport.features.map(f => `
+          <div style="display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.45;color:var(--color-text)">
+            <span style="color:var(--color-accent);font-weight:bold;line-height:1.2">&#10003;</span>
+            <span>${f}</span>
+          </div>
+        `).join('')}
+      </div>`
+    : `<p class="text-muted" style="margin-top:var(--space-4);font-size:14px">Sports boundary staged. Complete scoring model and rosters arriving soon.</p>`;
+
   const linksHtml = sport.links.length
-    ? `<div style="display:flex;gap:var(--space-3);margin-top:var(--space-5)">${sport.links.map(l => `<a class="btn ${l.primary ? 'btn-primary' : 'btn-secondary'}" href="${l.href}">${l.label}</a>`).join('')}</div>`
+    ? `<div style="display:flex;gap:var(--space-3);margin-top:var(--space-5);flex-wrap:wrap">
+        ${sport.links.map(l => `<a class="btn ${l.primary ? 'btn-primary' : 'btn-secondary'}" href="${l.href}">${l.label}</a>`).join('')}
+      </div>`
     : '';
 
   el.innerHTML = `
-    <div class="card elev-sm" style="padding:var(--space-6)">
-      <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
-        <h2 style="margin:0">${sport.label}</h2>
+    <div class="card elev-sm" style="padding:var(--space-6);border:1px solid var(--color-divider);background:var(--color-surface)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+        <div style="display:flex;align-items:center;gap:var(--space-3)">
+          <span style="font-size:32px">${sport.icon}</span>
+          <h2 style="margin:0;font-size:24px">${sport.label}</h2>
+        </div>
         <span class="tag ${tagClass}">${sport.statusLabel}</span>
       </div>
-      <p style="margin:0;max-width:680px">${sport.summary}</p>
+      <p style="margin:0;max-width:720px;font-size:15px;line-height:1.55;color:color-mix(in srgb, var(--color-text) 85%, transparent)">${sport.summary}</p>
       ${featuresHtml}
       ${linksHtml}
     </div>

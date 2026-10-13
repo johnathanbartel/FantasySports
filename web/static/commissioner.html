@@ -17,10 +17,14 @@
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
 
   <div class="nav">
-    <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">FantasyMotion</a>
+    <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      FantasyMotion
+    </a>
     <div style="display:flex;gap:var(--space-4)">
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/create-league.html">Create league</a>
       <a href="/static/commissioner.html" aria-current="page">Commissioner mode</a>
     </div>
   </div>
@@ -93,10 +97,23 @@
           <thead><tr><th>Team</th><th>Size</th><th>Conference</th><th>Roster</th><th></th></tr></thead>
           <tbody id="teams-body"></tbody>
         </table>
-      </div>
-
     </div>
   </div>
+
+  <footer class="site-footer">
+    <div style="display:flex;align-items:center;gap:var(--space-3)">
+      <strong style="color:var(--color-text);font-family:var(--font-heading);font-size:15px">FantasyMotion</strong>
+      <span>&bull;</span>
+      <span>Your league. Your rules. Your universe.</span>
+    </div>
+    <div style="display:flex;gap:var(--space-4);align-items:center;font-size:13px">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My Leagues</a>
+      <a href="/static/create-league.html">Create League</a>
+      <a href="/static/commissioner.html">Commissioner Mode</a>
+      <a href="/docs">API Docs</a>
+    </div>
+  </footer>
 </div>
 
 <script src="/static/session.js"></script>
