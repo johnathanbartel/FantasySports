@@ -298,13 +298,32 @@ function readClockForm() {
 
 // One request chain at a time: overlapping picks/autopicks would race for the same asset.
 let busy = false;
+async function refreshDraftState() {
+  if (!DRAFT_ID) return;
+  const [newBoard, newPicks, newClock] = await Promise.all([
+    api(`/drafts/${DRAFT_ID}/board`),
+    api(`/drafts/${DRAFT_ID}/picks`),
+    api(`/drafts/${DRAFT_ID}/clock`)
+  ]);
+  board = newBoard;
+  picks = newPicks;
+  clock = newClock;
+  clockFetchedAt = Date.now();
+  render();
+}
+
 async function act(fn) {
   if (busy) return;
   busy = true;
   showError('');
-  try { await fn(); } catch (e) { showError(e.message); }
-  try { await loadAll(); } catch (e) { showError(e.message); }
-  busy = false;
+  try {
+    await fn();
+    await refreshDraftState();
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    busy = false;
+  }
 }
 
 function onClockPick() {
@@ -343,15 +362,16 @@ function renderClock() {
   const team = teamsById[next.team_id];
   const teamName = team ? team.name : `Team ${next.team_id}`;
   const isAi = team ? team.is_ai_owned : false;
+  const canRunAi = isAi && isCommissioner();
 
   panel.innerHTML = `
     <div class="card-kicker" style="margin-bottom:2px">On the clock</div>
     <div style="font-family:var(--font-heading);font-size:22px">${esc(teamName)}${isMyTeam(team) ? ' (you)' : ''}</div>
-    ${isAi ? `<div style="display:flex;gap:var(--space-2);justify-content:flex-end;margin-top:var(--space-2)">
+    ${canRunAi ? `<div style="display:flex;gap:var(--space-2);justify-content:flex-end;margin-top:var(--space-2)">
       <button class="btn btn-secondary" id="autopick-btn">Autopick</button>
-      <button class="btn btn-primary" id="run-ai-btn">Auto-draft AI teams</button></div>` : ''}
+      <button class="btn btn-primary" id="run-ai-btn">Auto-draft AI teams</button></div>` : (isAi ? `<div class="text-muted" style="font-size:12px;margin-top:var(--space-2)">AI team on the clock</div>` : '')}
   `;
-  if (isAi) {
+  if (canRunAi) {
     document.getElementById('autopick-btn').onclick = autopick;
     document.getElementById('run-ai-btn').onclick = runAi;
   }
@@ -398,7 +418,18 @@ async function pollAnnouncements() {
       const last = m.fresh[m.fresh.length - 1];
       showAnnouncement(last, BC.toSpeak(m.fresh, {soundOn, supported: speechSupported, backfill}).length > 0);
       document.getElementById('bc-replay').disabled = false;
-      if (!backfill && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); refreshClock(); }
+      if (!backfill && !busy) {
+        const [newBoard, newPicks, newClock] = await Promise.all([
+          api(`/drafts/${DRAFT_ID}/board`),
+          api(`/drafts/${DRAFT_ID}/picks`),
+          api(`/drafts/${DRAFT_ID}/clock`)
+        ]);
+        board = newBoard;
+        picks = newPicks;
+        clock = newClock;
+        clockFetchedAt = Date.now();
+        render();
+      }
     }
   } catch (e) { bcFailures++; }
   bcTimer = setTimeout(pollAnnouncements, BC.pollDelayMs(bcFailures));
@@ -460,7 +491,10 @@ function renderClockLine() {
 
 function renderCountdown() {
   const el = document.getElementById('countdown');
-  if (el && clock) el.textContent = DraftClock.formatRemaining(DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt));
+  const onClock = onClockPick();
+  if (el && clock && onClock && (clock.pick_number == null || clock.pick_number === onClock.pick_number)) {
+    el.textContent = DraftClock.formatRemaining(DraftClock.liveRemaining(clock, Date.now(), clockFetchedAt));
+  }
 }
 
 async function refreshClock() {
@@ -469,9 +503,21 @@ async function refreshClock() {
   try {
     const c = await api(`/drafts/${DRAFT_ID}/clock`);
     const moved = clock && (c.pick_number !== clock.pick_number || c.status !== clock.status);
-    clock = c; clockFetchedAt = Date.now();
-    if (moved && !busy) { [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]); render(); }
-    else renderClockLine();
+    if (moved && !busy) {
+      const [newBoard, newPicks] = await Promise.all([
+        api(`/drafts/${DRAFT_ID}/board`),
+        api(`/drafts/${DRAFT_ID}/picks`)
+      ]);
+      board = newBoard;
+      picks = newPicks;
+      clock = c;
+      clockFetchedAt = Date.now();
+      render();
+    } else {
+      clock = c;
+      clockFetchedAt = Date.now();
+      renderClockLine();
+    }
   } catch (e) { /* keep showing the last clock and retry */ }
   const d = DraftClock.pollDelayMs(clock);
   if (d) clockPoll = setTimeout(refreshClock, d);

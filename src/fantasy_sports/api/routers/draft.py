@@ -395,7 +395,7 @@ def make_pick(
 
 
 @router.post("/{draft_id}/autopick", response_model=DraftPickOut)
-def autopick(draft_id: int, db: Session = Depends(get_db)):
+def autopick(draft_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
     """Fills the next open pick with the first available board asset.
 
     The pick is lineup-aware (platform/ai/snake_ai.py); personality-driven variation (Team.personality_profile) is
@@ -403,6 +403,7 @@ def autopick(draft_id: int, db: Session = Depends(get_db)):
 
     On a timed draft this is limited to what the clock allows: an AI-owned team may be picked for at any time (the
     draft page uses that to run AI teams), a human team only once its time has run out, and nothing while paused.
+    When a signed-in user calls this, only the commissioner may trigger autopick for AI teams or other teams.
     """
     draft = _lock_draft(db, draft_id)
     now = utcnow()
@@ -416,8 +417,15 @@ def autopick(draft_id: int, db: Session = Depends(get_db)):
     pick = _next_open_pick(db, draft_id)
     if pick is None:
         raise HTTPException(400, "Draft has no open picks left")
-    if draft_clock.is_timed(draft) and not db.get(Team, pick.team_id).is_ai_owned:
+    pick_team = db.get(Team, pick.team_id)
+    if draft_clock.is_timed(draft) and not (pick_team and pick_team.is_ai_owned):
         raise HTTPException(409, "That team still has time on the clock")
+
+    if user is not None:
+        if pick_team and pick_team.is_ai_owned:
+            assert_commissioner(db, user, draft.league_id)
+        elif pick_team and pick_team.owner_user_id != user.id:
+            assert_commissioner(db, user, draft.league_id)
 
     _fill_with_best_available(db, draft, pick, now)
     if draft.status == "in_progress":

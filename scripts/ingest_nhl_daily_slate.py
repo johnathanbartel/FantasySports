@@ -165,6 +165,11 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
         ).filter(DraftableAsset.asset_type == "player", Player.external_ref.isnot(None)):
             asset_by_ref[str(ref)] = asset_id
 
+        players_by_ref: dict[str, Player] = {
+            p.external_ref: p
+            for p in db.query(Player).filter(Player.universe_id == nhl.id, Player.external_ref.isnot(None)).all()
+        }
+
         # Week container for this date
         season_year = target_date.year if target_date.month >= 9 else target_date.year - 1
         w_start = week_start(target_date)
@@ -266,8 +271,23 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
             }
             for spot in pbp_data.get("rosterSpots", []):
                 p_id_str = str(spot["playerId"])
-                if p_id_str not in asset_by_ref:
-                    p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
+                p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
+                existing_player = players_by_ref.get(p_id_str)
+                if existing_player:
+                    if not existing_player.active or existing_player.real_team_id != p_team_id:
+                        existing_player.active = True
+                        existing_player.real_team_id = p_team_id
+                        db.flush()
+                    if p_id_str not in asset_by_ref:
+                        new_asset = DraftableAsset(
+                            universe_id=nhl.id,
+                            asset_type="player",
+                            player_id=existing_player.id,
+                        )
+                        db.add(new_asset)
+                        db.flush()
+                        asset_by_ref[p_id_str] = new_asset.id
+                else:
                     first = spot.get("firstName", {}).get("default", "")
                     last = spot.get("lastName", {}).get("default", "")
                     p_name = f"{first} {last}".strip() or f"Player {p_id_str}"
@@ -282,6 +302,7 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                     )
                     db.add(new_player)
                     db.flush()
+                    players_by_ref[p_id_str] = new_player
                     new_asset = DraftableAsset(
                         universe_id=nhl.id,
                         asset_type="player",

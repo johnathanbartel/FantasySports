@@ -34,6 +34,7 @@ from fantasy_sports.sports.hockey.simulator import loader
 
 SCHEDULE_URL = "https://api-web.nhle.com/v1/schedule/{date}"
 PBP_URL = "https://api-web.nhle.com/v1/gamecenter/{game}/play-by-play"
+ROSTER_URL = "https://api-web.nhle.com/v1/roster/{team}/current"
 HEADERS = {"User-Agent": "FantasySportsPlatform-NHLSync/1.0"}
 POSITION_MAP = {"L": "LW", "R": "RW", "C": "C", "D": "D", "G": "G"}
 EVENT_TYPES = {
@@ -105,6 +106,11 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
     ).filter(DraftableAsset.asset_type == "player", Player.external_ref.isnot(None)):
         asset_by_ref[str(ref)] = asset_id
 
+    players_by_ref: dict[str, Player] = {
+        p.external_ref: p
+        for p in db.query(Player).filter(Player.universe_id == nhl.id, Player.external_ref.isnot(None)).all()
+    }
+
     season_year = target_date.year if target_date.month >= 9 else target_date.year - 1
     w_start = week_start(target_date)
     w_end = w_start + datetime.timedelta(days=6)
@@ -168,8 +174,19 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         }
         for spot in pbp_data.get("rosterSpots", []):
             p_id_str = str(spot["playerId"])
-            if p_id_str not in asset_by_ref:
-                p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
+            p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
+            existing_player = players_by_ref.get(p_id_str)
+            if existing_player:
+                if not existing_player.active or existing_player.real_team_id != p_team_id:
+                    existing_player.active = True
+                    existing_player.real_team_id = p_team_id
+                    db.flush()
+                if p_id_str not in asset_by_ref:
+                    new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=existing_player.id)
+                    db.add(new_asset)
+                    db.flush()
+                    asset_by_ref[p_id_str] = new_asset.id
+            else:
                 first = spot.get("firstName", {}).get("default", "")
                 last = spot.get("lastName", {}).get("default", "")
                 p_name = f"{first} {last}".strip() or f"Player {p_id_str}"
@@ -180,6 +197,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 )
                 db.add(new_player)
                 db.flush()
+                players_by_ref[p_id_str] = new_player
                 new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=new_player.id)
                 db.add(new_asset)
                 db.flush()
@@ -381,6 +399,79 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
     db.flush()
 
 
+def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | None = None) -> int:
+    """Syncs active NHL team rosters from the public NHL API so call-ups from the AHL
+    are immediately marked active=True with DraftableAsset records in the player pool.
+    Returns the number of players activated or added.
+    """
+    if teams is None:
+        teams = db.query(RealTeam).filter_by(universe_id=nhl.id).all()
+    if not teams:
+        return 0
+
+    players_by_ref: dict[str, Player] = {
+        p.external_ref: p
+        for p in db.query(Player).filter(Player.universe_id == nhl.id, Player.external_ref.isnot(None)).all()
+    }
+    asset_by_ref: dict[str, int] = {
+        str(ref): asset_id
+        for ref, asset_id in db.query(Player.external_ref, DraftableAsset.id).join(
+            DraftableAsset, DraftableAsset.player_id == Player.id
+        ).filter(DraftableAsset.asset_type == "player", Player.external_ref.isnot(None)).all()
+    }
+
+    activated_count = 0
+    for team in teams:
+        if not team.external_ref:
+            continue
+        roster_data = _fetch_json(ROSTER_URL.format(team=team.external_ref))
+        if not roster_data:
+            continue
+
+        raw_players = (
+            roster_data.get("forwards", [])
+            + roster_data.get("defensemen", [])
+            + roster_data.get("goalies", [])
+        )
+        for item in raw_players:
+            p_id = item.get("id")
+            if not p_id:
+                continue
+            p_id_str = str(p_id)
+            existing = players_by_ref.get(p_id_str)
+            if existing:
+                if not existing.active or existing.real_team_id != team.id:
+                    existing.active = True
+                    existing.real_team_id = team.id
+                    activated_count += 1
+                if p_id_str not in asset_by_ref:
+                    asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=existing.id)
+                    db.add(asset)
+                    db.flush()
+                    asset_by_ref[p_id_str] = asset.id
+            else:
+                first = item.get("firstName", {}).get("default", "")
+                last = item.get("lastName", {}).get("default", "")
+                name = f"{first} {last}".strip() or f"Player {p_id_str}"
+                pos = POSITION_MAP.get(item.get("positionCode"), "C")
+                new_player = Player(
+                    universe_id=nhl.id, real_team_id=team.id, full_name=name, position=pos,
+                    external_ref=p_id_str, active=True,
+                )
+                db.add(new_player)
+                db.flush()
+                players_by_ref[p_id_str] = new_player
+                asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=new_player.id)
+                db.add(asset)
+                db.flush()
+                asset_by_ref[p_id_str] = asset.id
+                activated_count += 1
+
+    if activated_count:
+        db.commit()
+    return activated_count
+
+
 def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     """Safe, idempotent auto-sync called on read for an NHL league. Ensures schedule alignment, slate ingestion, and simulation."""
     league = db.get(League, league_id)
@@ -425,6 +516,13 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     # Ensure this week's full schedule is seeded so Pecking Order accurately sees all games in the window
     try:
         seed_week_schedule_if_needed(db, nhl, max_active_date)
+        db.flush()
+    except Exception:
+        pass
+
+    # Sync active NHL team rosters / AHL callups into the player pool
+    try:
+        sync_nhl_roster_callups(db, nhl)
         db.flush()
     except Exception:
         pass

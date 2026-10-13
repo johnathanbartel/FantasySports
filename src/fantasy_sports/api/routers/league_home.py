@@ -97,6 +97,7 @@ class OverviewOut(BaseModel):
     teams: list[TeamSummary]
     is_college: bool = False
     draft_state: str = "not_started"     # not_started / in_progress / complete, whatever kind of draft the league runs
+    draft_scheduled_at: datetime.datetime | None = None
     has_rankings: bool = False          # College Football / College Basketball only, to start
     teams_set_schedule: bool = False    # likewise: only college teams negotiate their own schedules
 
@@ -163,7 +164,8 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
-        is_college=college, draft_state=draft_state(db, league_id), has_rankings=college, teams_set_schedule=college,
+        is_college=college, draft_state=draft_state(db, league_id), draft_scheduled_at=league.draft_scheduled_at,
+        has_rankings=college, teams_set_schedule=college,
     )
 
 

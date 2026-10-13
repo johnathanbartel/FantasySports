@@ -58,6 +58,7 @@
         <h1 style="margin:0" id="league-name">&nbsp;</h1>
       </div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+        <a id="hdr-draft-btn" href="#" class="btn btn-primary" style="display:none;font-size:13px;font-weight:700;align-items:center;gap:6px;box-shadow:0 0 10px rgba(34,197,94,0.35)"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span> Open Draft Board</a>
         <button type="button" class="btn btn-secondary" id="invite-btn" style="font-size:13px">Copy Invite Link</button>
         <span id="invite-copied-msg" class="text-muted" style="font-size:12px;display:none">Copied!</span>
       </div>
@@ -149,6 +150,48 @@ async function refreshOverview() {
   ov = await api(`/leagues/${LEAGUE_ID}/overview`);
   teamsById = Object.fromEntries(ov.teams.map(t => [t.id, t]));
   POSITIONS = isHockey() ? HOCKEY_POSITIONS : FOOTBALL_POSITIONS;
+  const hdrDraftBtn = $('hdr-draft-btn');
+  if (hdrDraftBtn) {
+    if (isDraftSoonOrLive()) {
+      hdrDraftBtn.href = draftBoardUrl();
+      hdrDraftBtn.style.display = 'inline-flex';
+    } else {
+      hdrDraftBtn.style.display = 'none';
+    }
+  }
+}
+
+function isDraftSoonOrLive() {
+  if (!ov || ov.draft_state === 'complete') return false;
+  if (ov.draft_state === 'in_progress') return true;
+  if (ov.draft_scheduled_at) {
+    const raw = String(ov.draft_scheduled_at);
+    const schedDate = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
+    const diff = schedDate.getTime() - Date.now();
+    return diff <= 3600 * 1000;
+  }
+  return false;
+}
+
+function draftBoardUrl() {
+  const mine = myTeam();
+  return ov && ov.draft_type === 'snake'
+    ? `/static/draft-board.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}`
+    : `/static/recruiting-board.html?league_id=${LEAGUE_ID}`;
+}
+
+function draftTimeNote() {
+  if (!ov) return '';
+  if (ov.draft_state === 'in_progress') return 'Draft is live right now!';
+  if (ov.draft_scheduled_at) {
+    const raw = String(ov.draft_scheduled_at);
+    const schedDate = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
+    const diffMs = schedDate.getTime() - Date.now();
+    if (diffMs <= 0) return 'Draft starting now';
+    const mins = Math.max(1, Math.round(diffMs / 60000));
+    return mins === 1 ? 'Starts in ~1 minute' : `Starts in ${mins} minutes (${schedDate.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})})`;
+  }
+  return 'Draft starting soon';
 }
 
 function draftLine() {
@@ -168,12 +211,37 @@ async function renderHome() {
   const mine = myTeam();
   const openSpots = ov.teams.reduce((n, t) => n + t.open_spots, 0);
   const fillNeeded = ov.free_agency_open && ov.ai_teams_with_open_spots > 0;
+  const draftHero = isDraftSoonOrLive() ? `
+    <div class="card elev-md" style="margin-bottom:var(--space-5);padding:var(--space-4) var(--space-5);background:linear-gradient(135deg, rgba(20,83,45,0.22), rgba(15,23,42,0.7));border:1.5px solid var(--color-accent);border-radius:var(--radius-lg);display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:var(--space-4)">
+        <div style="width:48px;height:48px;border-radius:var(--radius-md);background:var(--color-accent);color:white;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;box-shadow:0 0 12px rgba(34,197,94,0.4)">
+          ⚡
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--color-accent)">
+            ${ov.draft_state === 'in_progress' ? '● Live Draft Room' : '● Draft Starting Soon (Under 1 Hour)'}
+          </div>
+          <div style="font-size:20px;font-weight:800;margin-top:2px;font-family:var(--font-heading)">
+            ${draftTimeNote()}
+          </div>
+          <div class="text-muted" style="font-size:13px;margin-top:2px">
+            ${ov.draft_type === 'snake' ? 'Live Snake Draft Board' : 'Recruiting Board'} is open. Enter the draft room to track picks and draft your roster in real time.
+          </div>
+        </div>
+      </div>
+      <div>
+        <a href="${draftBoardUrl()}" class="btn btn-primary" style="font-size:15px;padding:12px 24px;font-weight:700;display:inline-flex;align-items:center;gap:8px;box-shadow:0 0 16px rgba(34,197,94,0.4)">
+          Open Draft Board →
+        </a>
+      </div>
+    </div>` : '';
   $('content').innerHTML = `
+    ${draftHero}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
       ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`)}
       ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`)}
       ${ov.draft_type === 'snake'
-        ? statCard('Draft', {complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state, ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`)
+        ? statCard('Draft', isDraftSoonOrLive() ? `<span style="color:var(--color-accent)">${ov.draft_state === 'in_progress' ? 'In progress' : 'Starting soon'}</span>` : ({complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state), isDraftSoonOrLive() ? `<a href="${draftBoardUrl()}" style="font-weight:600">Open draft board →</a>` : (ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`))
         : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine())}
       ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'))}
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}

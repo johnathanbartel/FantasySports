@@ -263,12 +263,18 @@ def _sync_players(db, universe: Universe, teams, rosters) -> dict[str, int]:
             asset_type="player",
         ) if player_id is not None
     }
-    current_player_refs = {row["playerId"].strip() for row in rosters}
+    rostered_player_ids = {
+        r.draftable_asset.player_id
+        for r in db.query(RosterEntry).join(DraftableAsset, DraftableAsset.id == RosterEntry.draftable_asset_id).filter(
+            DraftableAsset.player_id.isnot(None)
+        ).all()
+    }
     deactivated = 0
     for player_ref, player in players.items():
         if player_ref not in current_player_refs and player.active:
-            player.active = False
-            deactivated += 1
+            if player.id not in rostered_player_ids and player.real_team_id is None:
+                player.active = False
+                deactivated += 1
 
     created = updated = assets_created = 0
     for row in rosters:
