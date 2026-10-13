@@ -13,9 +13,10 @@ from fantasy_sports.api.routers import (
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
 
 app = FastAPI(
-    title="Fantasy Sports Platform API",
+    title="FantasyMotion API",
     description=(
-        "Shared API for the multi-sport fantasy platform. See "
+        "Your league. Your rules. Your universe. "
+        "Shared API for the FantasyMotion multi-sport platform. See "
         "docs/data_contract.md for the plain-English schema summary."
     ),
     version="0.1.0",

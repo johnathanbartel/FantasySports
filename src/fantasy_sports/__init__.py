@@ -1,2 +1,2 @@
-"""Fantasy Sports Company application package."""
+"""FantasyMotion application package."""
 

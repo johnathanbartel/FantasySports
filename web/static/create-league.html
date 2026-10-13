@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Create a League</title>
+<title>Create a League - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
 <style>
   body{margin:0}
@@ -28,7 +28,7 @@
 
   <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
     <div style="display:flex;align-items:center;gap:var(--space-4)">
-      <span class="nav-brand">Fantasy Sports Company</span>
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">FantasyMotion</a>
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
       <a href="/static/create-league.html" aria-current="page">Create league</a>
@@ -39,6 +39,7 @@
   <div style="max-width:640px;margin:0 auto;padding:var(--space-8) var(--space-5)">
 
     <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1);color:var(--color-accent);font-weight:600">Your league. Your rules. Your universe.</div>
       <div class="step-indicator" id="step-indicator">Step 1 of 2</div>
       <h1 style="margin:0" id="step-heading">Create your league</h1>
     </div>
@@ -501,7 +502,7 @@ function renderInvitesSummary(createdTeams) {
     } else {
       const fullInviteUrl = `${location.origin}${t.invite_url}`;
       const mailSubject = encodeURIComponent(`Invitation to join ${league.name}`);
-      const mailBody = encodeURIComponent(`You've been invited to manage "${t.name}" in ${league.name} on Fantasy Sports Company!\n\nClaim your team and join the draft room here:\n${fullInviteUrl}`);
+      const mailBody = encodeURIComponent(`You've been invited to manage "${t.name}" in ${league.name} on FantasyMotion!\n\nClaim your team and join the draft room here:\n${fullInviteUrl}`);
       const mailtoLink = `mailto:${encodeURIComponent(t.email)}?subject=${mailSubject}&body=${mailBody}`;
 
       itemDiv.innerHTML = `

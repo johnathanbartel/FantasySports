@@ -1,4 +1,6 @@
-# Fantasy Sports Company
+# FantasyMotion
+
+> **Your league. Your rules. Your universe.**
 
 A single-site fantasy platform for major sports. Shared league mechanics live
 once in the platform layer; each sport supplies only its provider integrations,
