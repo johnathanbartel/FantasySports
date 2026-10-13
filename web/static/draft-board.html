@@ -9,6 +9,7 @@
 <script src="/static/draft-clock-logic.js"></script>
 <script src="/static/roster-lines.js"></script>
 <script src="/static/draft-broadcast-logic.js"></script>
+<script src="/static/assign-team-modal.js"></script>
 <style>body{margin:0}
 .board-table{font-size:14px}
 .board-table th.num,.board-table td.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -82,6 +83,7 @@
         </div>
         <div id="pane-roster" role="tabpanel">
           <label style="display:block;margin-bottom:var(--space-2)">Team <select id="roster-team"></select></label>
+          <div id="roster-assign-container" style="display:none"></div>
           <div id="roster-lines" class="card elev-sm" style="padding:var(--space-3) var(--space-4)"></div>
         </div>
         <div id="pane-picks" role="tabpanel" hidden>
@@ -188,6 +190,19 @@ function renderSetup(teams) {
       <button type="button" class="btn btn-secondary" id="copy-invite-btn" style="font-size:13px">Copy Invite Link</button>
       <span id="invite-copied-msg" class="text-muted" style="font-size:12px;display:none">Copied invite link to clipboard!</span>
     </div>
+    ${isCommissioner() && teams.some(t => t.is_ai_owned) ? `
+      <div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)">
+        <div style="font-size:13px;font-weight:600;margin-bottom:var(--space-2)">AI Teams in Draft (${teams.filter(t => t.is_ai_owned).length})</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${teams.filter(t => t.is_ai_owned).map(t => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-radius:var(--radius-sm);background:var(--color-bg)">
+              <span style="font-size:13px"><strong>${esc(t.name)}</strong> <span class="pill ai" style="font-size:10px;padding:1px 6px">AI</span></span>
+              <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" data-db-assign-team="${t.id}" data-team-name="${esc(t.name)}">Assign to user</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
     ${isCommissioner() ? `${clockFormHtml()}<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
       ${open > 0 ? '<button class="btn btn-secondary" id="fill-ai">Fill open spots with AI teams</button>' : ''}
       <button class="btn btn-primary" id="start-draft" ${teams.length && open <= 0 ? '' : 'disabled'} ${open > 0 ? 'title="Fill every open spot before starting the draft"' : ''}>Start draft</button></div>`
@@ -202,6 +217,22 @@ function renderSetup(teams) {
       prompt('Copy invite link:', inviteUrl);
     });
   };
+
+  panel.querySelectorAll('[data-db-assign-team]').forEach(btn => {
+    btn.onclick = () => {
+      const tid = Number(btn.getAttribute('data-db-assign-team'));
+      const tname = btn.getAttribute('data-team-name');
+      AssignTeamModal.open({
+        leagueId: LEAGUE_ID,
+        teamId: tid,
+        teamName: tname,
+        isAi: true,
+        onAssigned: async () => {
+          await loadAll();
+        }
+      });
+    };
+  });
 
   const fill = document.getElementById('fill-ai');
   if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
@@ -599,6 +630,38 @@ async function renderRosterTab() {
     sel.value = String(rosterTeamId);
     sel.onchange = () => { rosterTeamId = Number(sel.value); renderRosterTab(); };
   }
+
+  const selectedTeam = teamsById[rosterTeamId];
+  const isAiTeam = selectedTeam && selectedTeam.is_ai_owned;
+  const assignContainer = document.getElementById('roster-assign-container');
+  if (assignContainer) {
+    if (isCommissioner() && isAiTeam) {
+      assignContainer.style.display = 'block';
+      assignContainer.innerHTML = `
+        <div style="margin-bottom:var(--space-2);padding:6px 10px;background:color-mix(in srgb, var(--color-accent) 6%, transparent);border:1px solid var(--color-divider);border-radius:var(--radius-md);display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:12px;color:var(--color-text)">AI-managed team</span>
+          <button class="btn btn-secondary" id="roster-assign-btn" style="font-size:11px;padding:2px 8px">Assign to user</button>
+        </div>
+      `;
+      const btn = document.getElementById('roster-assign-btn');
+      if (btn) btn.onclick = () => {
+        AssignTeamModal.open({
+          leagueId: LEAGUE_ID,
+          teamId: rosterTeamId,
+          teamName: selectedTeam.name,
+          isAi: true,
+          onAssigned: async () => {
+            sel.innerHTML = '';
+            await loadAll();
+          }
+        });
+      };
+    } else {
+      assignContainer.style.display = 'none';
+      assignContainer.innerHTML = '';
+    }
+  }
+
   const box = document.getElementById('roster-lines');
   try {
     const lines = await api(`/teams/${rosterTeamId}/lines`);

@@ -117,6 +117,7 @@
 </div>
 
 <script src="/static/session.js"></script>
+<script src="/static/assign-team-modal.js"></script>
 <script>
 const api = FSC.api;
 const params = new URLSearchParams(location.search);
@@ -168,11 +169,33 @@ async function refreshLeague() {
   document.getElementById('auto-btn').disabled = status.status !== 'closed';
   document.getElementById('week-select').innerHTML = weeks.map(w => `<option value="${w.id}">Week ${w.week_number} (${w.season_year})</option>`).join('');
   document.getElementById('teams-body').innerHTML = teams.map(t => `<tr>
-    <td>${esc(t.name)} <span class="text-muted">(AI)</span></td>
+    <td>${esc(t.name)} <span class="text-muted">${t.is_ai_owned ? '(AI)' : (t.owner_name ? '(' + esc(t.owner_name) + ')' : '(Manager)')}</span></td>
     <td><span class="tag tag-neutral">${t.program_size}</span></td>
     <td>${esc(conferences[t.conference_id] || '')}</td>
     <td>${rosterSizes[t.id]} players</td>
-    <td><a class="btn btn-secondary" href="/static/lineup.html?league_id=${current.id}&team_id=${t.id}${weeks[0] ? '&week_id=' + weeks[0].id : ''}">Lineup</a></td></tr>`).join('');
+    <td style="display:flex;gap:var(--space-2);justify-content:flex-end">
+      <a class="btn btn-secondary" style="font-size:12px;padding:3px 8px" href="/static/lineup.html?league_id=${current.id}&team_id=${t.id}${weeks[0] ? '&week_id=' + weeks[0].id : ''}">Lineup</a>
+      ${t.is_ai_owned
+        ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
+        : `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" title="Reassign team or convert to AI">Reassign</button>`}
+    </td></tr>`).join('');
+
+  document.querySelectorAll('[data-cm-assign-team]').forEach(btn => {
+    btn.onclick = () => {
+      const tid = Number(btn.getAttribute('data-cm-assign-team'));
+      const tname = btn.getAttribute('data-team-name');
+      const isAi = btn.getAttribute('data-is-ai') === '1';
+      AssignTeamModal.open({
+        leagueId: current.id,
+        teamId: tid,
+        teamName: tname,
+        isAi,
+        onAssigned: async () => {
+          await refreshLeague();
+        }
+      });
+    };
+  });
 }
 
 document.getElementById('create-btn').onclick = async () => {

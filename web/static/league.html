@@ -82,6 +82,7 @@
 <script src="/static/session.js"></script>
 <script src="/static/roster-lines.js"></script>
 <script src="/static/roster-grid.js"></script>
+<script src="/static/assign-team-modal.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -1325,14 +1326,49 @@ async function renderTeams() {
   $('content').innerHTML = Object.entries(byConf).map(([name, list]) => `
     <h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
-      ${list.map(t => `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);gap:6px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px"><strong style="font-family:var(--font-heading);font-size:16px">${tn(t.id)}</strong>${t.is_ai_owned ? '<span class="pill ai">AI</span>' : '<span class="pill">' + esc(t.owner_name || 'Manager') + '</span>'}</div>
-        <div class="muted" style="font-size:12px">${esc(t.program_size)} program · ${esc(t.season_goal)}</div>
-        <div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''} · ${money(t.weekly_budget)}/wk</div>
-        <div style="display:flex;gap:var(--space-2);margin-top:4px"><button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
-          ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}</div></div>`).join('')}
+      ${list.map(t => {
+        const commishAction = isCommissioner ? (
+          t.is_ai_owned
+            ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
+            : (t.owner_user_id !== me ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" data-email="${esc(t.owner_email || '')}" title="Reassign team or convert to AI">Reassign</button>` : '')
+        ) : '';
+        return `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap">
+            <strong style="font-family:var(--font-heading);font-size:16px">${tn(t.id)}</strong>
+            <div style="display:flex;gap:4px;align-items:center">
+              ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : '<span class="pill">' + esc(t.owner_name || 'Manager') + '</span>'}
+              ${commishAction}
+            </div>
+          </div>
+          <div class="muted" style="font-size:12px">${esc(t.program_size)} program · ${esc(t.season_goal)}</div>
+          <div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''} · ${money(t.weekly_budget)}/wk</div>
+          <div style="display:flex;gap:var(--space-2);margin-top:4px">
+            <button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
+            ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
     </div>`).join('');
   bindNav();
+
+  $('content').querySelectorAll('[data-assign-team]').forEach(btn => {
+    btn.onclick = () => {
+      const tid = Number(btn.getAttribute('data-assign-team'));
+      const tname = btn.getAttribute('data-team-name');
+      const isAi = btn.getAttribute('data-is-ai') === '1';
+      const curEmail = btn.getAttribute('data-email') || '';
+      AssignTeamModal.open({
+        leagueId: LEAGUE_ID,
+        teamId: tid,
+        teamName: tname,
+        isAi,
+        currentEmail: curEmail,
+        onAssigned: async () => {
+          await renderTeams();
+        }
+      });
+    };
+  });
 }
 
 // ---- start ------------------------------------------------------------------------------------------------------

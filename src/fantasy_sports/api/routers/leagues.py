@@ -10,8 +10,8 @@ from fantasy_sports.api.auth import assert_commissioner, current_user, require_c
 from fantasy_sports.api.schemas import (
     ConferenceOut, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
-    SandboxLeagueRequest, StandingsRow, TeamInviteOut, TeamInviteRequest,
-    TeamOut, TeamSetupResult, WeekOut,
+    SandboxLeagueRequest, StandingsRow, TeamAssignOut, TeamAssignRequest,
+    TeamInviteOut, TeamInviteRequest, TeamOut, TeamSetupResult, WeekOut,
 )
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
@@ -527,6 +527,82 @@ def invite_team_manager(
         email=email_val,
         invite_url=invite_url,
         status="invited",
+    )
+
+
+@router.post("/{league_id}/teams/{team_id}/assign", response_model=TeamAssignOut)
+def assign_team_manager(
+    league_id: int,
+    team_id: int,
+    payload: TeamAssignRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """Commissioner action: assigns an AI team (or reassigns a team) to a specific user or email,
+    or converts a team back to AI. Allowed at any point in the league lifecycle."""
+    league = assert_commissioner(db, user, league_id)
+    team = db.get(Team, team_id)
+    if team is None or team.league_id != league.id:
+        raise HTTPException(404, "Team not found in this league")
+
+    if payload.is_ai:
+        team.owner_user_id = None
+        team.is_ai_owned = True
+        if payload.team_name and payload.team_name.strip():
+            team.name = payload.team_name.strip()
+        db.commit()
+        db.refresh(team)
+        return TeamAssignOut(
+            team_id=team.id,
+            league_id=league.id,
+            team_name=team.name,
+            owner_user_id=None,
+            owner_name="AI",
+            owner_email=None,
+            is_ai_owned=True,
+            invite_url=None,
+            status="converted_to_ai",
+        )
+
+    target_user: User | None = None
+    if payload.user_id is not None:
+        target_user = db.get(User, payload.user_id)
+        if target_user is None:
+            raise HTTPException(404, f"User ID {payload.user_id} not found")
+    elif payload.email and payload.email.strip():
+        email_val = payload.email.strip().lower()
+        if "@" not in email_val or "." not in email_val:
+            raise HTTPException(400, "Please provide a valid email address")
+        target_user = db.query(User).filter(func.lower(User.email) == email_val).first()
+        if target_user is None:
+            target_user = User(
+                email=email_val,
+                display_name=email_val.split("@")[0],
+                password_hash=None,
+            )
+            db.add(target_user)
+            db.flush()
+    else:
+        raise HTTPException(400, "Either user_id or a valid email address is required")
+
+    team.owner_user_id = target_user.id
+    team.is_ai_owned = False
+    if payload.team_name and payload.team_name.strip():
+        team.name = payload.team_name.strip()
+    db.commit()
+    db.refresh(team)
+
+    invite_url = f"/static/join-league.html?league_id={league.id}&team_id={team.id}&email={target_user.email}"
+    return TeamAssignOut(
+        team_id=team.id,
+        league_id=league.id,
+        team_name=team.name,
+        owner_user_id=target_user.id,
+        owner_name=target_user.display_name,
+        owner_email=target_user.email,
+        is_ai_owned=False,
+        invite_url=invite_url,
+        status="assigned",
     )
 
 

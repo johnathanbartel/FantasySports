@@ -67,6 +67,7 @@ class TeamSummary(BaseModel):
     is_ai_owned: bool
     owner_user_id: int | None
     owner_name: str | None
+    owner_email: str | None = None
     conference_id: int | None
     conference_name: str | None
     season_goal: str
@@ -106,7 +107,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     ai_roster.tick(db, league_id)       # AI teams' due roster decisions (platform/ai/ai_roster.py)
     db.commit()
     draft = _status(db, league_id)
-    users = {u.id: u.display_name for u in db.query(User)}
+    user_map = {u.id: u for u in db.query(User)}
     confs = {c.id: c.name for c in db.query(Conference).filter_by(league_id=league_id)}
     counts: dict[int, int] = {}
     team_ids = [t.id for t in db.query(Team).filter_by(league_id=league_id)]
@@ -118,7 +119,10 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     teams = [
         TeamSummary(
             id=t.id, name=t.name, program_size=t.program_size, is_ai_owned=t.is_ai_owned,
-            owner_user_id=t.owner_user_id, owner_name=users.get(t.owner_user_id), conference_id=t.conference_id,
+            owner_user_id=t.owner_user_id,
+            owner_name=user_map[t.owner_user_id].display_name if t.owner_user_id in user_map else None,
+            owner_email=user_map[t.owner_user_id].email if t.owner_user_id in user_map else None,
+            conference_id=t.conference_id,
             conference_name=confs.get(t.conference_id), season_goal=t.season_goal,
             weekly_budget=STARTING_BUDGET_BY_PROGRAM_SIZE[t.program_size], roster_count=counts.get(t.id, 0),
             open_spots=max(0, limit - counts.get(t.id, 0)), poll_rank=poll_ranks.get(t.id),
@@ -132,7 +136,8 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     return OverviewOut(
         league_id=league.id, name=league.name, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
         roster_size=limit, commissioner_user_id=league.commissioner_user_id,
-        commissioner_name=users.get(league.commissioner_user_id), season_weeks=season.SEASON_WEEKS,
+        commissioner_name=user_map[league.commissioner_user_id].display_name if league.commissioner_user_id in user_map else None,
+        season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
         is_college=college, draft_state=draft_state(db, league_id), has_rankings=college, teams_set_schedule=college,

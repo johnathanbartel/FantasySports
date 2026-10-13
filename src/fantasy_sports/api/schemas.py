@@ -93,6 +93,25 @@ class TeamInviteOut(BaseModel):
     status: str = "invited"
 
 
+class TeamAssignRequest(BaseModel):
+    user_id: int | None = None
+    email: str | None = None
+    team_name: str | None = None
+    is_ai: bool = False
+
+
+class TeamAssignOut(BaseModel):
+    team_id: int
+    league_id: int
+    team_name: str
+    owner_user_id: int | None = None
+    owner_name: str | None = None
+    owner_email: str | None = None
+    is_ai_owned: bool
+    invite_url: str | None = None
+    status: str = "assigned"
+
+
 class LeagueOut(ORMModel):
     id: int
     name: str
