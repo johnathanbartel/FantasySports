@@ -609,10 +609,10 @@ function paintHockeyRoster() {
     </div>
 
     ${dropBar}
-    <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-4 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
+    <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-3 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
       <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
-        ${[1, 2, 3, 4].map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
+        ${Array.from({length: RosterGrid.LINES}, (_, i) => i + 1).map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
         ${grid.rows.map(r => `<tr><th scope="row" style="vertical-align:middle">${r.label}</th>${r.cells.map(c => `<td style="padding:4px">${cellBtn(c)}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div>
     ${reserveGroups.length ? `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)"><h4 style="margin:0 0 var(--space-2)">Not on a line</h4>

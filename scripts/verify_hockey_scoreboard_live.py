@@ -16,9 +16,14 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
 
 
 def check(condition: bool, message: str) -> None:
@@ -68,7 +73,7 @@ def main() -> None:
 
         league = League(
             id=1, name="Scoreboard Test League", commissioner_user_id=commish.id,
-            size=4, draft_rounds=24, series_length_days=7,
+            size=4, draft_rounds=18, series_length_days=7,
         )
         db.add(league)
         db.commit()

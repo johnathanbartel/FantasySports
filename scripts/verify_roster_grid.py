@@ -72,7 +72,7 @@ team = db.query(Team).filter_by(league_id=lg["id"]).order_by(Team.id).first()
 # ---- drafting fills the lines ----
 po = client.get(f"/teams/{team.id}/pecking-order").json()
 sizes = {g["position_group"]: len(g["ranked"]) for g in po["groups"]}
-check(sizes == {"C": 4, "W": 8, "D": 8, "G": 4}, f"all 24 drafted players are ranked on the four lines: {sizes}")
+check(sizes == {"C": 3, "W": 6, "D": 6, "G": 3}, f"all 18 drafted players are ranked on the three lines: {sizes}")
 check(all(not g["unranked"] or len(g["ranked"]) == g["max_depth"] for g in po["groups"]), "only players beyond a full group are left unranked")
 
 # ---- grid logic under Node ----
@@ -93,14 +93,14 @@ out.cross = G.swap(groups, {group: 'C', rank: 1}, {group: 'W', rank: 1});
 out.same = G.swap(groups, {group: 'W', rank: 1}, {group: 'W', rank: 1});
 out.empty = G.swap(groups, {group: 'G', rank: 5}, {group: 'G', rank: 1});
 const c = groups.find(g => g.position_group === 'C');
-out.emptyTarget = c.ranked.length < 4 ? G.swap(groups, {group: 'C', rank: 1}, {group: 'C', rank: c.ranked.length + 1}) : null;
+out.emptyTarget = c.ranked.length < 3 ? G.swap(groups, {group: 'C', rank: 1}, {group: 'C', rank: c.ranked.length + 1}) : null;
 process.stdout.write(JSON.stringify(out));
 """
 res = subprocess.run([shutil.which("node"), "-e", script, str(ROOT / "web/static/roster-grid.js")],
                      input=json.dumps(po["groups"]), capture_output=True, text=True)
 check(res.returncode == 0, f"grid logic runs under Node {res.stderr[:200]}")
 out = json.loads(res.stdout)
-check(out["labels"] == ["C", "W", "W", "D", "D", "G"] and out["lineCounts"] == [4] * 6, "six position rows by four lines")
+check(out["labels"] == ["C", "W", "W", "D", "D", "G"] and out["lineCounts"] == [3] * 6, "six position rows by three lines")
 check(out["line2Ranks"] == [2, 3, 4, 3, 4, 2], f"Line 2 holds C2, W3, W4, D3, D4, G2 {out['line2Ranks']}")
 check(all(out["line1"]), "Line 1 is full after the draft")
 check(out["cross"]["error"] and "can't play" in out["cross"]["error"], f"a cross-position swap is refused: {out['cross']['error']}")

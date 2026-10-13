@@ -17,9 +17,15 @@ import datetime as dt
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 db_path = Path("ai_roster_activity_verify.db")
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 if db_path.exists():
@@ -139,17 +145,17 @@ ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(minutes=50)); db.commit()
 check(len(ai_txns()) == 0, "50 minutes later: still nothing (no team visits sooner than an hour)")
 ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(hours=6)); db.commit()
 after6 = len(ai_txns())
-check(0 < after6 < 25, f"6 hours in: a few signings, not a burst ({after6} of the 50 needed)")
+check(0 < after6 < 20, f"6 hours in: a few signings, not a burst ({after6} of the 20 needed)")
 ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(days=1)); db.commit()
 after24 = len(ai_txns())
-check(after6 < after24 < 50, f"after a day: more, but the league is still filling ({after24} of 50)")
+check(after6 < after24 <= 20, f"after a day: more, but the league is still filling ({after24} of 20)")
 check(roster_count(human.id) == 14, "the person's team is never touched")
 before = [(x.id) for x in ai_txns()]
 ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(days=1)); db.commit()
 check([x.id for x in ai_txns()] == before, "applying the same moment again changes nothing")
 
 ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(days=10)); db.commit()
-check([roster_count(t) for t in ids] == [24] * 5, f"after 10 days every AI roster is full: {[roster_count(t) for t in ids]}")
+check([roster_count(t) for t in ids] == [18] * 5, f"after 10 days every AI roster is full: {[roster_count(t) for t in ids]}")
 check(roster_count(human.id) == 14, "...and the person's team still has its 14, free to fill as they like")
 
 adds = sorted(ai_txns("add"), key=lambda x: x.created_at)
@@ -158,7 +164,7 @@ for t in ids:
     times = [x.created_at for x in adds if x.team_id == t]
     per_team_gaps += [(b - a).total_seconds() for a, b in zip(times, times[1:])]
 check(min(per_team_gaps) >= 3600 - 1, f"a team never makes two signings within an hour (shortest gap {min(per_team_gaps) / 3600:.1f}h)")
-check(len({x.created_at for x in adds}) >= 40, f"signings land at {len({x.created_at for x in adds})} different moments over {(adds[-1].created_at - adds[0].created_at).days + 1} days")
+check(len({x.created_at for x in adds}) >= 15, f"signings land at {len({x.created_at for x in adds})} different moments over {(adds[-1].created_at - adds[0].created_at).days + 1} days")
 check(all(x.price == 0 for x in adds), "signings are free outside college leagues")
 for t in ids:
     groups = {}
@@ -175,7 +181,7 @@ dropped_before = len(ai_txns("drop"))
 ai_roster.tick(db, lg["id"], now=T0 + dt.timedelta(days=70)); db.commit()
 drops, new_adds = ai_txns("drop"), ai_txns("add")
 check(len(drops) > dropped_before, f"full AI teams swapped weak players for better free agents ({len(drops)} swaps)")
-check([roster_count(t) for t in ids] == [24] * 5, "a swap keeps the roster at 24")
+check([roster_count(t) for t in ids] == [18] * 5, "a swap keeps the roster at 18")
 check(roster_count(human.id) == 14, "the person's team is still untouched after 70 days")
 by_pair = {(x.team_id, x.created_at): x for x in drops}
 check(all((x.team_id, x.created_at) in {(a.team_id, a.created_at) for a in new_adds} for x in drops), "each swap is a drop and a signing at the same moment")

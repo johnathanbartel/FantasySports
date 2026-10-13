@@ -2,8 +2,8 @@
 NHL pecking order (docs/hockey_spec.md section 4): a team ranks its players per position group and
 each day's starters are resolved from that ranking.
 
-Depth: C and G rank 4 deep; W and D rank 8 deep. A daily game dresses 1 C, 2 W, 2 D, 1 G: the
-highest-ranked ACTIVE players of each group (W and D are pooled, so the top two active of the eight
+Depth: C and G rank 3 deep; W and D rank 6 deep. A daily game dresses 1 C, 2 W, 2 D, 1 G: the
+highest-ranked ACTIVE players of each group (W and D are pooled, so the top two active of the six
 dress), and the goalie must also be CONFIRMED as the starter. Activity and goalie confirmation are
 passed in as data; nothing here fetches from an NHL service, and nothing here scores anything.
 
@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from fantasy_sports.platform.db.models.core import LeagueUniverse, RosterEntry, Team, TeamPeckingOrder, Universe
 
 GROUPS = ("C", "W", "D", "G")
-DEPTH = {"C": 4, "W": 8, "D": 8, "G": 4}
+DEPTH = {"C": 3, "W": 6, "D": 6, "G": 3}
 STARTERS = {"C": 1, "W": 2, "D": 2, "G": 1}
 GROUP_BY_POSITION = {"C": "C", "W": "W", "LW": "W", "RW": "W", "D": "D", "G": "G"}
 

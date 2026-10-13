@@ -17,9 +17,14 @@ Verifies:
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
 
 os.environ["DATABASE_URL"] = "sqlite:///file:auth-join-smoke?mode=memory&cache=shared&uri=true"
 
@@ -120,19 +125,19 @@ def main():
             db.add(DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=p.id))
         db.commit()
 
-    # 9. Commissioner creates an NHL League (2 teams, 24 rounds for testing)
+    # 9. Commissioner creates an NHL League (2 teams, 18 rounds for testing)
     r = client.post("/leagues", headers={"Authorization": f"Bearer {commish_token}"}, json={
         "name": "Tonight NHL Draft League",
         "commissioner_user_id": commish_id,
         "universe_codes": ["nhl"],
         "size": 2,
-        "draft_rounds": 24,
+        "draft_rounds": 18,
         "draft_type": "snake",
     })
     check(r.status_code == 200, f"League creation failed: {r.text}")
     league = r.json()
     league_id = league["id"]
-    check(league["draft_rounds"] == 24)
+    check(league["draft_rounds"] == 18)
 
     # Commissioner adds their own team
     r = client.post("/teams", headers={"Authorization": f"Bearer {commish_token}"}, json={

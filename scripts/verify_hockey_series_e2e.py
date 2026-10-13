@@ -29,6 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 PY = sys.executable
 
+from unittest.mock import patch
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 
 def check(condition: bool, message: str) -> None:
     if not condition:
@@ -162,9 +166,9 @@ def main() -> None:
             bos, tor = RealTeam(universe_id=nhl.id, name="BOS", external_ref="BOS"), RealTeam(universe_id=nhl.id, name="TOR", external_ref="TOR")
             db.add_all([bos, tor])
             db.flush()
-            block = ["C", "LW", "RW", "D", "D", "G"] * 4          # 24 per block: 4 C, 4 LW, 4 RW, 8 D, 4 G
+            block = ["C", "LW", "RW", "D", "D", "G"] * 3          # 18 per block: 3 C, 3 LW, 3 RW, 6 D, 3 G
             positions: list[str] = []
-            for _ in range(15):                                    # 360 players
+            for _ in range(15):                                    # 270 players
                 b = block[:]
                 rng.shuffle(b)
                 positions += b
@@ -179,11 +183,11 @@ def main() -> None:
             real = {"bos": bos.id, "tor": tor.id}
         auth = {k: {"Authorization": f"Bearer {v}"} for k, v in tok.items()}
 
-        # ---- league creation: 12 teams, 24 rounds, 1 human + 11 AI --------------------------------------------------------
+        # ---- league creation: 12 teams, 18 rounds, 1 human + 11 AI --------------------------------------------------------
         r = client.post("/leagues", json={"name": "E2E NHL", "commissioner_user_id": human_id, "universe_codes": ["nhl"], "size": 12,
-                                          "draft_rounds": 24}, headers=auth["human"])
-        check(r.status_code == 200 and r.json()["series_length_days"] == 7 and r.json()["draft_rounds"] == 24 and r.json()["size"] == 12,
-              "league created: 12 teams, 24 rounds, 7-day series")
+                                          "draft_rounds": 18}, headers=auth["human"])
+        check(r.status_code == 200 and r.json()["series_length_days"] == 7 and r.json()["draft_rounds"] == 18 and r.json()["size"] == 12,
+              "league created: 12 teams, 18 rounds, 7-day series")
         league_id = r.json()["id"]
         r = client.post("/teams", json={"league_id": league_id, "name": "Human FC", "owner_user_id": human_id, "program_size": "large"}, headers=auth["human"])
         check(r.status_code == 200, "the human team is created")
@@ -193,11 +197,11 @@ def main() -> None:
         teams = sorted([human_team] + [t["id"] for t in r.json()])
         check(client.post(f"/leagues/{league_id}/ai-teams", headers=auth["intruder"]).status_code == 403, "only the commissioner may fill the league")
 
-        # ---- draft: 288 picks, timed clock, human position-aware, AI by the platform autopick ---------------------------------
+        # ---- draft: 216 picks, timed clock, human position-aware, AI by the platform autopick ---------------------------------
         r = client.post("/drafts/start", json={"league_id": league_id, "pick_seconds": 300}, headers=auth["human"])
         check(r.status_code == 200 and r.json()["pick_seconds"] == 300, "a timed snake draft starts")
         draft = r.json()["id"]
-        template = {"C": 4, "W": 8, "D": 8, "G": 4}
+        template = {"C": 3, "W": 6, "D": 6, "G": 3}
         group = po.GROUP_BY_POSITION
         have = Counter()
         steps = 0
@@ -219,15 +223,15 @@ def main() -> None:
             else:
                 assert client.post(f"/drafts/{draft}/autopick").status_code == 200
         picks = client.get(f"/drafts/{draft}/picks").json()
-        check(len(picks) == 288 and all(p["draftable_asset_id"] for p in picks) and len({p["draftable_asset_id"] for p in picks}) == 288,
-              "288 picks made, every player drafted once")
-        check(have == Counter(template), f"the human drafted the exact 24-slot template {dict(have)}")
+        check(len(picks) == 216 and all(p["draftable_asset_id"] for p in picks) and len({p["draftable_asset_id"] for p in picks}) == 216,
+              "216 picks made, every player drafted once")
+        check(have == Counter(template), f"the human drafted the exact 18-slot template {dict(have)}")
         per_team = Counter(p["team_id"] for p in picks)
-        check(set(per_team) == set(teams) and set(per_team.values()) == {24}, "every team has exactly 24 players")
+        check(set(per_team) == set(teams) and set(per_team.values()) == {18}, "every team has exactly 18 players")
         check(client.get(f"/drafts/{draft}").json()["status"] == "complete" and client.get(f"/drafts/{draft}/clock").json()["deadline_at"] is None,
               "the draft completes and clears its clock")
         an = client.get(f"/drafts/{draft}/announcements").json()
-        check(an["picks_made"] == 288 and len(an["announcements"]) == 288 and an["announcements"][0]["commentary"]["value_label"] == "unknown",
+        check(an["picks_made"] == 216 and len(an["announcements"]) == 216 and an["announcements"][0]["commentary"]["value_label"] == "unknown",
               "every pick has an announcement; with no stored points the commentary says there is no value call")
 
         # ---- pecking orders for all 12 teams -------------------------------------------------------------------------------------
@@ -253,7 +257,7 @@ def main() -> None:
         short = {tid: [g for g, n in cov.items() if n < po.STARTERS[g]] for tid, cov in coverage.items() if any(n < po.STARTERS[g] for g, n in cov.items())}
         check(len(coverage) == 12, "12 pecking orders stored (human team directly, AI teams through commissioner mode)")
         print(f"info  AI coverage by position group (platform autopick is position-blind): teams with a starter slot they cannot fill: {short or 'none'}")
-        check(coverage[human_team] == template, "the human team's depth chart is the full 4C/8W/8D/4G")
+        check(coverage[human_team] == template, "the human team's depth chart is the full 3C/6W/6D/3G")
         r = client.put(f"/teams/{human_team}/pecking-order", json={"assignments": {"C": [1]}}, headers=auth["intruder"])
         check(r.status_code == 403, "another user cannot change the human team's pecking order")
 

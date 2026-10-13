@@ -15,9 +15,15 @@ Offline checks (throwaway SQLite, TestClient) for non-college (NHL) leagues afte
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 db_path = Path("pro_league_flow_verify.db")
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 if db_path.exists():
@@ -79,8 +85,8 @@ def new_league(name, size, **extra):
 r = new_league("Short", 6, draft_rounds=5)
 check(r.status_code == 400 and "roster size" in r.json()["detail"], "fewer rounds than roster spots is refused for an NHL league")
 lg = new_league("Pro", 6).json()
-check(lg["draft_rounds"] == 24, "default rounds = 24 roster spots (6 starters + 18 bench)")
-big = new_league("Too big", 8).json()
+check(lg["draft_rounds"] == 18, "default rounds = 18 roster spots (6 starters + 12 bench)")
+big = new_league("Too big", 11).json()
 client.post(f"/leagues/{big['id']}/ai-teams", headers=auth)
 r = client.post("/drafts/start", json={"league_id": big["id"]})
 check(r.status_code == 400 and "pool" in r.json()["detail"], f"a pool that can't fill every roster spot blocks the draft: {r.json()['detail'][:70]}")
@@ -100,15 +106,15 @@ d = client.post("/drafts/start", json={"league_id": lg["id"]}).json()
 n = 0
 while client.post(f"/drafts/{d['id']}/autopick").status_code == 200:
     n += 1
-check(n == 144, f"144 picks made (6 teams x 24 rounds): {n}")
+check(n == 108, f"108 picks made (6 teams x 18 rounds): {n}")
 counts = [db.query(RosterEntry).filter_by(team_id=t.id).count() for t in db.query(Team).filter_by(league_id=lg["id"])]
-check(counts == [24] * 6, f"every team's roster is full: {counts}")
+check(counts == [18] * 6, f"every team's roster is full: {counts}")
 
 # ---- free agency opens immediately; schedule is generated ----
 ov = client.get(f"/leagues/{lg['id']}/overview").json()
 check(ov["free_agency_open"] and ov["draft_state"] == "complete" and ov["is_college"] is False, "free agency opens the moment the draft ends")
 fa = client.get(f"/leagues/{lg['id']}/free-agents").json()
-check(fa["open"] and len(fa["players"]) == 184 - 144 and all(p["asking_price"] == 0 for p in fa["players"]), "40 free agents, all free to sign")
+check(fa["open"] and len(fa["players"]) == 184 - 108 and all(p["asking_price"] == 0 for p in fa["players"]), "76 free agents, all free to sign")
 series = client.get(f"/leagues/{lg['id']}/series-schedule").json()["series"]
 check(len(series) == 5 * 3 and all(len(s["daily_games"]) == s["total_days"] for s in series),
       f"the series schedule was generated automatically ({len(series)} series, 5 rounds x 3 pairings)")
@@ -120,7 +126,7 @@ check(r["created"] is True and len(client.get(f"/leagues/{lg['id']}/series-sched
 
 # ---- points per game ----
 roster = client.get(f"/teams/{mine.id}/roster").json()
-check(len(roster) == 24 and all("points_per_game" in r for r in roster), "roster payload carries points per game")
+check(len(roster) == 18 and all("points_per_game" in r for r in roster), "roster payload carries points per game")
 check(all(r["points_per_game"] is None for r in roster), "with no stored credit there is no rate (never invented)")
 star = roster[0]
 for game, pts in ((901, 1.0), (902, 3.0)):
@@ -157,7 +163,7 @@ check(w["ranked"][-1]["player_id"] == victim["player_id"] if False else any(p["p
 r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": fa["players"][1]["draftable_asset_id"]}, headers=auth)
 check(r.status_code == 400 and "full" in r.json()["detail"], "a full roster can't sign more: drop first")
 
-# ---- a league created under the old 14-player roster follows the 24-player limit ----
+# ---- a league created under the old 14-player roster follows the 18-player limit ----
 from fantasy_sports.platform.db.models.core import League, RosterSlotDefinition, TeamPeckingOrder
 old = db.get(League, lg["id"])
 old.draft_rounds = 14                                                    # what the league stored when it was created
@@ -171,23 +177,23 @@ for t in db.query(Team).filter_by(league_id=lg["id"]):                   # every
 db.commit()
 db.expire_all()
 ov = client.get(f"/leagues/{lg['id']}/overview").json()
-check(ov["roster_size"] == 24, f"the league's roster limit reads 24, not its stored 14: {ov['roster_size']}")
+check(ov["roster_size"] == 18, f"the league's roster limit reads 18, not its stored 14: {ov['roster_size']}")
 mine_row = next(t for t in ov["teams"] if t["id"] == mine.id)
-check(mine_row["roster_count"] == 14 and mine_row["open_spots"] == 10, "a 14-man team shows 10 open spots")
+check(mine_row["roster_count"] == 14 and mine_row["open_spots"] == 4, "a 14-man team shows 4 open spots")
 summary = client.get(f"/teams/{mine.id}/free-agency/summary", headers=auth).json()
-check(summary["roster_size"] == 24 and summary["open_spots"] == 10, "free agency summary agrees")
+check(summary["roster_size"] == 18 and summary["open_spots"] == 4, "free agency summary agrees")
 fa = client.get(f"/leagues/{lg['id']}/free-agents").json()["players"]
-for p in fa[:10]:
+for p in fa[:4]:
     r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": p["draftable_asset_id"]}, headers=auth)
     assert r.status_code == 200, r.text
-check(db.query(RosterEntry).filter_by(team_id=mine.id).count() == 24, "the manager can sign up to 24 players")
-r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": fa[10]["draftable_asset_id"]}, headers=auth)
-check(r.status_code == 400 and "24" in r.json()["detail"], "...and no more than 24")
+check(db.query(RosterEntry).filter_by(team_id=mine.id).count() == 18, "the manager can sign up to 18 players")
+r = client.post(f"/teams/{mine.id}/free-agency/add", json={"draftable_asset_id": fa[4]["draftable_asset_id"]}, headers=auth)
+check(r.status_code == 400 and "18" in r.json()["detail"], "...and no more than 18")
 check(ov["ai_teams_with_open_spots"] == 5, "the five AI teams show open spots")
 r = client.post(f"/leagues/{lg['id']}/free-agency/ai-fill", headers=auth).json()
-check(r["total"] == 5 * 10, f"the commissioner's AI fill signs {r['total']} players: 10 for each AI team")
+check(r["total"] == 5 * 4, f"the commissioner's AI fill signs {r['total']} players: 4 for each AI team")
 counts = sorted(db.query(RosterEntry).filter_by(team_id=t.id).count() for t in db.query(Team).filter_by(league_id=lg["id"]))
-check(counts == [24] * 6, f"every roster is now 24: {counts}")
+check(counts == [18] * 6, f"every roster is now 18: {counts}")
 check(client.post(f"/leagues/{lg['id']}/free-agency/ai-fill", headers=auth).json()["total"] == 0, "running the AI fill again does nothing")
 
 # ---- pages ----

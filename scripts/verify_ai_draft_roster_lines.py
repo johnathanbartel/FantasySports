@@ -14,8 +14,14 @@ Offline checks (throwaway SQLite file, FastAPI TestClient) for the lineup-aware 
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 db_path = Path("ai_draft_roster_lines_verify.db")
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 if db_path.exists():
@@ -99,15 +105,15 @@ db.commit()
 pick = choose_pick(db, draft, team_ids[0], b)
 check(pick.position != "G", f"no second goalie while other starting spots are open: picked {pick.position}")
 
-# forced: a team holding W, W, D, D, G and a full bench (23 of 24 picks) has one pick left and one open starting spot (C),
+# forced: a team holding W, W, D, D, G and a full bench (17 of 18 picks) has one pick left and one open starting spot (C),
 # so it must take a centre even though a defenceman scores far more
 for pos, idx in (("LW", 0), ("RW", 0), ("D", 0), ("D", 1), ("G", 2),                     # starters except C
-                 *[("D", i) for i in range(2, 10)], *[("LW", i) for i in range(1, 5)], *[("RW", i) for i in range(1, 5)],
-                 ("G", 3), ("G", 4)):   # full bench (18)
+                 *[("D", i) for i in range(2, 6)], *[("LW", i) for i in range(1, 4)], *[("RW", i) for i in range(1, 4)],
+                 ("G", 3), ("G", 4)):   # full bench (12)
     db.add(RosterEntry(team_id=team_ids[1], draftable_asset_id=assets[pos][idx], acquired_via="draft"))
 db.commit()
 n_roster = db.query(RosterEntry).filter_by(team_id=team_ids[1]).count()
-check(n_roster == 23, f"setup: team has {n_roster} of 24")
+check(n_roster == 17, f"setup: team has {n_roster} of 18")
 forced = choose_pick(db, draft, team_ids[1], board(("D", 90), ("G", 80), ("C", 10), ("C", 5)))
 check(forced.position == "C", f"last pick goes to the open starting slot: picked {forced.position} over a D scoring 90")
 
@@ -144,13 +150,13 @@ for t in teams:
             g = {"LW": "W", "RW": "W"}.get(p["position"], p["position"])
             depth.setdefault(t, {}).setdefault(g, 0)
             depth[t][g] += 1
-check(all(d == {"C": 4, "W": 8, "D": 8, "G": 4} for d in depth.values()),
-      "every team drafts exactly the four lines' depth: C 4, W 8, D 8, G 4 (24 players)")
+check(all(d == {"C": 3, "W": 6, "D": 6, "G": 3} for d in depth.values()),
+      "every team drafts exactly the three lines' depth: C 3, W 6, D 6, G 3 (18 players)")
 
 # ---- C. lines layout ----
 codes = [(s["slot_code"], s["capacity"], s["is_starter"]) for s in sample["slots"]]
-check(codes == [("C", 1, True), ("W", 2, True), ("D", 2, True), ("G", 1, True), ("BENCH", 18, False)], f"slots: {codes}")
-check(all(len(s["players"]) == s["capacity"] for s in sample["slots"]), "all 24 spots filled after the draft")
+check(codes == [("C", 1, True), ("W", 2, True), ("D", 2, True), ("G", 1, True), ("BENCH", 12, False)], f"slots: {codes}")
+check(all(len(s["players"]) == s["capacity"] for s in sample["slots"]), "all 18 spots filled after the draft")
 empty = client.get(f"/teams/{new_league('Empty')['id'] and db.query(Team).order_by(Team.id.desc()).first().id}/lines").json()
 check(empty["starters_filled"] == 0 and empty["starters_total"] == 6, "a team with no picks shows 0 of 6 starting spots")
 check(client.get("/teams/99999/lines").status_code == 404, "unknown team is a 404")

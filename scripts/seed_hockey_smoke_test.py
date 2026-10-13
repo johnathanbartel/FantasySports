@@ -21,8 +21,14 @@ with the API venv:
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 db_path = Path(os.environ.get("HOCKEY_SMOKE_DB", "hockey_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 
@@ -75,7 +81,7 @@ def seed_reference_data(db):
             active=False,
         ),
     ]
-    for i in range(60):   # a draft fills every roster spot (24 per team), so the pool must cover 2 teams x 24
+    for i in range(60):   # a draft fills every roster spot (18 per team), so the pool must cover 2 teams x 18
         players.append(Player(universe_id=nhl.id, real_team_id=leafs.id, full_name=f"Depth Skater {i:02d}", position="C"))
     db.add_all(players)
     db.flush()

@@ -105,7 +105,8 @@
         </div>
         <div class="field" style="flex:1">
           <label for="draft-rounds">Draft rounds</label>
-          <input type="number" id="draft-rounds" min="1" value="20">
+          <input type="number" id="draft-rounds" min="1" value="20" disabled readonly style="background:var(--color-surface);cursor:not-allowed;opacity:0.85">
+          <span class="hint" id="draft-rounds-hint">Locked: set automatically by the sport's roster size.</span>
         </div>
       </div>
 
@@ -292,6 +293,33 @@ const isNfl = () => document.getElementById('universe').value === 'nfl';
 const isNhl = () => document.getElementById('universe').value === 'nhl';
 const isProSport = () => isNfl() || isNhl();
 
+function getSportRosterSize() {
+  const universe = document.getElementById('universe').value;
+  if (universe === 'nhl') return 18; // 3 lines of 6 (6 starters + 12 bench)
+  if (universe === 'nfl') {
+    const def = document.getElementById('defense-mode').value;
+    if (def === 'team') return 16;
+    if (def === 'individual') return 28;
+    return 19; // 'group' default
+  }
+  return 20; // College football (ncaaf)
+}
+
+function updateRosterRounds() {
+  const rounds = getSportRosterSize();
+  const input = document.getElementById('draft-rounds');
+  input.value = rounds;
+  input.disabled = true;
+  input.readOnly = true;
+  input.title = "Draft rounds depend solely on the selected sport's roster size";
+  const hint = document.getElementById('draft-rounds-hint');
+  if (hint) {
+    const u = document.getElementById('universe').value;
+    const desc = u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
+    hint.textContent = `Locked: set automatically to ${rounds} rounds by ${desc} roster size.`;
+  }
+}
+
 function updateUniverse() {
   const nfl = isNfl();
   const pro = isProSport();
@@ -299,8 +327,7 @@ function updateUniverse() {
   // Pro leagues have no recruiting-draft pricing data yet: snake only.
   document.getElementById('choice-recruit').style.display = pro ? 'none' : '';
   if (pro) document.querySelector('input[name=draft-type][value=snake]').checked = true;
-  document.getElementById('draft-rounds').disabled = pro;
-  document.getElementById('draft-rounds').title = pro ? 'Set by the selected sport roster size' : '';
+  updateRosterRounds();
   updateDraftTypeCards();
 }
 
@@ -321,6 +348,7 @@ function updateDraftTypeCards() {
 }
 document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = updateDraftTypeCards);
 document.getElementById('universe').onchange = updateUniverse;
+document.getElementById('defense-mode').onchange = updateRosterRounds;
 const requestedUniverse = new URLSearchParams(location.search).get('universe');
 if (['nfl', 'nhl'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
 updateUniverse();

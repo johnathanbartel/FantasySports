@@ -39,7 +39,7 @@ def main():
         draft_rounds=None,
         draft_type="snake",
     ), db, user)
-    assert league.draft_rounds == 24, league
+    assert league.draft_rounds == 18, league
 
     team = create_team(TeamCreateRequest(
         league_id=league.id,
@@ -62,7 +62,7 @@ def main():
         "W": (2, True, {"W", "LW", "RW"}),
         "D": (2, True, {"D"}),
         "G": (1, True, {"G"}),
-        "BENCH": (18, False, {"C", "W", "LW", "RW", "D", "G"}),
+        "BENCH": (12, False, {"C", "W", "LW", "RW", "D", "G"}),
     }
     same_nhl, inserted = seed_hockey_reference_data(db)
     assert same_nhl.id == nhl.id

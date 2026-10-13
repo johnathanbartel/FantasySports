@@ -44,9 +44,9 @@ Fantasy scoring is anchored strictly to real point-value contributions toward go
 
 ---
 
-## 4. Lineup Architecture: 6 Positions & The 4-Line Pecking Order
+## 4. Lineup Architecture: 6 Positions & The 3-Line Pecking Order
 
-To eliminate daily lineup churn, hockey implements a **4-Line Pecking Order System**.
+To eliminate daily lineup churn, hockey implements a **3-Line Pecking Order System**.
 
 ### 4.1 The 6-Position Starting Unit
 Every daily game features exactly 6 active starters per team:
@@ -55,22 +55,20 @@ Every daily game features exactly 6 active starters per team:
 - **2 Defensemen (D)**
 - **1 Goalie (G)**
 
-### 4.2 The 4-Line Depth Chart (24 Roster Spots)
-Each team carries **24 total player slots**, formatted as 4 full forward/defense lines and goalie tandems:
+### 4.2 The 3-Line Depth Chart (18 Roster Spots)
+Each team carries **18 total player slots**, formatted as 3 full forward/defense lines and goalie tandems (6 starters + 12 bench):
 
 | Line / Depth | Center (C) | Winger 1 (W) | Winger 2 (W) | Defense 1 (D) | Defense 2 (D) | Goalie (G) | Priority Status |
 |---|---|---|---|---|---|---|---|
 | **Line 1** | C1 | W1 | W2 | D1 | D2 | G1 | **Starting Lineup** |
 | **Line 2** | C2 | W3 | W4 | D3 | D4 | G2 | Priority Backup 1 |
 | **Line 3** | C3 | W5 | W6 | D5 | D6 | G3 | Priority Backup 2 |
-| **Line 4** | C4 | W7 | W8 | D7 | D8 | G4 | Priority Backup 3 |
 
 ### 4.3 AI Monte Carlo Roster & Coverage Math
-To guarantee every roster spot is filled over the course of an 82-game season without daily manual edits, we simulated schedule distributions across 1,023 available NHL players:
-- **Center (1 starter, depth 4)**: $95.5\%+$ full coverage on heavy game days.
-- **Wingers (2 starters, pooled depth 8)**: Ranking 8 wingers where the top 2 active dress for Line 1 yields $86.7\% - 97.0\%$ coverage on $\ge 8$-game slates.
-- **Defensemen (2 starters, pooled depth 8)**: Ranking 8 defensemen where the top 2 active dress for Line 1 yields $86.3\% - 97.0\%$ coverage on $\ge 8$-game slates.
-- **Goalie (1 starter, depth 4)**: Covers 1A starters plus tandem backups; yields $87.8\% - 94.5\%$ starting netminder coverage.
+In the 3-window weekly schedule (Sun–Tue, Wed–Thu, Fri–Sat), an average of 88.8% of NHL teams play in every fantasy window:
+- **Full Roster Fill Rate**: 96.6% across all 78 regular season games (only 2.7 empty slots per team per year).
+- **Skater Coverage (1 C, 2 W, 2 D)**: 99.2% full skater lineup fill rate with 3 lines of depth (3 C, 6 W, 6 D).
+- **Goalie (1 starter, depth 3)**: Yields 97.4% netminder starting coverage across all windows.
 - **Pecking Order Auto-Resolution**: At puck drop, the engine resolves the starting lineup without requiring daily manager intervention.
 
 ---
@@ -210,8 +208,8 @@ The frontend Schedule and Lineup interface is structured into three dedicated fu
    - Three persistent tabs for each weekly matchup:
      `[ Game 1: Sun–Tue ]  [ Game 2: Wed–Thu ]  [ Game 3: Fri–Sat ]`.
    - Each tab displays the date range, opponent team, and **The Game Score** in its dynamic heat color (`#FF1E27` for marquee matchups).
-2. **Pecking Order 4-Line Grid**:
-   - Displays the 4-line hierarchy (Line 1 Starters, Line 2–4 Backups).
+2. **Pecking Order 3-Line Grid**:
+   - Displays the 3-line hierarchy (Line 1 Starters, Line 2–3 Backups).
    - Inactive/idle players in that 2–3 day window are dimmed (`Idle`), visually explaining why Line 2 or 3 stepped into the starting spot.
 3. **Multi-Matchup Indicator & Flex Popover**:
    - When a player has 2 real NHL games in a window, their card displays:

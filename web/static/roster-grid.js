@@ -1,8 +1,8 @@
-// Pure view logic for the NHL roster grid (docs/hockey_spec.md section 4 and 9): positions down the left, Lines 1-4
+// Pure view logic for the NHL roster grid (docs/hockey_spec.md section 4 and 9): positions down the left, Lines 1-3
 // across, every cell a player who can be swapped with another player of the same position group. No DOM, no fetch;
 // checked under Node by scripts/verify_roster_grid.py. Shapes match GET/PUT /teams/{id}/pecking-order.
 (function (root) {
-  const LINES = 4;
+  const LINES = 3;
   // Rows top to bottom: the six starting spots of Line 1. perLine is how many players a position group puts on one line.
   const ROWS = [
     {label: 'C', group: 'C', slot: 0, perLine: 1},

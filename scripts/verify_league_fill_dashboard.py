@@ -12,7 +12,14 @@ import os
 import sys
 from pathlib import Path
 
+from unittest.mock import patch
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
+
 db_path = Path("league_fill_dashboard_verify.db")
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 if db_path.exists():
@@ -45,7 +52,7 @@ seed_nfl_reference_data(db)
 team = RealTeam(universe_id=nhl.id, name="Boston Bruins", external_ref="BOS")
 db.add(team)
 db.flush()
-for i in range(120):   # a 4-team NHL draft fills 4 x 24 roster spots
+for i in range(120):   # a 4-team NHL draft fills 4 x 18 roster spots
     p = Player(universe_id=nhl.id, real_team_id=team.id, full_name=f"Skater {i}", position="C")
     db.add(p)
     db.flush()

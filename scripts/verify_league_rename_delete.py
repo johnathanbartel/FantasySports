@@ -15,8 +15,14 @@ import os
 import sys
 from pathlib import Path
 
+from unittest.mock import patch
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+# Mock external network calls to keep test offline and hermetic
+_fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
+_fetch_patcher.start()
 
 DB_FILE = ROOT / "verify_rename_delete.db"
 if DB_FILE.exists():
@@ -238,7 +244,7 @@ def main():
         "commissioner_user_id": commish_id,
         "universe_codes": ["nhl"],
         "size": 4,
-        "draft_rounds": 24,
+        "draft_rounds": 18,
         "series_length_days": 7,
     }, headers=commish_headers)
     assert r_nhl.status_code == 200, r_nhl.text

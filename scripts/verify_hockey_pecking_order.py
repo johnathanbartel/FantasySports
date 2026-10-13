@@ -47,8 +47,8 @@ def main() -> None:
         client = TestClient(app)
 
         # ---- pure resolver -------------------------------------------------------------------
-        full = {"C": [1, 2, 3, 4], "W": [11, 12, 13, 14, 15, 16, 17, 18], "D": [21, 22, 23, 24, 25, 26, 27, 28],
-                "G": [31, 32, 33, 34]}
+        full = {"C": [1, 2, 3], "W": [11, 12, 13, 14, 15, 16], "D": [21, 22, 23, 24, 25, 26],
+                "G": [31, 32, 33]}
         everyone = frozenset(i for ids in full.values() for i in ids)
         r = po.resolve_starters(full, everyone, frozenset({31}))
         check(r.starters == {"C": [1], "W": [11, 12], "D": [21, 22], "G": [31]} and not r.vacancies,
@@ -142,13 +142,13 @@ def main() -> None:
               "GET returns the C/W/D/G groups")
         check(all(g["ranked"] == [] for g in body["groups"]) and len(body["groups"][1]["unranked"]) == 9,
               "a fresh team has nothing ranked; roster players (LW+RW as W) are listed unranked")
-        check([g["max_depth"] for g in body["groups"]] == [4, 8, 8, 4] and [g["starters"] for g in body["groups"]] == [1, 2, 2, 1],
-              "depth (4/8/8/4) and starter counts (1/2/2/1) are reported")
+        check([g["max_depth"] for g in body["groups"]] == [3, 6, 6, 3] and [g["starters"] for g in body["groups"]] == [1, 2, 2, 1],
+              "depth (3/6/6/3) and starter counts (1/2/2/1) are reported")
         check(client.get("/teams/99999/pecking-order").status_code == 404, "unknown team is 404")
         check(client.get(f"/teams/{team_ids['fb']}/pecking-order").status_code == 400, "non-NHL team is rejected")
 
         # ---- authorization -------------------------------------------------------------------
-        good = {"assignments": {"C": my["C"][:4], "W": my["W"][:8], "D": my["D"][:8], "G": my["G"][:4]}}
+        good = {"assignments": {"C": my["C"][:3], "W": my["W"][:6], "D": my["D"][:6], "G": my["G"][:3]}}
         check(client.put(url, json=good).status_code == 401, "reordering requires a signed-in user")
         check(client.put(url, json=good, headers=hdr(rival_tok)).status_code == 403, "another team's owner cannot reorder")
         check(client.put(url, json=good, headers=hdr(commish_tok)).status_code == 403,
@@ -162,24 +162,24 @@ def main() -> None:
 
         # ---- successful full ranking ---------------------------------------------------------
         r = client.put(url, json=good, headers=hdr(owner_tok))
-        check(r.status_code == 200, "owner sets a full 24-player pecking order")
+        check(r.status_code == 200, "owner sets a full 18-player pecking order")
         groups = {g["position_group"]: g for g in r.json()["groups"]}
-        check([len(groups[k]["ranked"]) for k in "CWDG"] == [4, 8, 8, 4], "4 C, 8 W, 8 D, 4 G ranked")
-        check([p["player_id"] for p in groups["W"]["ranked"]] == my["W"][:8]
-              and [p["priority"] for p in groups["W"]["ranked"]] == list(range(1, 9)), "priorities are 1..n in the order given")
-        check([p["player_id"] for p in groups["C"]["unranked"]] == [my["C"][4]] and len(groups["D"]["unranked"]) == 1,
+        check([len(groups[k]["ranked"]) for k in "CWDG"] == [3, 6, 6, 3], "3 C, 6 W, 6 D, 3 G ranked")
+        check([p["player_id"] for p in groups["W"]["ranked"]] == my["W"][:6]
+              and [p["priority"] for p in groups["W"]["ranked"]] == list(range(1, 7)), "priorities are 1..n in the order given")
+        check([p["player_id"] for p in groups["C"]["unranked"]] == my["C"][3:] and len(groups["D"]["unranked"]) == 3,
               "roster players beyond the depth stay unranked")
 
         # ---- reordering, atomicity -----------------------------------------------------------
         before = client.get(url).json()
-        swapped = list(reversed(my["W"][:8]))
+        swapped = list(reversed(my["W"][:6]))
         r = client.put(url, json={"assignments": {"W": swapped}}, headers=hdr(owner_tok))
         after = {g["position_group"]: g for g in r.json()["groups"]}
         check([p["player_id"] for p in after["W"]["ranked"]] == swapped, "reordering one group re-ranks it")
         check(after["C"] == {g["position_group"]: g for g in before["groups"]}["C"] and
               after["G"] == {g["position_group"]: g for g in before["groups"]}["G"], "groups not named are untouched")
         # swap in an unranked player and drop one
-        newc = [my["C"][4], my["C"][0], my["C"][1]]
+        newc = [my["C"][3], my["C"][0], my["C"][1]]
         r = client.put(url, json={"assignments": {"C": newc}}, headers=hdr(owner_tok))
         check([p["player_id"] for p in r.json()["groups"][0]["ranked"]] == newc and
               [p["player_id"] for p in r.json()["groups"][0]["unranked"]] == sorted(set(my["C"]) - set(newc), key=lambda i: (f"Mine C{my['C'].index(i) + 1}", i)),
@@ -194,8 +194,8 @@ def main() -> None:
             "foreign roster player": {"C": [foreign_c]},
             "ineligible position (W in C)": {"C": [my["W"][0]]},
             "ineligible position (G in D)": {"D": [my["G"][0]]},
-            "too deep (5 C)": {"C": my["C"][:5]},
-            "too deep (9 D)": {"D": my["D"][:9]},
+            "too deep (4 C)": {"C": my["C"][:4]},
+            "too deep (7 D)": {"D": my["D"][:7]},
             "unknown group": {"X": [my["C"][0]]},
             "empty request": {},
         }
@@ -255,8 +255,8 @@ def main() -> None:
         check([p["player_id"] for p in out["starters"]["W"]] == [my["W"][1], my["W"][2]], "W pooled depth: W1 out -> W2 and W3")
         check([p["player_id"] for p in out["starters"]["D"]] == [my["D"][1], my["D"][2]], "D pooled depth: D1 out -> D2 and D3")
         check([p["player_id"] for p in out["starters"]["G"]] == [my["G"][1]], "G vertical depth: confirmed G2 starts when G1 is out")
-        out = resolve(everyone_ids, [my["G"][3]])
-        check([p["player_id"] for p in out["starters"]["G"]] == [my["G"][3]], "an unconfirmed higher goalie is passed over for the confirmed G4")
+        out = resolve(everyone_ids, [my["G"][2]])
+        check([p["player_id"] for p in out["starters"]["G"]] == [my["G"][2]], "an unconfirmed higher goalie is passed over for the confirmed G3")
         out = resolve(everyone_ids, [])
         check(out["starters"]["G"] == [] and out["vacancies"] == [{"position_group": "G", "slot": 1, "reason": "NO_CONFIRMED_GOALIE"}],
               "no confirmed goalie -> explicit vacancy, other positions still fill")
@@ -265,7 +265,7 @@ def main() -> None:
         out = resolve([foreign_c, free_agent_c], [])
         check(out["starters"]["C"] == [], "ids that are not on this team's ranking never start")
         # reordering changes who starts
-        client.put(url, json={"assignments": {"W": [my["W"][5], my["W"][4]] + my["W"][:4] + my["W"][6:8]}}, headers=hdr(owner_tok))
+        client.put(url, json={"assignments": {"W": [my["W"][5], my["W"][4]] + my["W"][:4]}}, headers=hdr(owner_tok))
         out = resolve(everyone_ids, [my["G"][0]])
         check([p["player_id"] for p in out["starters"]["W"]] == [my["W"][5], my["W"][4]], "a reorder changes the resolved starters")
 
