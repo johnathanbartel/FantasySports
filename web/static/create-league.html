@@ -128,41 +128,45 @@
     </div>
 
     <div id="step-team" class="card elev-sm" style="padding:var(--space-5);display:none">
-      <p class="text-muted" style="margin-top:0" id="team-league-summary"></p>
-
-      <div class="field">
-        <label for="team-name">Team name</label>
-        <input type="text" id="team-name" placeholder="e.g. The Bulldogs" value="My Team">
-      </div>
-
-      <div class="field">
-        <label for="program-size">Program size</label>
-        <select id="program-size">
-          <option value="large" selected>Large - Win the championship</option>
-          <option value="moderate">Moderate - Make the playoffs</option>
-          <option value="small">Small - Win the conference</option>
-        </select>
-        <span class="hint">Sets your recruiting/auction budget, conference, and season goal.</span>
-      </div>
-
-      <div class="field">
-        <label>Ownership</label>
-        <div style="display:flex;flex-direction:column;gap:var(--space-2)">
-          <label class="choice-card selected" id="choice-human">
-            <input type="radio" name="owner-type" value="human" checked>
-            <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight)">I own this team</span>
-          </label>
-          <label class="choice-card" id="choice-ai">
-            <input type="radio" name="owner-type" value="ai">
-            <span style="font-family:var(--font-heading);font-weight:var(--font-heading-weight)">AI-owned team</span>
-          </label>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4)">
+        <div>
+          <h2 style="margin:0 0 var(--space-1);font-size:22px">Configure League Teams</h2>
+          <p class="text-muted" style="margin:0;font-size:13px" id="team-league-summary"></p>
+        </div>
+        <div style="display:flex;gap:var(--space-2);flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" id="bulk-ai-btn">Set all others to AI</button>
+          <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" id="bulk-invite-btn">Set all others to Invite</button>
         </div>
       </div>
 
+      <div id="team-slots-container" style="display:flex;flex-direction:column;gap:var(--space-4);margin-bottom:var(--space-5)"></div>
+
       <div style="display:flex;gap:var(--space-3)">
-        <button class="btn btn-secondary" id="back-btn">Back</button>
-        <button class="btn btn-primary" style="flex:1" id="create-team-btn">Create team</button>
+        <button class="btn btn-secondary" id="back-btn" type="button">Back</button>
+        <button class="btn btn-primary" style="flex:1" id="save-teams-btn" type="button">Save Teams & Send Invites</button>
       </div>
+    </div>
+
+    <!-- Step 3: Invites & Launch -->
+    <div id="step-invites" class="card elev-sm" style="padding:var(--space-5);display:none">
+      <div style="margin-bottom:var(--space-4)">
+        <span class="tag tag-accent" style="margin-bottom:var(--space-2)">Setup Complete</span>
+        <h2 style="margin:0 0 var(--space-1);font-size:22px">All Teams Created & Ready!</h2>
+        <p class="text-muted" style="margin:0;font-size:13px">Your league is fully populated. Share invites with your managers below or proceed straight to the draft board.</p>
+      </div>
+
+      <div id="invites-summary-list" style="display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-5)"></div>
+
+      <div style="background:var(--color-bg);border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3);margin-bottom:var(--space-5)">
+        <div style="font-weight:600;font-size:13px;margin-bottom:4px">General League Invite Link</div>
+        <div style="display:flex;gap:var(--space-2);align-items:center">
+          <input type="text" id="general-invite-link" readonly style="flex:1;padding:6px 10px;font-size:13px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md);color:var(--color-text)">
+          <button type="button" class="btn btn-secondary" id="copy-general-link-btn" style="font-size:13px">Copy</button>
+        </div>
+        <span id="general-copied-msg" class="text-muted" style="font-size:12px;display:none;color:var(--color-accent);margin-top:4px">Copied to clipboard!</span>
+      </div>
+
+      <button type="button" class="btn btn-primary btn-block" style="font-size:16px;padding:var(--space-3)" id="go-draft-board-btn">Continue to Draft Board</button>
     </div>
 
   </div>
@@ -181,6 +185,16 @@ function showError(msg) {
 let league = null; // LeagueOut, once step 1 succeeds
 let leagueUser = null;
 
+const DEFAULT_AI_NAMES = [
+  "Ridgeline Rams", "Harbor City Hawks", "Prairie Thunder", "Summit State Stags",
+  "Iron Valley Bears", "Gulf Coast Gators", "Cascade Wolves", "Delta Ravens",
+  "Bluegrass Bandits", "Mesa Scorpions", "Lakeshore Lynx", "Timberline Tigers",
+  "Capitol Comets", "Sunbelt Stallions", "Northern Pines", "Redrock Raptors",
+  "Silverpeak Sentinels", "Frontier Falcons", "Badland Badgers", "Granite Grizzlies",
+];
+
+const PROGRAM_SIZES = ['large', 'moderate', 'small'];
+
 const isNfl = () => document.getElementById('universe').value === 'nfl';
 const isNhl = () => document.getElementById('universe').value === 'nhl';
 const isProSport = () => isNfl() || isNhl();
@@ -194,7 +208,6 @@ function updateUniverse() {
   if (pro) document.querySelector('input[name=draft-type][value=snake]').checked = true;
   document.getElementById('draft-rounds').disabled = pro;
   document.getElementById('draft-rounds').title = pro ? 'Set by the selected sport roster size' : '';
-  document.getElementById('program-size').closest('.field').style.display = pro ? 'none' : '';
   updateDraftTypeCards();
 }
 
@@ -219,13 +232,116 @@ const requestedUniverse = new URLSearchParams(location.search).get('universe');
 if (['nfl', 'nhl'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
 updateUniverse();
 
-function updateOwnerTypeCards() {
-  const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
-  document.getElementById('choice-human').classList.toggle('selected', isHuman);
-  document.getElementById('choice-ai').classList.toggle('selected', !isHuman);
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
-document.querySelectorAll('input[name=owner-type]').forEach(r => r.onchange = updateOwnerTypeCards);
-updateOwnerTypeCards();
+
+function renderTeamSlots(leagueSize) {
+  const container = document.getElementById('team-slots-container');
+  container.innerHTML = '';
+  const pro = isProSport();
+
+  // Slot 1: Commissioner
+  const commishName = (leagueUser && leagueUser.display_name ? leagueUser.display_name + "'s Team" : "My Team");
+  const slot1 = document.createElement('div');
+  slot1.className = 'card';
+  slot1.style.border = '1px solid var(--color-accent)';
+  slot1.style.background = 'color-mix(in srgb, var(--color-accent) 4%, var(--color-surface))';
+  slot1.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+      <strong style="font-size:15px">Team 1 (Your Team)</strong>
+      <span class="tag tag-accent">Commissioner</span>
+    </div>
+    <div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+      <div class="field" style="flex:2;min-width:200px;margin-bottom:0">
+        <label for="slot-name-1">Team name</label>
+        <input type="text" id="slot-name-1" value="${esc(commishName)}" maxlength="80">
+      </div>
+      <div class="field" style="flex:1;min-width:140px;margin-bottom:0;display:${pro ? 'none' : 'flex'}">
+        <label for="slot-prog-1">Program size</label>
+        <select id="slot-prog-1">
+          <option value="large" selected>Large</option>
+          <option value="moderate">Moderate</option>
+          <option value="small">Small</option>
+        </select>
+      </div>
+    </div>
+  `;
+  container.appendChild(slot1);
+
+  // Slots 2 to N
+  for (let i = 2; i <= leagueSize; i++) {
+    const defaultName = DEFAULT_AI_NAMES[(i - 2) % DEFAULT_AI_NAMES.length];
+    const defaultProg = PROGRAM_SIZES[(i - 1) % 3];
+    const slotDiv = document.createElement('div');
+    slotDiv.className = 'card';
+    slotDiv.style.border = '1px solid var(--color-divider)';
+    slotDiv.id = `slot-card-${i}`;
+    slotDiv.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2);flex-wrap:wrap;gap:var(--space-2)">
+        <strong style="font-size:15px">Team ${i}</strong>
+        <div style="display:flex;gap:var(--space-3);align-items:center">
+          <label style="font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+            <input type="radio" name="slot-type-${i}" value="ai" checked onchange="onSlotTypeChange(${i})">
+            <span>AI Team</span>
+          </label>
+          <label style="font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+            <input type="radio" name="slot-type-${i}" value="invite" onchange="onSlotTypeChange(${i})">
+            <span>Assign Email & Invite</span>
+          </label>
+        </div>
+      </div>
+      <div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+        <div class="field" style="flex:2;min-width:200px;margin-bottom:0">
+          <label for="slot-name-${i}">Team name</label>
+          <input type="text" id="slot-name-${i}" value="${esc(defaultName)}" maxlength="80">
+        </div>
+        <div class="field" style="flex:1;min-width:140px;margin-bottom:0;display:${pro ? 'none' : 'flex'}">
+          <label for="slot-prog-${i}">Program size</label>
+          <select id="slot-prog-${i}">
+            <option value="large" ${defaultProg === 'large' ? 'selected' : ''}>Large</option>
+            <option value="moderate" ${defaultProg === 'moderate' ? 'selected' : ''}>Moderate</option>
+            <option value="small" ${defaultProg === 'small' ? 'selected' : ''}>Small</option>
+          </select>
+        </div>
+      </div>
+      <div id="slot-email-field-${i}" class="field" style="display:none;margin-top:var(--space-2);margin-bottom:0">
+        <label for="slot-email-${i}">Manager email</label>
+        <input type="email" id="slot-email-${i}" placeholder="manager@example.com">
+        <span class="hint">An invitation link will be created for this manager to join and claim this team.</span>
+      </div>
+    `;
+    container.appendChild(slotDiv);
+  }
+}
+
+function onSlotTypeChange(idx) {
+  const isInvite = document.querySelector(`input[name="slot-type-${idx}"]:checked`).value === 'invite';
+  const emailField = document.getElementById(`slot-email-field-${idx}`);
+  if (emailField) emailField.style.display = isInvite ? 'flex' : 'none';
+}
+
+document.getElementById('bulk-ai-btn').onclick = () => {
+  if (!league) return;
+  for (let i = 2; i <= league.size; i++) {
+    const radio = document.querySelector(`input[name="slot-type-${i}"][value="ai"]`);
+    if (radio) {
+      radio.checked = true;
+      onSlotTypeChange(i);
+    }
+  }
+};
+
+document.getElementById('bulk-invite-btn').onclick = () => {
+  if (!league) return;
+  for (let i = 2; i <= league.size; i++) {
+    const radio = document.querySelector(`input[name="slot-type-${i}"][value="invite"]`);
+    if (radio) {
+      radio.checked = true;
+      onSlotTypeChange(i);
+    }
+  }
+};
 
 document.getElementById('create-league-btn').onclick = async () => {
   showError('');
@@ -258,12 +374,15 @@ document.getElementById('create-league-btn').onclick = async () => {
         recruiting_period_seconds: Math.max(1, Math.round(Number(document.getElementById('period-length').value) * Number(document.getElementById('period-unit').value))),
       }),
     });
+
     document.getElementById('team-league-summary').textContent =
-      `Joining "${league.name}" - ${league.draft_type === 'recruit' ? 'recruiting period' : 'snake'} draft.`;
+      `Configuring ${league.size} teams for "${league.name}". Indicate which teams are AI or assign manager emails.`;
+    renderTeamSlots(league.size);
+
     document.getElementById('step-league').style.display = 'none';
     document.getElementById('step-team').style.display = 'block';
     document.getElementById('step-indicator').textContent = 'Step 2 of 2';
-    document.getElementById('step-heading').textContent = 'Set up your team';
+    document.getElementById('step-heading').textContent = 'Set up league teams';
   } catch (e) {
     showError(e.message);
   }
@@ -276,35 +395,141 @@ document.getElementById('back-btn').onclick = () => {
   document.getElementById('step-heading').textContent = 'Create your league';
 };
 
-document.getElementById('create-team-btn').onclick = async () => {
+document.getElementById('save-teams-btn').onclick = async () => {
   showError('');
-  const name = document.getElementById('team-name').value.trim();
-  if (!name) return showError('Team name is required.');
-  const isHuman = document.querySelector('input[name=owner-type]:checked').value === 'human';
+  const teamsPayload = [];
+
+  // Team 1 (Commissioner)
+  const t1Name = document.getElementById('slot-name-1').value.trim();
+  if (!t1Name) return showError('Team 1 requires a name.');
+  teamsPayload.push({
+    name: t1Name,
+    is_commissioner: true,
+    is_ai: false,
+    program_size: document.getElementById('slot-prog-1') ? document.getElementById('slot-prog-1').value : 'large',
+  });
+
+  // Teams 2..N
+  for (let i = 2; i <= league.size; i++) {
+    const tName = document.getElementById(`slot-name-${i}`).value.trim();
+    if (!tName) return showError(`Team ${i} requires a name.`);
+    const isAi = document.querySelector(`input[name="slot-type-${i}"]:checked`).value === 'ai';
+    let emailVal = null;
+    if (!isAi) {
+      emailVal = document.getElementById(`slot-email-${i}`).value.trim().toLowerCase();
+      if (!emailVal || !emailVal.includes('@') || !emailVal.includes('.')) {
+        return showError(`Please provide a valid email address for Team ${i} ("${tName}").`);
+      }
+    }
+    teamsPayload.push({
+      name: tName,
+      is_commissioner: false,
+      is_ai: isAi,
+      email: emailVal,
+      program_size: document.getElementById(`slot-prog-${i}`) ? document.getElementById(`slot-prog-${i}`).value : 'large',
+    });
+  }
 
   try {
-    const team = await api('/teams', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        league_id: league.id,
-        name,
-        program_size: document.getElementById('program-size').value,
-        owner_user_id: isHuman ? leagueUser.user_id : null,
-        is_ai_owned: !isHuman,
-      }),
+    const res = await api(`/leagues/${league.id}/teams-setup`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ teams: teamsPayload }),
     });
 
-    if (isProSport()) {
-      location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${team.id}`;
-    } else if (league.draft_type === 'recruit') {
-      location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${team.id}`;
-    } else {
-      location.href = `/static/roster.html?league_id=${league.id}&team_id=${team.id}`;
-    }
-  } catch (e) {
-    showError(e.message);
+    document.getElementById('step-team').style.display = 'none';
+    document.getElementById('step-invites').style.display = 'block';
+    document.getElementById('step-indicator').textContent = 'Step 2 Complete';
+    document.getElementById('step-heading').textContent = 'Teams Configured & Ready';
+
+    renderInvitesSummary(res.teams);
+  } catch (err) {
+    showError(err.message);
   }
 };
+
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  }).catch(() => prompt('Copy invite link:', text));
+}
+
+function renderInvitesSummary(createdTeams) {
+  const list = document.getElementById('invites-summary-list');
+  list.innerHTML = '';
+  const generalUrl = `${location.origin}/static/join-league.html?league_id=${league.id}`;
+  document.getElementById('general-invite-link').value = generalUrl;
+
+  const commishTeam = createdTeams.find(t => !t.is_ai_owned && !t.invite_url) || createdTeams[0];
+  const commishTeamId = commishTeam ? commishTeam.id : '';
+
+  document.getElementById('copy-general-link-btn').onclick = () => {
+    navigator.clipboard.writeText(generalUrl).then(() => {
+      document.getElementById('general-copied-msg').style.display = 'block';
+      setTimeout(() => document.getElementById('general-copied-msg').style.display = 'none', 3000);
+    }).catch(() => prompt('Copy invite link:', generalUrl));
+  };
+
+  createdTeams.forEach((t, idx) => {
+    const itemDiv = document.createElement('div');
+    itemDiv.className = 'card';
+    itemDiv.style.border = '1px solid var(--color-divider)';
+    itemDiv.style.padding = 'var(--space-3)';
+
+    if (idx === 0) {
+      itemDiv.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong>${esc(t.name)}</strong>
+            <span class="text-muted" style="font-size:13px;display:block">Managed by you (Commissioner)</span>
+          </div>
+          <span class="tag tag-accent">Ready</span>
+        </div>
+      `;
+    } else if (t.is_ai_owned) {
+      itemDiv.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong>${esc(t.name)}</strong>
+            <span class="text-muted" style="font-size:13px;display:block">AI controlled team</span>
+          </div>
+          <span class="tag tag-neutral">AI Ready</span>
+        </div>
+      `;
+    } else {
+      const fullInviteUrl = `${location.origin}${t.invite_url}`;
+      const mailSubject = encodeURIComponent(`Invitation to join ${league.name}`);
+      const mailBody = encodeURIComponent(`You've been invited to manage "${t.name}" in ${league.name} on Fantasy Sports Company!\n\nClaim your team and join the draft room here:\n${fullInviteUrl}`);
+      const mailtoLink = `mailto:${encodeURIComponent(t.email)}?subject=${mailSubject}&body=${mailBody}`;
+
+      itemDiv.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--space-2)">
+          <div>
+            <strong>${esc(t.name)}</strong>
+            <span class="text-muted" style="font-size:13px;display:block">Assigned to: ${esc(t.email)}</span>
+          </div>
+          <div style="display:flex;gap:var(--space-2);flex-wrap:wrap">
+            <a href="${mailtoLink}" class="btn btn-secondary" style="font-size:12px;padding:4px 8px">Send via Email App</a>
+            <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 8px" onclick="copyText('${fullInviteUrl}', this)">Copy Invite Link</button>
+          </div>
+        </div>
+      `;
+    }
+    list.appendChild(itemDiv);
+  });
+
+  document.getElementById('go-draft-board-btn').onclick = () => {
+    if (isProSport()) {
+      location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${commishTeamId}`;
+    } else if (league.draft_type === 'recruit') {
+      location.href = `/static/start-recruiting.html?league_id=${league.id}&team_id=${commishTeamId}`;
+    } else {
+      location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${commishTeamId}`;
+    }
+  };
+}
 </script>
 </body>
 </html>

@@ -65,7 +65,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
     existing = db.query(User).filter(func.lower(User.email) == email).first()
     if existing is not None:
-        raise HTTPException(409, "An account with that email already exists")
+        if existing.password_hash is not None:
+            raise HTTPException(409, "An account with that email already exists")
+        existing.password_hash = hash_password(password)
+        if display_name:
+            existing.display_name = display_name
+        db.commit()
+        db.refresh(existing)
+        session = create_session(db, existing.id)
+        return SessionOut(token=session.token, user_id=existing.id, display_name=existing.display_name, email=existing.email)
 
     user = User(
         email=email,

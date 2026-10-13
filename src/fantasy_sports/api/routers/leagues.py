@@ -3,17 +3,22 @@ from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
 from fantasy_sports.api.schemas import (
-    ConferenceOut, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, RosterSlotOut, SandboxLeagueRequest, StandingsRow, TeamOut, WeekOut,
+    ConferenceOut, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
+    LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
+    SandboxLeagueRequest, StandingsRow, TeamInviteOut, TeamInviteRequest,
+    TeamOut, TeamSetupResult, WeekOut,
 )
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    AuctionDraft, Conference, Draft, League, LeagueUniverse, RecruitingDraft, RecruitingSettings,
-    RosterSlotDefinition, Team, Universe, User, Week, WeeklyMatchup,
+    AuctionDraft, Conference, Draft, League, LeagueUniverse, LineupEntry,
+    RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition,
+    Team, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.league_features import draft_state
@@ -356,6 +361,173 @@ def fill_with_ai_teams(league_id: int, db: Session = Depends(get_db), user: User
         created.append(team)
     db.commit()
     return created
+
+
+@router.get("/defaults/ai-team-names", response_model=list[str])
+def get_default_ai_team_names():
+    return AI_TEAM_NAMES
+
+
+@router.post("/{league_id}/teams-setup", response_model=LeagueTeamsSetupResponse)
+def setup_league_teams(
+    league_id: int, payload: LeagueTeamsSetupRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: sets up all teams for the league in the league creation wizard.
+    For each team, indicates if the team is AI or assigns an email to the team, and generates
+    invitations for human managers."""
+    league = assert_commissioner(db, user, league_id)
+
+    if len(payload.teams) != league.size:
+        raise HTTPException(
+            400, f"Expected exactly {league.size} teams for this league, but received {len(payload.teams)}"
+        )
+
+    draft = db.query(Draft).filter(Draft.league_id == league_id).first()
+    if draft and draft.status != "pending":
+        raise HTTPException(400, "Draft has already started; teams cannot be reconfigured")
+
+    # If teams already exist in this league (e.g. commissioner re-configuring before draft),
+    # replace them
+    existing_teams = db.query(Team).filter(Team.league_id == league_id).all()
+    if existing_teams:
+        team_ids = [t.id for t in existing_teams]
+        db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(LineupEntry).filter(LineupEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
+        for t in existing_teams:
+            db.delete(t)
+        db.flush()
+
+    results: list[TeamSetupResult] = []
+    has_commissioner = False
+
+    for item in payload.teams:
+        team_name = item.name.strip()
+        if not team_name:
+            raise HTTPException(400, "Every team must have a name")
+
+        prog_size = item.program_size if item.program_size in PROGRAM_SIZES else "large"
+        conference = conferences.assign_team_to_conference(db, league.id, prog_size)
+
+        if item.is_commissioner:
+            has_commissioner = True
+            team = Team(
+                league_id=league.id,
+                name=team_name,
+                owner_user_id=user.id,
+                is_ai_owned=False,
+                program_size=prog_size,
+                conference_id=conference.id,
+            )
+            db.add(team)
+            db.flush()
+            results.append(TeamSetupResult(
+                id=team.id,
+                name=team.name,
+                is_ai_owned=False,
+                owner_user_id=user.id,
+                email=user.email,
+                program_size=prog_size,
+                invite_url=None,
+            ))
+        elif item.is_ai:
+            team = Team(
+                league_id=league.id,
+                name=team_name,
+                owner_user_id=None,
+                is_ai_owned=True,
+                program_size=prog_size,
+                conference_id=conference.id,
+            )
+            db.add(team)
+            db.flush()
+            results.append(TeamSetupResult(
+                id=team.id,
+                name=team.name,
+                is_ai_owned=True,
+                owner_user_id=None,
+                email=None,
+                program_size=prog_size,
+                invite_url=None,
+            ))
+        else:
+            email_val = (item.email or "").strip().lower()
+            if not email_val or "@" not in email_val or "." not in email_val:
+                raise HTTPException(400, f"Please provide a valid email address for team '{team_name}'")
+
+            target_user = db.query(User).filter(func.lower(User.email) == email_val).first()
+            if target_user is None:
+                target_user = User(
+                    email=email_val,
+                    display_name=email_val.split("@")[0],
+                    password_hash=None,
+                )
+                db.add(target_user)
+                db.flush()
+
+            team = Team(
+                league_id=league.id,
+                name=team_name,
+                owner_user_id=target_user.id,
+                is_ai_owned=False,
+                program_size=prog_size,
+                conference_id=conference.id,
+            )
+            db.add(team)
+            db.flush()
+            invite_url = f"/static/join-league.html?league_id={league.id}&team_id={team.id}&email={email_val}"
+            results.append(TeamSetupResult(
+                id=team.id,
+                name=team.name,
+                is_ai_owned=False,
+                owner_user_id=target_user.id,
+                email=email_val,
+                program_size=prog_size,
+                invite_url=invite_url,
+            ))
+
+    if not has_commissioner:
+        raise HTTPException(400, "One of the teams must be marked as the commissioner's team")
+
+    db.commit()
+    return LeagueTeamsSetupResponse(league_id=league.id, teams=results)
+
+
+@router.post("/{league_id}/teams/{team_id}/invite", response_model=TeamInviteOut)
+def invite_team_manager(
+    league_id: int, team_id: int, payload: TeamInviteRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: assigns an email to a team and returns the invite link."""
+    league = assert_commissioner(db, user, league_id)
+    team = db.get(Team, team_id)
+    if team is None or team.league_id != league.id:
+        raise HTTPException(404, "Team not found in this league")
+
+    email_val = payload.email.strip().lower()
+    if "@" not in email_val or "." not in email_val:
+        raise HTTPException(400, "Please provide a valid email address")
+
+    target_user = db.query(User).filter(func.lower(User.email) == email_val).first()
+    if target_user is None:
+        target_user = User(
+            email=email_val,
+            display_name=email_val.split("@")[0],
+            password_hash=None,
+        )
+        db.add(target_user)
+        db.flush()
+
+    team.owner_user_id = target_user.id
+    team.is_ai_owned = False
+    db.commit()
+
+    invite_url = f"/static/join-league.html?league_id={league.id}&team_id={team.id}&email={email_val}"
+    return TeamInviteOut(
+        team_id=team.id,
+        league_id=league.id,
+        email=email_val,
+        invite_url=invite_url,
+        status="invited",
+    )
 
 
 @router.get("/{league_id}/conferences", response_model=list[ConferenceOut])

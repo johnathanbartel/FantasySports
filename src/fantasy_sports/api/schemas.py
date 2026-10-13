@@ -54,6 +54,45 @@ class LeagueRenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
+class TeamSetupItem(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    is_ai: bool = False
+    is_commissioner: bool = False
+    email: str | None = None
+    program_size: str = "large"
+
+
+class LeagueTeamsSetupRequest(BaseModel):
+    teams: list[TeamSetupItem]
+
+
+class TeamSetupResult(BaseModel):
+    id: int
+    name: str
+    is_ai_owned: bool
+    owner_user_id: int | None
+    email: str | None = None
+    program_size: str
+    invite_url: str | None = None
+
+
+class LeagueTeamsSetupResponse(BaseModel):
+    league_id: int
+    teams: list[TeamSetupResult]
+
+
+class TeamInviteRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class TeamInviteOut(BaseModel):
+    team_id: int
+    league_id: int
+    email: str
+    invite_url: str
+    status: str = "invited"
+
+
 class LeagueOut(ORMModel):
     id: int
     name: str

@@ -74,7 +74,8 @@
     <!-- League Full Panel -->
     <div id="league-full-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
       <h3 style="margin:0 0 var(--space-2);font-size:18px">League is Full</h3>
-      <p class="text-muted" style="margin:0">All spots in this league have been claimed. Check back with the commissioner if more spots open.</p>
+      <p class="text-muted" style="margin:0 0 var(--space-3)">All spots in this league have been claimed. Check back with the commissioner if more spots open.</p>
+      <p class="text-muted" style="margin:0;font-size:13px">If you were invited under a different email, try signing out and signing in with that email address.</p>
     </div>
 
     <!-- Step 1: Authentication (if not signed in) -->
@@ -163,6 +164,8 @@
 const api = FSC.api;
 const params = new URLSearchParams(location.search);
 const leagueId = Number(params.get('league_id'));
+const teamIdParam = Number(params.get('team_id')) || null;
+const emailParam = params.get('email') || '';
 
 function showError(msg) {
   const el = document.getElementById('error-banner');
@@ -199,6 +202,8 @@ document.getElementById('join-reg-form').onsubmit = async (e) => {
       document.getElementById('j-reg-password').value
     );
     FSC.renderNav();
+    // Refresh teams list in case registering claimed an invited placeholder team
+    teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -212,6 +217,7 @@ document.getElementById('join-login-form').onsubmit = async (e) => {
       document.getElementById('j-login-password').value
     );
     FSC.renderNav();
+    teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -222,6 +228,7 @@ document.getElementById('join-guest-form').onsubmit = async (e) => {
   try {
     currentUser = await FSC.createGuest(document.getElementById('j-guest-name').value.trim());
     FSC.renderNav();
+    teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -263,6 +270,11 @@ function renderFlow() {
   document.getElementById('auth-panel').style.display = 'none';
   document.getElementById('team-setup-panel').style.display = 'none';
 
+  if (!currentUser) {
+    document.getElementById('auth-panel').style.display = 'block';
+    return;
+  }
+
   if (myTeam) {
     document.getElementById('already-joined-panel').style.display = 'block';
     document.getElementById('my-team-name').textContent = myTeam.name;
@@ -276,21 +288,24 @@ function renderFlow() {
     return;
   }
 
-  if (!currentUser) {
-    document.getElementById('auth-panel').style.display = 'block';
-  } else {
-    document.getElementById('team-setup-panel').style.display = 'block';
-    document.getElementById('user-badge').textContent = `Signed in as ${currentUser.display_name}`;
-    // Show program size only for college football
-    const isPro = (league.universe_codes || []).some(u => u === 'nhl' || u === 'nfl');
-    document.getElementById('program-size-field').style.display = isPro ? 'none' : 'block';
-  }
+  document.getElementById('team-setup-panel').style.display = 'block';
+  document.getElementById('user-badge').textContent = `Signed in as ${currentUser.display_name}`;
+  // Show program size only for college football
+  const isPro = (league.universe_codes || []).some(u => u === 'nhl' || u === 'nfl');
+  document.getElementById('program-size-field').style.display = isPro ? 'none' : 'block';
 }
 
 async function init() {
   if (!leagueId) {
     showError('No league ID specified in URL. Check your invitation link.');
     return;
+  }
+
+  if (emailParam) {
+    const regEmail = document.getElementById('j-reg-email');
+    const loginEmail = document.getElementById('j-login-email');
+    if (regEmail) regEmail.value = emailParam;
+    if (loginEmail) loginEmail.value = emailParam;
   }
 
   try {
@@ -302,9 +317,15 @@ async function init() {
 
     const openSpots = league.size - teams.length;
     document.getElementById('league-title').textContent = `Join ${league.name}`;
-    document.getElementById('league-summary').textContent = openSpots > 0
-      ? `${openSpots} of ${league.size} spots available for tonight's draft.`
-      : 'All spots are currently filled.';
+    
+    const invitedTeam = teamIdParam ? teams.find(t => t.id === teamIdParam) : null;
+    if (invitedTeam) {
+      document.getElementById('league-summary').innerHTML = `You've been invited to take over <strong>${esc(invitedTeam.name)}</strong> for tonight's draft.`;
+    } else {
+      document.getElementById('league-summary').textContent = openSpots > 0
+        ? `${openSpots} of ${league.size} spots available for tonight's draft.`
+        : 'All spots are currently filled.';
+    }
 
     document.getElementById('league-card').style.display = 'block';
     document.getElementById('league-name-display').textContent = league.name;
