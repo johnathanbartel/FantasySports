@@ -45,6 +45,7 @@ STEPS = [
     ("lineup_entries", "team_id IN ({teams})"),
     ("roster_entries", "team_id IN ({teams})"),
     ("teams", "league_id IN ({leagues})"),
+    ("divisions", "league_id IN ({leagues})"),
     ("conferences", "league_id IN ({leagues})"),
     ("league_universes", "league_id IN ({leagues})"),
     ("leagues", "id IN ({leagues})"),

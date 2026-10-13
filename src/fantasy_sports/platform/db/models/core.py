@@ -182,6 +182,24 @@ class Conference(Base):
     name: Mapped[str] = mapped_column(String(80))
 
     league: Mapped["League"] = relationship()
+    divisions: Mapped[list["Division"]] = relationship(
+        back_populates="conference", cascade="all, delete-orphan", order_by="Division.id"
+    )
+
+
+class Division(Base):
+    """A division within a conference (e.g. Atlantic Division within Eastern Conference)."""
+
+    __tablename__ = "divisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
+    conference_id: Mapped[int] = mapped_column(ForeignKey("conferences.id"))
+    name: Mapped[str] = mapped_column(String(80))
+
+    league: Mapped["League"] = relationship()
+    conference: Mapped["Conference"] = relationship(back_populates="divisions")
+    teams: Mapped[list["Team"]] = relationship(back_populates="division")
 
 
 class Team(Base):
@@ -216,6 +234,7 @@ class Team(Base):
     # create-team endpoint's callers yet outside scripts/tests) predate
     # this column and never get one.
     conference_id: Mapped[int | None] = mapped_column(ForeignKey("conferences.id"), nullable=True)
+    division_id: Mapped[int | None] = mapped_column(ForeignKey("divisions.id"), nullable=True)
     # Trait system design TBD - just a JSON hook for now, e.g.
     # {"aggression": 0.8, "reactive_to_trends": true}.
     personality_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -223,6 +242,7 @@ class Team(Base):
 
     league: Mapped["League"] = relationship(back_populates="teams")
     conference: Mapped["Conference | None"] = relationship()
+    division: Mapped["Division | None"] = relationship(back_populates="teams")
 
     @property
     def season_goal(self) -> str:

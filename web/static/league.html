@@ -258,7 +258,7 @@ async function renderHome() {
       <div style="display:flex;flex-direction:column;gap:var(--space-4)">
         ${mine ? `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
           <div class="card-kicker">Your team</div><h3 style="margin:2px 0 4px">${tn(mine.id)}</h3>
-          <div class="muted" style="font-size:13px">${ov.is_college ? `${esc(mine.program_size)} · ${esc(mine.conference_name || '')} · ${esc(mine.season_goal)}` : `${esc(mine.conference_name || 'Pro League')}`}</div>
+          <div class="muted" style="font-size:13px">${ov.is_college ? `${esc(mine.program_size)} · ${esc(mine.conference_name || '')} · ${esc(mine.season_goal)}` : `${esc(mine.division_name ? ((mine.conference_name || 'Conference') + ' · ' + mine.division_name) : (mine.conference_name || 'Pro League'))}`}</div>
           <div style="margin:var(--space-2) 0">${mine.roster_count} / ${ov.roster_size} players${mine.open_spots ? ` · <strong>${mine.open_spots} open</strong>` : ''}</div>
           <div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn btn-secondary" data-go="roster" data-team="${mine.id}">Roster</button>
             <a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${mine.id}">Set lineup</a>
@@ -1003,7 +1003,7 @@ async function renderRoster() {
   const open = ov.roster_size - roster.length;
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
-      <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.conference_name || '')} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
+      <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.division_name ? ((t.conference_name || 'Conference') + ' · ' + t.division_name) : (t.conference_name || ''))} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">${teamPicker('team-pick')}
         ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Set lineup</a>` : ''}</div>
     </div>
@@ -1646,7 +1646,11 @@ async function renderStandings() {
   const rows = await api(`/leagues/${LEAGUE_ID}/standings`);
   const played = rows.some(r => r.wins + r.losses + r.ties > 0);
   const byConf = {};
-  rows.forEach(r => { const t = teamsById[r.team_id]; (byConf[t?.conference_name || 'Other'] = byConf[t?.conference_name || 'Other'] || []).push({...r, t}); });
+  rows.forEach(r => {
+    const t = teamsById[r.team_id];
+    const groupName = t?.division_name ? `${t.conference_name || 'Conference'} · ${t.division_name}` : (t?.conference_name || 'Other');
+    (byConf[groupName] = byConf[groupName] || []).push({...r, t});
+  });
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in once weekly matchups are scored - every team is 0-0 until then.</div>')
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_name.localeCompare(b.team_name));
@@ -1702,7 +1706,10 @@ function drawStats() {
 async function renderTeams() {
   await refreshOverview();
   const byConf = {};
-  ov.teams.forEach(t => (byConf[t.conference_name || 'Other'] = byConf[t.conference_name || 'Other'] || []).push(t));
+  ov.teams.forEach(t => {
+    const groupName = t.division_name ? `${t.conference_name || 'Conference'} · ${t.division_name}` : (t.conference_name || 'Other');
+    (byConf[groupName] = byConf[groupName] || []).push(t);
+  });
 
   const manageConfsBar = isCommissioner ? `
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-3);margin-bottom:var(--space-4);padding:var(--space-3) var(--space-4);background:var(--color-surface, rgba(255,255,255,0.03));border:1px solid var(--color-divider);border-radius:var(--radius-md)">

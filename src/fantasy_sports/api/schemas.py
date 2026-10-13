@@ -125,12 +125,20 @@ class LeagueOut(ORMModel):
     series_length_days: int | None
 
 
+class DivisionOut(BaseModel):
+    id: int
+    conference_id: int
+    name: str
+    team_count: int = 0
+
+
 class ConferenceOut(BaseModel):
     id: int
     program_size: str
     name: str
     team_count: int
     editable: bool = True
+    divisions: list[DivisionOut] = []
 
 
 class ConferenceCreateRequest(BaseModel):
@@ -141,9 +149,34 @@ class ConferenceUpdateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
+class DivisionCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class DivisionUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class DivisionSetupInput(BaseModel):
+    name: str | None = None
+
+
+class ConferenceSetupInput(BaseModel):
+    name: str | None = None
+    divisions: list[DivisionSetupInput] = []
+
+
+class SetupStructureRequest(BaseModel):
+    conference_count: int = Field(ge=1, le=16)
+    divisions_per_conference: int = Field(ge=0, le=16)
+    conferences: list[ConferenceSetupInput] | None = None
+    randomize_teams: bool = True
+
+
 class TeamAlignmentItem(BaseModel):
     team_id: int
     conference_id: int | None = None
+    division_id: int | None = None
 
 
 class LeagueAlignmentRequest(BaseModel):
@@ -178,6 +211,9 @@ class TeamOut(ORMModel):
     is_ai_owned: bool
     program_size: str
     conference_id: int | None
+    division_id: int | None = None
+    conference_name: str | None = None
+    division_name: str | None = None
     season_goal: str
     owner_name: str | None = None
     owner_email: str | None = None

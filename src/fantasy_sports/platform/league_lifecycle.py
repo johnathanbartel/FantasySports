@@ -9,6 +9,7 @@ from fantasy_sports.platform.db.models.core import (
     AuctionTeamBudget,
     BankedCredit,
     Conference,
+    Division,
     Draft,
     DraftPick,
     FreeAgencyTransaction,
@@ -150,7 +151,8 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(WeeklyTeamScore).filter(WeeklyTeamScore.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(Team).filter(Team.id.in_(team_ids)).delete(synchronize_session=False)
 
-    # 10. Conferences, universes, and league
+    # 10. Conferences, divisions, universes, and league
+    db.query(Division).filter(Division.league_id == league_id).delete(synchronize_session=False)
     db.query(Conference).filter(Conference.league_id == league_id).delete(synchronize_session=False)
     db.query(LeagueUniverse).filter(LeagueUniverse.league_id == league_id).delete(synchronize_session=False)
     db.query(League).filter(League.id == league_id).delete(synchronize_session=False)

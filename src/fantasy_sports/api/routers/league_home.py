@@ -22,6 +22,7 @@ from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import (
     Conference,
     DefenseGroup,
+    Division,
     DraftableAsset,
     FreeAgencyTransaction,
     League,
@@ -70,6 +71,8 @@ class TeamSummary(BaseModel):
     owner_email: str | None = None
     conference_id: int | None
     conference_name: str | None
+    division_id: int | None = None
+    division_name: str | None = None
     season_goal: str
     weekly_budget: int
     roster_count: int
@@ -113,6 +116,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     draft = _status(db, league_id)
     user_map = {u.id: u for u in db.query(User)}
     confs = {c.id: c.name for c in db.query(Conference).filter_by(league_id=league_id)}
+    divs = {d.id: d.name for d in db.query(Division).filter_by(league_id=league_id)}
     counts: dict[int, int] = {}
     team_ids = [t.id for t in db.query(Team).filter_by(league_id=league_id)]
     for r in db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids or [0])):
@@ -146,7 +150,10 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
             owner_name=u.display_name if u else None,
             owner_email=u.email if u else None,
             conference_id=t.conference_id,
-            conference_name=confs.get(t.conference_id), season_goal=t.season_goal,
+            conference_name=confs.get(t.conference_id),
+            division_id=t.division_id,
+            division_name=divs.get(t.division_id),
+            season_goal=t.season_goal,
             weekly_budget=STARTING_BUDGET_BY_PROGRAM_SIZE[t.program_size], roster_count=counts.get(t.id, 0),
             open_spots=max(0, limit - counts.get(t.id, 0)), poll_rank=poll_ranks.get(t.id),
             is_claimed=is_claimed,
