@@ -130,6 +130,24 @@ class ConferenceOut(BaseModel):
     program_size: str
     name: str
     team_count: int
+    editable: bool = True
+
+
+class ConferenceCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ConferenceUpdateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class TeamAlignmentItem(BaseModel):
+    team_id: int
+    conference_id: int | None = None
+
+
+class LeagueAlignmentRequest(BaseModel):
+    assignments: list[TeamAlignmentItem]
 
 
 class StandingsRow(BaseModel):
@@ -161,6 +179,11 @@ class TeamOut(ORMModel):
     program_size: str
     conference_id: int | None
     season_goal: str
+    owner_name: str | None = None
+    owner_email: str | None = None
+    is_claimed: bool = False
+    invite_status: str = "ai"
+    invite_url: str | None = None
 
 
 class RosterEntryOut(BaseModel):

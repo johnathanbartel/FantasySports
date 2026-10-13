@@ -58,13 +58,15 @@ def expand_conferences(db: Session, league_id: int) -> list[Conference]:
 
 
 def assign_team_to_conference(db: Session, league_id: int, program_size: str) -> Conference:
-    """Places a team into the least-populated conference of its tier -
-    simple load balancing across however many conferences that tier has."""
+    """Places a team into the least-populated conference of its tier (for college),
+    or across any league conferences if no tier-specific conference exists (for pro leagues)."""
     conferences = (
         db.query(Conference)
         .filter(Conference.league_id == league_id, Conference.program_size == program_size)
         .all()
     )
+    if not conferences:
+        conferences = db.query(Conference).filter(Conference.league_id == league_id).all()
     if not conferences:
         raise ValueError(f"League has no '{program_size}' conference yet")
 

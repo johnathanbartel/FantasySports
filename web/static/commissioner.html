@@ -93,8 +93,12 @@
           </p>
         </div>
 
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+          <h4 style="margin:0">Teams &amp; Claim Status</h4>
+          <button class="btn btn-secondary" id="cm-manage-confs-btn" style="font-size:12px;padding:4px 10px">Manage Conferences &amp; Divisions</button>
+        </div>
         <table class="table">
-          <thead><tr><th>Team</th><th>Size</th><th>Conference</th><th>Roster</th><th></th></tr></thead>
+          <thead><tr><th>Team</th><th>Claim Status</th><th id="th-size">Size</th><th>Conference / Division</th><th>Roster</th><th></th></tr></thead>
           <tbody id="teams-body"></tbody>
         </table>
     </div>
@@ -118,6 +122,7 @@
 
 <script src="/static/session.js"></script>
 <script src="/static/assign-team-modal.js"></script>
+<script src="/static/conference-modal.js"></script>
 <script>
 const api = FSC.api;
 const params = new URLSearchParams(location.search);
@@ -149,47 +154,97 @@ async function selectLeague(id) {
 }
 
 async function refreshLeague() {
-  const [status, teams, confs, wk] = await Promise.all([
-    api(`/recruiting/league/${current.id}`), api(`/leagues/${current.id}/teams`),
-    api(`/leagues/${current.id}/conferences`), api(`/leagues/${current.id}/weeks`),
+  const [status, teams, confs, wk, ov] = await Promise.all([
+    api(`/recruiting/league/${current.id}`).catch(() => ({ status: 'scheduled', total_periods: 0, current_period: 0 })),
+    api(`/leagues/${current.id}/teams`),
+    api(`/leagues/${current.id}/conferences`),
+    api(`/leagues/${current.id}/weeks`),
+    api(`/leagues/${current.id}/overview`).catch(() => null),
   ]);
   weeks = wk;
+  const isCollege = ov ? ov.is_college : false;
+  const thSize = document.getElementById('th-size');
+  if (thSize) thSize.style.display = isCollege ? '' : 'none';
   conferences = Object.fromEntries(confs.map(c => [c.id, c.name]));
   rosterSizes = {};
   await Promise.all(teams.map(async t => { rosterSizes[t.id] = (await api(`/teams/${t.id}/roster`)).length; }));
   const st = {scheduled: 'Draft not started', open: 'Draft in progress', closed: 'Draft complete'}[status.status] || status.status;
   document.getElementById('lg-status').textContent = st;
   document.getElementById('lg-detail').textContent =
-    `${teams.length} AI teams · ${status.total_periods} recruiting weeks` +
-    (status.status === 'open' ? ` · now in week ${status.current_period}` : '') +
+    `${teams.length} teams · ${confs.length} conferences/divisions` +
+    (status.status === 'open' ? ` · recruiting week ${status.current_period}` : '') +
     (status.status === 'closed' ? ` · ${Object.values(rosterSizes).reduce((a, b) => a + b, 0)} players recruited` : '');
-  document.getElementById('sim-btn').style.display = status.status === 'closed' ? 'none' : '';
+  document.getElementById('sim-btn').style.display = (status.status === 'closed' || !isCollege) ? 'none' : '';
   document.getElementById('sim-btn').disabled = false;
   document.getElementById('sim-btn').textContent = status.status === 'open' ? 'Finish the draft instantly' : 'Simulate the recruiting draft';
-  document.getElementById('auto-btn').disabled = status.status !== 'closed';
+  document.getElementById('auto-btn').disabled = status.status !== 'closed' && isCollege;
   document.getElementById('week-select').innerHTML = weeks.map(w => `<option value="${w.id}">Week ${w.week_number} (${w.season_year})</option>`).join('');
-  document.getElementById('teams-body').innerHTML = teams.map(t => `<tr>
-    <td>${esc(t.name)} <span class="text-muted">${t.is_ai_owned ? '(AI)' : (t.owner_name ? '(' + esc(t.owner_name) + ')' : '(Manager)')}</span></td>
-    <td><span class="tag tag-neutral">${t.program_size}</span></td>
-    <td>${esc(conferences[t.conference_id] || '')}</td>
-    <td>${rosterSizes[t.id]} players</td>
-    <td style="display:flex;gap:var(--space-2);justify-content:flex-end">
-      <a class="btn btn-secondary" style="font-size:12px;padding:3px 8px" href="/static/lineup.html?league_id=${current.id}&team_id=${t.id}${weeks[0] ? '&week_id=' + weeks[0].id : ''}">Lineup</a>
-      ${t.is_ai_owned
-        ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
-        : `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" title="Reassign team or convert to AI">Reassign</button>`}
-    </td></tr>`).join('');
+
+  const manageConfsBtn = document.getElementById('cm-manage-confs-btn');
+  if (manageConfsBtn) {
+    manageConfsBtn.onclick = () => {
+      ConferenceModal.open({
+        leagueId: current.id,
+        isCollege: isCollege,
+        onUpdated: refreshLeague,
+      });
+    };
+  }
+
+  document.getElementById('teams-body').innerHTML = teams.map(t => {
+    let claimBadge = '';
+    if (t.is_ai_owned) {
+      claimBadge = '<span class="tag tag-neutral">AI</span>';
+    } else if (t.invite_status === 'pending_claim') {
+      claimBadge = `<span class="tag" style="background:#451a03;color:#fbbf24;border:1px solid #78350f" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
+      if (t.invite_url) {
+        claimBadge += ` <button class="btn btn-ghost" style="font-size:11px;padding:1px 5px" data-cm-copy-invite="${esc(t.invite_url)}" title="Copy invite link">Copy Link</button>`;
+      }
+    } else {
+      claimBadge = `<span class="tag tag-neutral" style="background:#052e16;color:#4ade80;border:1px solid #166534">Claimed: ${esc(t.owner_name || t.owner_email || 'Manager')}</span>`;
+    }
+
+    const sizeTd = isCollege ? `<td><span class="tag tag-neutral">${t.program_size}</span></td>` : '';
+
+    return `<tr>
+      <td><strong>${esc(t.name)}</strong></td>
+      <td>${claimBadge}</td>
+      ${sizeTd}
+      <td>${esc(conferences[t.conference_id] || 'None')}</td>
+      <td>${rosterSizes[t.id] ?? 0} players</td>
+      <td style="display:flex;gap:var(--space-2);justify-content:flex-end">
+        <a class="btn btn-secondary" style="font-size:12px;padding:3px 8px" href="/static/lineup.html?league_id=${current.id}&team_id=${t.id}${weeks[0] ? '&week_id=' + weeks[0].id : ''}">Lineup</a>
+        ${t.is_ai_owned
+          ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
+          : `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-cm-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" data-email="${esc(t.owner_email || '')}" title="Reassign team or convert to AI">Reassign</button>`}
+      </td></tr>`;
+  }).join('');
+
+  document.querySelectorAll('[data-cm-copy-invite]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const url = btn.getAttribute('data-cm-copy-invite');
+      const fullUrl = url.startsWith('http') ? url : (location.origin + url);
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = orig, 2000);
+      }).catch(() => prompt('Copy invite link:', fullUrl));
+    };
+  });
 
   document.querySelectorAll('[data-cm-assign-team]').forEach(btn => {
     btn.onclick = () => {
       const tid = Number(btn.getAttribute('data-cm-assign-team'));
       const tname = btn.getAttribute('data-team-name');
       const isAi = btn.getAttribute('data-is-ai') === '1';
+      const curEmail = btn.getAttribute('data-email') || '';
       AssignTeamModal.open({
         leagueId: current.id,
         teamId: tid,
         teamName: tname,
         isAi,
+        currentEmail: curEmail,
         onAssigned: async () => {
           await refreshLeague();
         }

@@ -75,6 +75,9 @@ class TeamSummary(BaseModel):
     roster_count: int
     open_spots: int
     poll_rank: int | None = None      # rank in the current poll, if the team is ranked
+    is_claimed: bool = False
+    invite_status: str = "ai"         # "ai", "pending_claim", "claimed"
+    invite_url: str | None = None
 
 
 class OverviewOut(BaseModel):
@@ -116,19 +119,39 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     college = is_college(db, league_id)
     limit = roster_limit(db, league)
     poll_ranks = rankings.poll_ranks(db, league_id) if team_ids and college else {}
-    teams = [
-        TeamSummary(
+    teams = []
+    for t in db.query(Team).filter_by(league_id=league_id).order_by(Team.id):
+        u = user_map.get(t.owner_user_id) if t.owner_user_id else None
+        if t.is_ai_owned or not t.owner_user_id:
+            is_claimed = False
+            invite_status = "ai"
+            invite_url = None
+        elif t.owner_user_id == league.commissioner_user_id:
+            is_claimed = True
+            invite_status = "claimed"
+            invite_url = None
+        elif u and u.password_hash is not None:
+            is_claimed = True
+            invite_status = "claimed"
+            invite_url = None
+        else:
+            is_claimed = False
+            invite_status = "pending_claim"
+            invite_url = f"/static/join-league.html?league_id={league.id}&team_id={t.id}&email={u.email if u else ''}"
+
+        teams.append(TeamSummary(
             id=t.id, name=t.name, program_size=t.program_size, is_ai_owned=t.is_ai_owned,
             owner_user_id=t.owner_user_id,
-            owner_name=user_map[t.owner_user_id].display_name if t.owner_user_id in user_map else None,
-            owner_email=user_map[t.owner_user_id].email if t.owner_user_id in user_map else None,
+            owner_name=u.display_name if u else None,
+            owner_email=u.email if u else None,
             conference_id=t.conference_id,
             conference_name=confs.get(t.conference_id), season_goal=t.season_goal,
             weekly_budget=STARTING_BUDGET_BY_PROGRAM_SIZE[t.program_size], roster_count=counts.get(t.id, 0),
             open_spots=max(0, limit - counts.get(t.id, 0)), poll_rank=poll_ranks.get(t.id),
-        )
-        for t in db.query(Team).filter_by(league_id=league_id).order_by(Team.id)
-    ]
+            is_claimed=is_claimed,
+            invite_status=invite_status,
+            invite_url=invite_url,
+        ))
     universe_codes = [
         u.code for u in db.query(Universe).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id)
         .filter(LeagueUniverse.league_id == league_id).order_by(Universe.code)

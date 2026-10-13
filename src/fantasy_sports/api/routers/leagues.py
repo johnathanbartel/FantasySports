@@ -8,10 +8,12 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
 from fantasy_sports.api.schemas import (
-    ConferenceOut, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
+    ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
+    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
-    SandboxLeagueRequest, StandingsRow, TeamAssignOut, TeamAssignRequest,
-    TeamInviteOut, TeamInviteRequest, TeamOut, TeamSetupResult, WeekOut,
+    SandboxLeagueRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
+    TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
+    TeamSetupResult, WeekOut,
 )
 from fantasy_sports.platform import calendar, lineups, scoring
 from fantasy_sports.platform.conferences import service as conferences
@@ -21,7 +23,7 @@ from fantasy_sports.platform.db.models.core import (
     Team, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
-from fantasy_sports.platform.league_features import draft_state
+from fantasy_sports.platform.league_features import draft_state, is_college
 from fantasy_sports.platform.league_lifecycle import delete_league as purge_league
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
@@ -123,7 +125,20 @@ def create_league(
             defense_mode=payload.defense_modes.get(universe.code, "group"),
         ))
 
-    conferences.create_baseline_conferences(db, league.id)
+    if any(u.level == "college" for u in universes):
+        conferences.create_baseline_conferences(db, league.id)
+    else:
+        if "nhl" in payload.universe_codes:
+            names = ["Eastern Conference", "Western Conference"]
+        elif "nfl" in payload.universe_codes:
+            names = ["AFC", "NFC"]
+        elif "mlb" in payload.universe_codes:
+            names = ["American League", "National League"]
+        else:
+            names = ["Eastern Conference", "Western Conference"]
+        for name in names:
+            db.add(Conference(league_id=league.id, program_size="large", name=name))
+        db.flush()
 
     if payload.draft_type == "recruit":
         if payload.recruiting_period_seconds < 1:
@@ -317,10 +332,49 @@ def delete_league(
 def get_league_teams(league_id: int, db: Session = Depends(get_db)):
     """Team-name resolution for any screen that shows picks/lineups/matchups
     by team - those only carry team_id, not a display name."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
     teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
     if not teams:
         raise HTTPException(404, "League not found or has no teams")
-    return teams
+    user_map = {u.id: u for u in db.query(User)}
+    results = []
+    for t in teams:
+        u = user_map.get(t.owner_user_id) if t.owner_user_id else None
+        if t.is_ai_owned or not t.owner_user_id:
+            is_claimed = False
+            invite_status = "ai"
+            invite_url = None
+        elif t.owner_user_id == league.commissioner_user_id:
+            is_claimed = True
+            invite_status = "claimed"
+            invite_url = None
+        elif u and u.password_hash is not None:
+            is_claimed = True
+            invite_status = "claimed"
+            invite_url = None
+        else:
+            is_claimed = False
+            invite_status = "pending_claim"
+            invite_url = f"/static/join-league.html?league_id={league.id}&team_id={t.id}&email={u.email if u else ''}"
+
+        results.append(TeamOut(
+            id=t.id,
+            league_id=t.league_id,
+            name=t.name,
+            owner_user_id=t.owner_user_id,
+            is_ai_owned=t.is_ai_owned,
+            program_size=t.program_size,
+            conference_id=t.conference_id,
+            season_goal=t.season_goal,
+            owner_name=u.display_name if u else None,
+            owner_email=u.email if u else None,
+            is_claimed=is_claimed,
+            invite_status=invite_status,
+            invite_url=invite_url,
+        ))
+    return results
 
 
 AI_TEAM_NAMES = [
@@ -606,18 +660,166 @@ def assign_team_manager(
     )
 
 
+def are_conferences_editable(db: Session, league: League) -> tuple[bool, str]:
+    """
+    Conferences and divisions can be edited before and after the season.
+    They cannot be modified during the active season while games are in progress.
+    """
+    has_nhl = db.query(LeagueUniverse).join(Universe, Universe.id == LeagueUniverse.universe_id).filter(
+        LeagueUniverse.league_id == league.id, Universe.code == "nhl"
+    ).count() > 0
+
+    if has_nhl:
+        from fantasy_sports.platform.db.models.core import SeriesDailyGame, LeagueSeries
+        games = (
+            db.query(SeriesDailyGame)
+            .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+            .filter(LeagueSeries.league_id == league.id)
+            .all()
+        )
+        if not games:
+            return True, ""
+        final_count = sum(1 for g in games if g.final)
+        if final_count == 0 or final_count == len(games):
+            return True, ""
+        return False, "Conferences and divisions cannot be modified while season series are in progress."
+
+    # Weekly leagues (CFB, NFL, etc.)
+    weeks = scoring.season_weeks(db, league.id)
+    if not weeks:
+        return True, ""
+    scored = scoring.scored_week_ids(db, [w.id for w in weeks])
+    if len(scored) == 0:
+        return True, ""
+    if len(scored) >= len(weeks):
+        return True, ""
+    return False, "Conferences and divisions cannot be modified while regular season games are in progress."
+
+
 @router.get("/{league_id}/conferences", response_model=list[ConferenceOut])
 def get_conferences(league_id: int, db: Session = Depends(get_db)):
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
     rows = db.query(Conference).filter(Conference.league_id == league_id).order_by(Conference.id).all()
     if not rows:
         raise HTTPException(404, "League not found or has no conferences")
     team_counts = defaultdict(int)
     for team in db.query(Team).filter(Team.league_id == league_id, Team.conference_id.isnot(None)):
         team_counts[team.conference_id] += 1
+    editable, _ = are_conferences_editable(db, league)
     return [
-        ConferenceOut(id=c.id, program_size=c.program_size, name=c.name, team_count=team_counts[c.id])
+        ConferenceOut(id=c.id, program_size=c.program_size, name=c.name, team_count=team_counts[c.id], editable=editable)
         for c in rows
     ]
+
+
+@router.post("/{league_id}/conferences", response_model=ConferenceOut)
+def create_conference(
+    league_id: int, payload: ConferenceCreateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: adds a new conference or division to the league."""
+    league = assert_commissioner(db, user, league_id)
+    editable, reason = are_conferences_editable(db, league)
+    if not editable:
+        raise HTTPException(400, reason)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(400, "Conference/division name cannot be empty")
+
+    existing = db.query(Conference).filter(
+        Conference.league_id == league_id, func.lower(Conference.name) == func.lower(name)
+    ).first()
+    if existing is not None:
+        raise HTTPException(400, f"A conference or division named '{name}' already exists in this league")
+
+    conf = Conference(league_id=league_id, name=name, program_size="large")
+    db.add(conf)
+    db.commit()
+    db.refresh(conf)
+    return ConferenceOut(id=conf.id, program_size=conf.program_size, name=conf.name, team_count=0, editable=True)
+
+
+@router.patch("/{league_id}/conferences/{conference_id}", response_model=ConferenceOut)
+def update_conference(
+    league_id: int, conference_id: int, payload: ConferenceUpdateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: renames a conference or division."""
+    league = assert_commissioner(db, user, league_id)
+    editable, reason = are_conferences_editable(db, league)
+    if not editable:
+        raise HTTPException(400, reason)
+    conf = db.get(Conference, conference_id)
+    if conf is None or conf.league_id != league_id:
+        raise HTTPException(404, "Conference not found in this league")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(400, "Conference/division name cannot be empty")
+
+    dup = db.query(Conference).filter(
+        Conference.league_id == league_id, Conference.id != conference_id, func.lower(Conference.name) == func.lower(name)
+    ).first()
+    if dup is not None:
+        raise HTTPException(400, f"A conference or division named '{name}' already exists in this league")
+
+    conf.name = name
+    db.commit()
+    db.refresh(conf)
+    team_count = db.query(Team).filter(Team.league_id == league_id, Team.conference_id == conf.id).count()
+    return ConferenceOut(id=conf.id, program_size=conf.program_size, name=conf.name, team_count=team_count, editable=True)
+
+
+@router.delete("/{league_id}/conferences/{conference_id}")
+def delete_conference(
+    league_id: int, conference_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: deletes a conference or division."""
+    league = assert_commissioner(db, user, league_id)
+    editable, reason = are_conferences_editable(db, league)
+    if not editable:
+        raise HTTPException(400, reason)
+    conf = db.get(Conference, conference_id)
+    if conf is None or conf.league_id != league_id:
+        raise HTTPException(404, "Conference not found in this league")
+
+    all_confs = db.query(Conference).filter(Conference.league_id == league_id).all()
+    if len(all_confs) <= 1:
+        raise HTTPException(400, "A league must have at least one conference or division")
+
+    # Reassign teams in this conference to the first remaining conference
+    other_conf = [c for c in all_confs if c.id != conference_id][0]
+    for team in db.query(Team).filter(Team.league_id == league_id, Team.conference_id == conference_id):
+        team.conference_id = other_conf.id
+
+    db.delete(conf)
+    db.commit()
+    return {"status": "deleted", "conference_id": conference_id}
+
+
+@router.post("/{league_id}/conferences/align-teams", response_model=list[TeamOut])
+def align_league_teams(
+    league_id: int, payload: LeagueAlignmentRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: realigns teams across conferences and divisions."""
+    league = assert_commissioner(db, user, league_id)
+    editable, reason = are_conferences_editable(db, league)
+    if not editable:
+        raise HTTPException(400, reason)
+
+    valid_conf_ids = {c.id for c in db.query(Conference).filter(Conference.league_id == league_id)}
+    teams_by_id = {t.id: t for t in db.query(Team).filter(Team.league_id == league_id)}
+
+    for item in payload.assignments:
+        if item.team_id not in teams_by_id:
+            raise HTTPException(400, f"Team id {item.team_id} does not belong to this league")
+        if item.conference_id is not None and item.conference_id not in valid_conf_ids:
+            raise HTTPException(400, f"Conference id {item.conference_id} does not belong to this league")
+
+        team = teams_by_id[item.team_id]
+        team.conference_id = item.conference_id
+
+    db.commit()
+    return get_league_teams(league_id, db)
 
 
 @router.post("/{league_id}/conferences/expand", response_model=list[ConferenceOut])
@@ -634,7 +836,7 @@ def expand_conferences(league_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, str(e))
     db.commit()
     return [
-        ConferenceOut(id=c.id, program_size=c.program_size, name=c.name, team_count=0)
+        ConferenceOut(id=c.id, program_size=c.program_size, name=c.name, team_count=0, editable=True)
         for c in new_conferences
     ]
 

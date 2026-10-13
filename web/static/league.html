@@ -83,6 +83,7 @@
 <script src="/static/roster-lines.js"></script>
 <script src="/static/roster-grid.js"></script>
 <script src="/static/assign-team-modal.js"></script>
+<script src="/static/conference-modal.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -189,7 +190,7 @@ async function renderHome() {
       <div style="display:flex;flex-direction:column;gap:var(--space-4)">
         ${mine ? `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
           <div class="card-kicker">Your team</div><h3 style="margin:2px 0 4px">${tn(mine.id)}</h3>
-          <div class="muted" style="font-size:13px">${esc(mine.program_size)} · ${esc(mine.conference_name || '')} · ${esc(mine.season_goal)}</div>
+          <div class="muted" style="font-size:13px">${ov.is_college ? `${esc(mine.program_size)} · ${esc(mine.conference_name || '')} · ${esc(mine.season_goal)}` : `${esc(mine.conference_name || 'Pro League')}`}</div>
           <div style="margin:var(--space-2) 0">${mine.roster_count} / ${ov.roster_size} players${mine.open_spots ? ` · <strong>${mine.open_spots} open</strong>` : ''}</div>
           <div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn btn-secondary" data-go="roster" data-team="${mine.id}">Roster</button>
             <a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${mine.id}">Set lineup</a>
@@ -1323,33 +1324,92 @@ async function renderTeams() {
   await refreshOverview();
   const byConf = {};
   ov.teams.forEach(t => (byConf[t.conference_name || 'Other'] = byConf[t.conference_name || 'Other'] || []).push(t));
-  $('content').innerHTML = Object.entries(byConf).map(([name, list]) => `
-    <h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
-      ${list.map(t => {
-        const commishAction = isCommissioner ? (
-          t.is_ai_owned
-            ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
-            : (t.owner_user_id !== me ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" data-email="${esc(t.owner_email || '')}" title="Reassign team or convert to AI">Reassign</button>` : '')
-        ) : '';
-        return `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);gap:6px">
-          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap">
-            <strong style="font-family:var(--font-heading);font-size:16px">${tn(t.id)}</strong>
-            <div style="display:flex;gap:4px;align-items:center">
-              ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : '<span class="pill">' + esc(t.owner_name || 'Manager') + '</span>'}
-              ${commishAction}
+
+  const manageConfsBar = isCommissioner ? `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-3);margin-bottom:var(--space-4);padding:var(--space-3) var(--space-4);background:var(--color-surface, rgba(255,255,255,0.03));border:1px solid var(--color-divider);border-radius:var(--radius-md)">
+      <div>
+        <strong style="font-size:14px">Conferences &amp; Divisions</strong>
+        <div class="muted" style="font-size:12px">${!ov.is_college ? 'Pro format: Custom conferences, divisions, and team alignment.' : 'College format: Program tiers and conferences.'}</div>
+      </div>
+      <button class="btn btn-secondary" id="manage-confs-btn" style="font-size:13px">Manage Conferences &amp; Divisions</button>
+    </div>
+  ` : '';
+
+  $('content').innerHTML = `
+    ${manageConfsBar}
+    ${Object.entries(byConf).map(([name, list]) => `
+      <h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
+        ${list.map(t => {
+          const commishAction = isCommissioner ? (
+            t.is_ai_owned
+              ? `<button class="btn btn-secondary" style="font-size:12px;padding:3px 8px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="1">Assign to user</button>`
+              : (t.owner_user_id !== me ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-assign-team="${t.id}" data-team-name="${esc(t.name)}" data-is-ai="0" data-email="${esc(t.owner_email || '')}" title="Reassign team or convert to AI">Reassign</button>` : '')
+          ) : '';
+
+          let claimStatusBadge = '';
+          if (t.is_ai_owned) {
+            claimStatusBadge = '<span class="pill ai">AI Team</span>';
+          } else if (t.invite_status === 'pending_claim') {
+            claimStatusBadge = `<span class="pill" style="background:#451a03;color:#fbbf24;border:1px solid #78350f" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
+            if (isCommissioner && t.invite_url) {
+              claimStatusBadge += ` <button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-copy-invite-url="${esc(t.invite_url)}" title="Copy invite link">Copy Link</button>`;
+            }
+          } else if (t.owner_user_id === me) {
+            claimStatusBadge = '<span class="pill">Commissioner (You)</span>';
+          } else {
+            claimStatusBadge = `<span class="pill" style="border:1px solid var(--border)">Claimed: ${esc(t.owner_name || t.owner_email || 'Manager')}</span>`;
+          }
+
+          const tierGoalLine = ov.is_college ? `<div class="muted" style="font-size:12px">${esc(t.program_size)} program · ${esc(t.season_goal)}</div>` : '';
+          const rosterBudgetLine = ov.is_college
+            ? `<div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''} · ${money(t.weekly_budget)}/wk</div>`
+            : `<div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''}</div>`;
+
+          return `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);gap:6px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap">
+              <strong style="font-family:var(--font-heading);font-size:16px">${tn(t.id)}</strong>
+              <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+                ${claimStatusBadge}
+                ${commishAction}
+              </div>
             </div>
-          </div>
-          <div class="muted" style="font-size:12px">${esc(t.program_size)} program · ${esc(t.season_goal)}</div>
-          <div style="font-size:13px">${t.roster_count} / ${ov.roster_size} players${t.open_spots ? ` · <strong>${t.open_spots} open</strong>` : ''} · ${money(t.weekly_budget)}/wk</div>
-          <div style="display:flex;gap:var(--space-2);margin-top:4px">
-            <button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
-            ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`).join('');
+            ${tierGoalLine}
+            ${rosterBudgetLine}
+            <div style="display:flex;gap:var(--space-2);margin-top:4px">
+              <button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
+              ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}
+  `;
   bindNav();
+
+  if ($('manage-confs-btn')) {
+    $('manage-confs-btn').onclick = () => {
+      ConferenceModal.open({
+        leagueId: LEAGUE_ID,
+        isCollege: ov.is_college,
+        onUpdated: async () => {
+          await renderTeams();
+        }
+      });
+    };
+  }
+
+  $('content').querySelectorAll('[data-copy-invite-url]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const url = btn.getAttribute('data-copy-invite-url');
+      const fullUrl = url.startsWith('http') ? url : (location.origin + url);
+      navigator.clipboard.writeText(fullUrl).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = orig, 2000);
+      }).catch(() => prompt('Copy invite link:', fullUrl));
+    };
+  });
 
   $('content').querySelectorAll('[data-assign-team]').forEach(btn => {
     btn.onclick = () => {
