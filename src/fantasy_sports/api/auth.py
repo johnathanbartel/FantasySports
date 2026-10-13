@@ -14,6 +14,8 @@ so any caller could nominate, bid, or set a lineup as any team. Now:
 No/invalid token -> 401; valid token but not the owner/commissioner -> 403.
 """
 
+import hashlib
+import hmac
 import secrets
 
 from fastapi import Depends, Header, HTTPException
@@ -24,12 +26,40 @@ from fantasy_sports.platform.db.models.core import League, Team, User, UserSessi
 from fantasy_sports.platform.db.session import get_db
 
 
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    return f"pbkdf2_sha256$100000${salt}${key.hex()}"
+
+
+def verify_password(password: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
+    try:
+        parts = hashed.split("$")
+        if len(parts) != 4 or parts[0] != "pbkdf2_sha256":
+            return False
+        iterations = int(parts[1])
+        salt = parts[2]
+        hex_key = parts[3]
+        test_key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations)
+        return hmac.compare_digest(test_key.hex(), hex_key)
+    except Exception:
+        return False
+
+
 def create_session(db: Session, user_id: int) -> UserSession:
     session = UserSession(token=secrets.token_urlsafe(32), user_id=user_id)
     db.add(session)
     db.commit()
     db.refresh(session)
     return session
+
+
+def delete_session(db: Session, token: str) -> bool:
+    count = db.query(UserSession).filter(UserSession.token == token).delete()
+    db.commit()
+    return count > 0
 
 
 def current_user(authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> User:

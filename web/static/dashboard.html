@@ -10,12 +10,13 @@
 <body>
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
 
-  <div class="nav">
-    <span class="nav-brand">Fantasy Sports Company</span>
-    <div style="display:flex;gap:var(--space-4)">
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <span class="nav-brand">Fantasy Sports Company</span>
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html" aria-current="page">My leagues</a>
     </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
   </div>
 
   <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
@@ -26,9 +27,14 @@
     </div>
 
     <div id="error-banner" role="alert" style="display:none;margin-bottom:var(--space-4)"></div>
-    <div id="signin-box" style="display:none;gap:var(--space-3);align-items:center;margin-bottom:var(--space-4)">
-      <select id="signin-select"></select>
-      <button class="btn btn-primary" id="signin-btn">Sign in</button>
+    <div id="signin-box" style="display:none;flex-direction:column;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--color-divider);border-radius:var(--radius-md);margin-bottom:var(--space-4);background:var(--color-surface)">
+      <div><strong>Sign in to view your leagues</strong></div>
+      <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap">
+        <a href="/static/login.html?redirect=%2Fstatic%2Fdashboard.html" class="btn btn-primary">Sign in / Create Account</a>
+        <span class="text-muted" style="font-size:13px">or test user picker:</span>
+        <select id="signin-select" style="padding:6px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text)"></select>
+        <button class="btn btn-secondary" id="signin-btn">Select User</button>
+      </div>
     </div>
 
     <div id="sport-filter" style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-5)"></div>
@@ -112,12 +118,12 @@ function render() {
 
 async function start() {
   const session = await FSC.current();
+  FSC.renderNav('nav-auth');
   if (!session) {
     document.getElementById('signin-box').style.display = 'flex';
     const users = await fetch('/users').then(r => r.json()).catch(() => []);
     document.getElementById('signin-select').innerHTML = users.map(u => `<option value="${u.id}">${esc(u.display_name)}</option>`).join('');
     document.getElementById('signin-btn').onclick = async () => { await FSC.signIn(Number(document.getElementById('signin-select').value)); location.reload(); };
-    showError('Sign in to see your leagues.');
     return;
   }
   try { all = await FSC.api('/leagues/mine/dashboard'); } catch (e) { showError(e.message); return; }

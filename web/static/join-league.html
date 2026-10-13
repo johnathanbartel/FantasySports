@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join League - Fantasy Sports Company</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body { margin: 0; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-4); }
+  .field label { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; }
+  .field input, .field select {
+    padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--color-divider);
+    background: var(--color-bg); color: var(--color-text); font-size: 14px; font-family: var(--font-body);
+  }
+  .field .hint { font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .tab-btn {
+    flex: 1; padding: var(--space-2) var(--space-3); font-family: var(--font-heading);
+    font-size: 13px; border: 1px solid var(--color-divider); background: var(--color-bg);
+    color: var(--color-text); cursor: pointer; border-radius: var(--radius-md);
+  }
+  .tab-btn.active {
+    background: var(--color-accent); color: var(--color-bg); border-color: var(--color-accent);
+  }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <span class="nav-brand" style="font-family:var(--font-heading);font-weight:var(--font-heading-weight)">Fantasy Sports Company</span>
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
+    </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
+  </div>
+
+  <div style="max-width:620px;margin:var(--space-8) auto;padding:0 var(--space-4)">
+
+    <div style="margin-bottom:var(--space-6)">
+      <div class="card-kicker" style="margin-bottom:var(--space-1)">League Invitation</div>
+      <h1 style="margin:0 0 var(--space-2)" id="league-title">Join League</h1>
+      <p class="text-muted" style="margin:0" id="league-summary">Loading league details...</p>
+    </div>
+
+    <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4);font-size:14px"></div>
+
+    <!-- League Overview Card -->
+    <div id="league-card" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+        <h2 style="margin:0;font-size:22px" id="league-name-display"></h2>
+        <span class="tag tag-accent" id="sport-tag"></span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);font-size:14px;margin-bottom:var(--space-3)">
+        <div><span class="text-muted">Draft Format:</span> <strong id="draft-format-display">Snake draft</strong></div>
+        <div><span class="text-muted">Rounds:</span> <strong id="rounds-display"></strong></div>
+        <div><span class="text-muted">League Capacity:</span> <strong id="capacity-display"></strong></div>
+        <div><span class="text-muted">Scheduled For:</span> <strong id="scheduled-display">Not scheduled yet</strong></div>
+      </div>
+      <div id="existing-teams-list" style="margin-top:var(--space-2);padding-top:var(--space-3);border-top:1px solid var(--color-divider);font-size:13px" class="text-muted"></div>
+    </div>
+
+    <!-- Already in League Panel -->
+    <div id="already-joined-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5);background:color-mix(in srgb, var(--color-accent) 8%, var(--color-surface))">
+      <h3 style="margin:0 0 var(--space-2);font-size:18px">You're already in this league!</h3>
+      <p style="margin:0 0 var(--space-4)">You own <strong id="my-team-name"></strong>.</p>
+      <div style="display:flex;gap:var(--space-3)">
+        <a class="btn btn-primary" id="go-draft-btn" href="#">Open Draft Board</a>
+        <a class="btn btn-secondary" id="go-league-btn" href="#">League Home</a>
+      </div>
+    </div>
+
+    <!-- League Full Panel -->
+    <div id="league-full-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
+      <h3 style="margin:0 0 var(--space-2);font-size:18px">League is Full</h3>
+      <p class="text-muted" style="margin:0">All spots in this league have been claimed. Check back with the commissioner if more spots open.</p>
+    </div>
+
+    <!-- Step 1: Authentication (if not signed in) -->
+    <div id="auth-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
+      <h3 style="margin:0 0 var(--space-2);font-size:18px">Step 1: Sign in or create an account</h3>
+      <p class="text-muted" style="margin:0 0 var(--space-4);font-size:13px">You need an account to manage your team and make draft picks tonight.</p>
+
+      <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-4)">
+        <button class="tab-btn active" id="join-tab-register" type="button">Create Account</button>
+        <button class="tab-btn" id="join-tab-login" type="button">Sign In</button>
+        <button class="tab-btn" id="join-tab-guest" type="button">Quick Guest</button>
+      </div>
+
+      <!-- Register Form -->
+      <form id="join-reg-form">
+        <div class="field">
+          <label for="j-reg-name">Your Name</label>
+          <input type="text" id="j-reg-name" required maxlength="100" placeholder="e.g. Connor McDavid">
+        </div>
+        <div class="field">
+          <label for="j-reg-email">Email</label>
+          <input type="email" id="j-reg-email" required placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="j-reg-password">Password</label>
+          <input type="password" id="j-reg-password" required minlength="6" placeholder="At least 6 characters">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Continue with Account</button>
+      </form>
+
+      <!-- Login Form -->
+      <form id="join-login-form" style="display:none">
+        <div class="field">
+          <label for="j-login-email">Email</label>
+          <input type="email" id="j-login-email" required placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="j-login-password">Password</label>
+          <input type="password" id="j-login-password" required placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Sign In & Continue</button>
+      </form>
+
+      <!-- Guest Form -->
+      <form id="join-guest-form" style="display:none">
+        <div class="field">
+          <label for="j-guest-name">Your Display Name</label>
+          <input type="text" id="j-guest-name" required maxlength="100" placeholder="e.g. Coach Alex">
+          <span class="hint">Temporary session for this device.</span>
+        </div>
+        <button type="submit" class="btn btn-secondary btn-block">Continue as Guest</button>
+      </form>
+    </div>
+
+    <!-- Step 2: Team Creation (shown when signed in and slots are open) -->
+    <div id="team-setup-panel" class="card elev-sm" style="display:none;padding:var(--space-5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
+        <h3 style="margin:0;font-size:18px">Claim your team</h3>
+        <span class="text-muted" style="font-size:13px" id="user-badge"></span>
+      </div>
+      <p class="text-muted" style="margin:0 0 var(--space-4);font-size:13px">Give your team a name to secure your spot on tonight's draft board.</p>
+
+      <div class="field">
+        <label for="team-name-input">Team Name</label>
+        <input type="text" id="team-name-input" required maxlength="100" placeholder="e.g. Boston Blizzard, Puck Dynasty">
+      </div>
+
+      <div class="field" id="program-size-field" style="display:none">
+        <label for="program-size-select">Program Size</label>
+        <select id="program-size-select">
+          <option value="large" selected>Large - Win the championship</option>
+          <option value="moderate">Moderate - Make the playoffs</option>
+          <option value="small">Small - Win the conference</option>
+        </select>
+        <span class="hint">Sets conference placement and season goal.</span>
+      </div>
+
+      <button type="button" class="btn btn-primary btn-block" id="claim-team-btn" style="padding:10px">Join League & Claim Spot</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const api = FSC.api;
+const params = new URLSearchParams(location.search);
+const leagueId = Number(params.get('league_id'));
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football (NFL)', nhl: 'Hockey (NHL)'};
+
+let league = null;
+let teams = [];
+let currentUser = null;
+
+function showAuthTab(tab) {
+  document.getElementById('join-tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('join-tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('join-tab-guest').classList.toggle('active', tab === 'guest');
+  document.getElementById('join-reg-form').style.display = tab === 'register' ? 'block' : 'none';
+  document.getElementById('join-login-form').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('join-guest-form').style.display = tab === 'guest' ? 'block' : 'none';
+}
+document.getElementById('join-tab-register').onclick = () => showAuthTab('register');
+document.getElementById('join-tab-login').onclick = () => showAuthTab('login');
+document.getElementById('join-tab-guest').onclick = () => showAuthTab('guest');
+
+document.getElementById('join-reg-form').onsubmit = async (e) => {
+  e.preventDefault();
+  showError('');
+  try {
+    currentUser = await FSC.register(
+      document.getElementById('j-reg-email').value.trim(),
+      document.getElementById('j-reg-name').value.trim(),
+      document.getElementById('j-reg-password').value
+    );
+    FSC.renderNav();
+    renderFlow();
+  } catch (err) { showError(err.message); }
+};
+
+document.getElementById('join-login-form').onsubmit = async (e) => {
+  e.preventDefault();
+  showError('');
+  try {
+    currentUser = await FSC.login(
+      document.getElementById('j-login-email').value.trim(),
+      document.getElementById('j-login-password').value
+    );
+    FSC.renderNav();
+    renderFlow();
+  } catch (err) { showError(err.message); }
+};
+
+document.getElementById('join-guest-form').onsubmit = async (e) => {
+  e.preventDefault();
+  showError('');
+  try {
+    currentUser = await FSC.createGuest(document.getElementById('j-guest-name').value.trim());
+    FSC.renderNav();
+    renderFlow();
+  } catch (err) { showError(err.message); }
+};
+
+document.getElementById('claim-team-btn').onclick = async () => {
+  showError('');
+  const teamName = document.getElementById('team-name-input').value.trim();
+  if (!teamName) return showError('Team name is required.');
+  const programSize = document.getElementById('program-size-select').value || 'large';
+
+  try {
+    const team = await api('/teams', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        league_id: league.id,
+        name: teamName,
+        program_size: programSize,
+        owner_user_id: currentUser.user_id,
+        is_ai_owned: false,
+      }),
+    });
+    // Direct link to the draft board with their team highlighted
+    location.href = `/static/draft-board.html?league_id=${league.id}&team_id=${team.id}`;
+  } catch (err) {
+    showError(err.message);
+  }
+};
+
+function renderFlow() {
+  if (!league) return;
+
+  const openSpots = league.size - teams.length;
+  const isFull = openSpots <= 0;
+  const myTeam = currentUser ? teams.find(t => t.owner_user_id === currentUser.user_id) : null;
+
+  document.getElementById('already-joined-panel').style.display = 'none';
+  document.getElementById('league-full-panel').style.display = 'none';
+  document.getElementById('auth-panel').style.display = 'none';
+  document.getElementById('team-setup-panel').style.display = 'none';
+
+  if (myTeam) {
+    document.getElementById('already-joined-panel').style.display = 'block';
+    document.getElementById('my-team-name').textContent = myTeam.name;
+    document.getElementById('go-draft-btn').href = `/static/draft-board.html?league_id=${league.id}&team_id=${myTeam.id}`;
+    document.getElementById('go-league-btn').href = `/static/league.html?league_id=${league.id}&team_id=${myTeam.id}`;
+    return;
+  }
+
+  if (isFull) {
+    document.getElementById('league-full-panel').style.display = 'block';
+    return;
+  }
+
+  if (!currentUser) {
+    document.getElementById('auth-panel').style.display = 'block';
+  } else {
+    document.getElementById('team-setup-panel').style.display = 'block';
+    document.getElementById('user-badge').textContent = `Signed in as ${currentUser.display_name}`;
+    // Show program size only for college football
+    const isPro = (league.universe_codes || []).some(u => u === 'nhl' || u === 'nfl');
+    document.getElementById('program-size-field').style.display = isPro ? 'none' : 'block';
+  }
+}
+
+async function init() {
+  if (!leagueId) {
+    showError('No league ID specified in URL. Check your invitation link.');
+    return;
+  }
+
+  try {
+    currentUser = await FSC.current();
+    [league, teams] = await Promise.all([
+      api(`/leagues/${leagueId}`),
+      api(`/leagues/${leagueId}/teams`).catch(() => []),
+    ]);
+
+    const openSpots = league.size - teams.length;
+    document.getElementById('league-title').textContent = `Join ${league.name}`;
+    document.getElementById('league-summary').textContent = openSpots > 0
+      ? `${openSpots} of ${league.size} spots available for tonight's draft.`
+      : 'All spots are currently filled.';
+
+    document.getElementById('league-card').style.display = 'block';
+    document.getElementById('league-name-display').textContent = league.name;
+    const sportCode = (league.universe_codes && league.universe_codes[0]) || 'nhl';
+    document.getElementById('sport-tag').textContent = SPORT_LABELS[sportCode] || sportCode.toUpperCase();
+    document.getElementById('draft-format-display').textContent = league.draft_type === 'snake' ? 'Snake draft' : 'Recruiting draft';
+    document.getElementById('rounds-display').textContent = `${league.draft_rounds} rounds`;
+    document.getElementById('capacity-display').textContent = `${teams.length} / ${league.size} teams`;
+
+    if (league.draft_scheduled_at) {
+      document.getElementById('scheduled-display').textContent = new Date(league.draft_scheduled_at).toLocaleString();
+    }
+
+    if (teams.length > 0) {
+      document.getElementById('existing-teams-list').innerHTML = `
+        <strong>Teams in league (${teams.length}):</strong> ${teams.map(t => esc(t.name) + (t.is_ai_owned ? ' (AI)' : '')).join(', ')}
+      `;
+    }
+
+    renderFlow();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

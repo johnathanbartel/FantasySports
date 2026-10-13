@@ -21,14 +21,15 @@
 <body>
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
 
-  <div class="nav">
-    <span class="nav-brand" id="brand">Draft</span>
-    <div style="display:flex;gap:var(--space-4)">
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <span class="nav-brand" id="brand">Draft</span>
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
       <a href="#" id="nav-league">League</a>
       <a href="/static/draft-board.html" aria-current="page">Draft</a>
     </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
   </div>
 
   <div style="max-width:1240px;margin:0 auto;padding:var(--space-8) var(--space-5)">
@@ -37,6 +38,7 @@
       <div>
         <div class="card-kicker" id="clock-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
         <h1 style="margin:0">Draft board</h1>
+        <div id="user-team-status" style="font-size:13px;margin-top:var(--space-1)" class="text-muted"></div>
       </div>
       <div style="text-align:right" id="on-clock-panel"></div>
     </div>
@@ -125,11 +127,26 @@ function leagueHref() {
 
 async function loadAll() {
   me = await FSC.current();
+  FSC.renderNav('nav-auth');
   league = await api(`/leagues/${LEAGUE_ID}`);
   document.getElementById('brand').textContent = league.name;
   document.getElementById('nav-league').href = leagueHref();
   const teams = await api(`/leagues/${LEAGUE_ID}/teams`).catch(() => []);
   teamsById = Object.fromEntries(teams.map(t => [t.id, t]));
+
+  const statusEl = document.getElementById('user-team-status');
+  if (statusEl) {
+    const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
+    if (myTeam) {
+      statusEl.innerHTML = `Drafting as <strong>${esc(myTeam.name)}</strong>`;
+    } else if (me) {
+      statusEl.innerHTML = `Signed in as <strong>${esc(me.display_name)}</strong> (spectator)`;
+    } else {
+      const curLoc = encodeURIComponent(location.pathname + location.search);
+      statusEl.innerHTML = `Viewing as guest · <a href="/static/login.html?redirect=${curLoc}">Sign in to draft</a>`;
+    }
+  }
+
   if (!DRAFT_ID) {
     try { DRAFT_ID = (await api(`/drafts/league/${LEAGUE_ID}`)).id; } catch (e) { DRAFT_ID = null; }
   }
@@ -150,14 +167,39 @@ function renderSetup(teams) {
   const panel = document.getElementById('setup-panel');
   panel.style.display = 'block';
   const open = league.size - teams.length;
+  const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
+  const inviteUrl = `${location.origin}/static/join-league.html?league_id=${LEAGUE_ID}`;
+  const claimBanner = (!myTeam && open > 0)
+    ? `<div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-accent) 8%, transparent);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--space-2)">
+        <span>You don't have a team in this draft yet (${open} spot${open === 1 ? '' : 's'} open).</span>
+        <a href="/static/join-league.html?league_id=${LEAGUE_ID}" class="btn btn-primary" style="font-size:13px;padding:5px 12px">Claim a team spot</a>
+      </div>`
+    : '';
+
   panel.innerHTML = `
     <h3 style="margin:0 0 var(--space-2)">${league.draft_type === 'snake' ? 'Snake draft' : 'Draft'} setup</h3>
     <p class="muted" style="margin:0 0 var(--space-3)">${teams.length} of ${league.size} teams in the league (${teams.filter(t => t.is_ai_owned).length} AI-owned) · ${league.draft_rounds} rounds.
       ${open > 0 ? `${open} spot${open === 1 ? '' : 's'} still open.` : 'The league is full.'}</p>
+    ${claimBanner}
+    <div style="margin-bottom:var(--space-3);display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+      <button type="button" class="btn btn-secondary" id="copy-invite-btn" style="font-size:13px">Copy Invite Link</button>
+      <span id="invite-copied-msg" class="text-muted" style="font-size:12px;display:none">Copied invite link to clipboard!</span>
+    </div>
     ${isCommissioner() ? `${clockFormHtml()}<div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
       ${open > 0 ? '<button class="btn btn-secondary" id="fill-ai">Fill open spots with AI teams</button>' : ''}
       <button class="btn btn-primary" id="start-draft" ${teams.length && open <= 0 ? '' : 'disabled'} ${open > 0 ? 'title="Fill every open spot before starting the draft"' : ''}>Start draft</button></div>`
       : '<p class="muted" style="margin:0">Waiting for the commissioner to start the draft.</p>'}`;
+
+  const copyBtn = document.getElementById('copy-invite-btn');
+  if (copyBtn) copyBtn.onclick = () => {
+    navigator.clipboard.writeText(inviteUrl).then(() => {
+      const msg = document.getElementById('invite-copied-msg');
+      if (msg) { msg.style.display = 'inline'; setTimeout(() => msg.style.display = 'none', 3000); }
+    }).catch(() => {
+      prompt('Copy invite link:', inviteUrl);
+    });
+  };
+
   const fill = document.getElementById('fill-ai');
   if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
   const start = document.getElementById('start-draft');

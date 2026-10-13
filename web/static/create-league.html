@@ -26,13 +26,14 @@
 <body>
 <div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
 
-  <div class="nav">
-    <span class="nav-brand">Fantasy Sports Company</span>
-    <div style="display:flex;gap:var(--space-4)">
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <span class="nav-brand">Fantasy Sports Company</span>
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
       <a href="/static/create-league.html" aria-current="page">Create league</a>
     </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
   </div>
 
   <div style="max-width:640px;margin:0 auto;padding:var(--space-8) var(--space-5)">
@@ -50,10 +51,10 @@
         <input type="text" id="league-name" placeholder="e.g. The Gridiron Gauntlet" value="My League">
       </div>
 
-      <div class="field">
+      <div class="field" id="commissioner-name-field">
         <label for="commissioner-name">Your name</label>
         <input type="text" id="commissioner-name" maxlength="100" placeholder="e.g. Alex" value="Commissioner">
-        <span class="hint">Used for this prototype session and as the league commissioner name.</span>
+        <span class="hint" id="commissioner-name-hint">Used as your commissioner identity. Or <a href="/static/login.html?redirect=%2Fstatic%2Fcreate-league.html">sign in with an account</a>.</span>
       </div>
 
       <div class="field">

@@ -112,8 +112,16 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         Week.universe_id == nhl.id, Week.season_year == season_year, Week.start_date <= target_date, Week.end_date >= target_date
     ).first()
     if not week:
+        existing_numbers = {
+            w.week_number for w in db.query(Week.week_number).filter(
+                Week.universe_id == nhl.id, Week.season_year == season_year
+            )
+        }
+        next_num = 0
+        while next_num in existing_numbers:
+            next_num += 1
         week = Week(
-            universe_id=nhl.id, season_year=season_year, week_number=0, start_date=w_start, end_date=w_end, is_playoffs=False,
+            universe_id=nhl.id, season_year=season_year, week_number=next_num, start_date=w_start, end_date=w_end, is_playoffs=False,
         )
         db.add(week)
         db.flush()
@@ -313,7 +321,18 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
         Week.universe_id == nhl.id, Week.season_year == season_year, Week.start_date <= w_start, Week.end_date >= w_start
     ).first()
     if not week:
-        week = Week(universe_id=nhl.id, season_year=season_year, week_number=1, start_date=w_start, end_date=w_start + datetime.timedelta(days=6), is_playoffs=False)
+        existing_numbers = {
+            w.week_number for w in db.query(Week.week_number).filter(
+                Week.universe_id == nhl.id, Week.season_year == season_year
+            )
+        }
+        next_num = 1
+        while next_num in existing_numbers:
+            next_num += 1
+        week = Week(
+            universe_id=nhl.id, season_year=season_year, week_number=next_num,
+            start_date=w_start, end_date=w_start + datetime.timedelta(days=6), is_playoffs=False,
+        )
         db.add(week)
         db.flush()
 
