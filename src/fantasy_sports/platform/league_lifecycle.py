@@ -33,6 +33,9 @@ from fantasy_sports.platform.db.models.core import (
     SimulatorReveal,
     Team,
     TeamPeckingOrder,
+    Trade,
+    TradeItem,
+    TradeVote,
     WeeklyContest,
     WeeklyContestEntry,
     WeeklyContestPairing,
@@ -128,11 +131,16 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(DraftPick).filter(DraftPick.draft_id.in_(draft_ids)).delete(synchronize_session=False)
         db.query(Draft).filter(Draft.id.in_(draft_ids)).delete(synchronize_session=False)
 
-    # 8. Matchups, requests, settings, transactions
+    # 8. Matchups, requests, settings, transactions, trades
     db.query(WeeklyMatchup).filter(WeeklyMatchup.league_id == league_id).delete(synchronize_session=False)
     db.query(MatchupRequest).filter(MatchupRequest.league_id == league_id).delete(synchronize_session=False)
     db.query(ScheduleSettings).filter(ScheduleSettings.league_id == league_id).delete(synchronize_session=False)
     db.query(FreeAgencyTransaction).filter(FreeAgencyTransaction.league_id == league_id).delete(synchronize_session=False)
+    trade_ids = [t.id for t in db.query(Trade).filter_by(league_id=league_id)]
+    if trade_ids:
+        db.query(TradeVote).filter(TradeVote.trade_id.in_(trade_ids)).delete(synchronize_session=False)
+        db.query(TradeItem).filter(TradeItem.trade_id.in_(trade_ids)).delete(synchronize_session=False)
+        db.query(Trade).filter(Trade.id.in_(trade_ids)).delete(synchronize_session=False)
 
     # 9. Team-level child records
     if team_ids:

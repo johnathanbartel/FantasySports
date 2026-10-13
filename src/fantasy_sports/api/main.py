@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from fantasy_sports.api.routers import (
-    auction, banking, draft, draft_broadcast, entitlements, league_home, leagues, media, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, weekly_redraft,
+    auction, banking, draft, draft_broadcast, entitlements, league_home, leagues, media, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
@@ -54,6 +54,7 @@ app.include_router(series_standings.router)
 app.include_router(pecking_order.router)
 app.include_router(simulator.router)
 app.include_router(banking.router)
+app.include_router(trades.router)
 
 
 @app.middleware("http")
@@ -62,7 +63,9 @@ async def revalidate_static(request, call_next):
     reusing a stale copy, so a fix like a missing CSS token shows up straight away."""
     response = await call_next(request)
     if request.url.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
 

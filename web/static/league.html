@@ -80,11 +80,11 @@
   </div>
 </div>
 
-<script src="/static/session.js"></script>
-<script src="/static/roster-lines.js"></script>
-<script src="/static/roster-grid.js"></script>
-<script src="/static/assign-team-modal.js"></script>
-<script src="/static/conference-modal.js"></script>
+<script src="/static/session.js?v=20261013"></script>
+<script src="/static/roster-lines.js?v=20261013"></script>
+<script src="/static/roster-grid.js?v=20261013"></script>
+<script src="/static/assign-team-modal.js?v=20261013"></script>
+<script src="/static/conference-modal.js?v=20261013"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -99,7 +99,7 @@ const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
-const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['schedule', 'Schedule'],
+const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
 const tabList = () => ALL_TABS.filter(([id]) => id !== 'rankings' || (ov && ov.has_rankings));
@@ -137,11 +137,11 @@ async function go(id, extra = {}) {
   if (extra.team_id) activeTeamId = extra.team_id;
   showError(''); showResult('');
   const u = new URL(location.href); u.searchParams.set('tab', id);
-  if (activeTeamId && (id === 'roster' || id === 'transactions')) u.searchParams.set('team_id', activeTeamId); else u.searchParams.delete('team_id');
+  if (activeTeamId && (id === 'roster' || id === 'transactions' || id === 'trades')) u.searchParams.set('team_id', activeTeamId); else u.searchParams.delete('team_id');
   history.replaceState(null, '', u);
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
-  try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, schedule: renderSchedule,
+  try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, trades: renderTrades, schedule: renderSchedule,
                 standings: renderStandings, stats: renderStats, teams: renderTeams, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
@@ -355,7 +355,7 @@ function matchupRating(game) {
   return base + (game.is_home ? 1.0 : -0.5);
 }
 
-// ---- NHL roster: positions down the left, Lines 1-4 across; click two players of one position to swap them ----
+// ---- NHL roster: positions down the left, Lines 1-3 across; click two players of one position to swap them ----
 let gridGroups = [], gridSel = null;
 let activeHockeyWindow = 1;
 let hockeySchedule = null;
@@ -612,7 +612,7 @@ function paintHockeyRoster() {
     <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-3 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
       <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
-        ${Array.from({length: RosterGrid.LINES}, (_, i) => i + 1).map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
+        ${Array.from({length: (typeof RosterGrid !== 'undefined' && RosterGrid.LINES) ? RosterGrid.LINES : 3}, (_, i) => i + 1).map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
         ${grid.rows.map(r => `<tr><th scope="row" style="vertical-align:middle">${r.label}</th>${r.cells.map(c => `<td style="padding:4px">${cellBtn(c)}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div>
     ${reserveGroups.length ? `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)"><h4 style="margin:0 0 var(--space-2)">Not on a line</h4>
@@ -1139,6 +1139,317 @@ async function faAct(kind, assetId) {
     await go('transactions');
     showResult(kind === 'add' ? `Signed ${r.display_name}${ov.is_college ? ' for ' + money(r.price) : ''}.` : `Dropped ${r.display_name}.`);
   } catch (e) { showError(e.message); }
+}
+
+// ---- TRADES: Direct human trades and AI trades with league majority approval ------------------------
+let tradeSelectedOppId = null;
+
+async function renderTrades() {
+  await refreshOverview(); ensureActiveTeam();
+  const t = activeTeam();
+  const can = canManage(t);
+  const otherTeams = ov.teams.filter(x => x.id !== t.id);
+  if (!tradeSelectedOppId || tradeSelectedOppId === t.id || !otherTeams.some(x => x.id === tradeSelectedOppId)) {
+    tradeSelectedOppId = otherTeams[0]?.id || null;
+  }
+
+  const [tradeList, myRoster, oppRoster] = await Promise.all([
+    api(`/leagues/${LEAGUE_ID}/trades`),
+    api(`/teams/${t.id}/roster`),
+    tradeSelectedOppId ? api(`/teams/${tradeSelectedOppId}/roster`).catch(() => []) : Promise.resolve([]),
+  ]);
+
+  const votingTrades = tradeList.filter(x => x.status === 'voting');
+  const incomingDirect = tradeList.filter(x => x.status === 'proposed' && x.counterparty_team_id === t.id);
+  const outgoingDirect = tradeList.filter(x => x.status === 'proposed' && x.proposer_team_id === t.id);
+  const pastTrades = tradeList.filter(x => ['accepted', 'declined', 'rejected', 'cancelled'].includes(x.status));
+
+  const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
+  const sortRoster = (r) => r.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
+
+  const oppTeam = teamsById[tradeSelectedOppId];
+  const isOppAi = oppTeam?.is_ai_owned;
+
+  const assetPill = (a) => `
+    <span class="tag tag-neutral" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;margin:2px">
+      ${posTag(a.position)} <strong>${esc(a.display_name)}</strong>
+      ${a.points != null ? `<span class="muted" style="font-size:11px">(${pts(a.points)} pts)</span>` : ''}
+    </span>`;
+
+  $('content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
+      <div>
+        <div class="card-kicker">Acting for</div>
+        ${teamPicker('team-pick')}
+      </div>
+      <div style="font-size:13px" class="muted">
+        Trades with AI teams require <strong>league majority approval</strong> (&gt;50% of league teams) before executing.
+      </div>
+    </div>
+
+    <!-- Active Trades Requiring Majority Approval -->
+    <div style="margin-bottom:var(--space-6)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+        <h3 style="margin:0">Trades Awaiting League Majority Approval</h3>
+        <span class="muted" style="font-size:12px">${votingTrades.length} active</span>
+      </div>
+      ${votingTrades.length ? votingTrades.map(tr => {
+        const hasVoted = tr.user_vote != null;
+        return `
+          <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-3);border-left:4px solid var(--color-accent)">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
+              <div>
+                <strong style="font-size:15px">${esc(tr.proposer_team_name)}</strong> ${tr.proposer_is_ai ? '<span class="pill ai">AI</span>' : ''}
+                <span class="muted" style="margin:0 6px">⇄</span>
+                <strong style="font-size:15px">${esc(tr.counterparty_team_name)}</strong> ${tr.counterparty_is_ai ? '<span class="pill ai">AI</span>' : ''}
+              </div>
+              <div style="display:flex;gap:var(--space-2);align-items:center">
+                <span class="tag" style="background:#451a03;color:#fbbf24;font-size:11px;font-weight:600">
+                  Majority Vote: ${tr.approvals} / ${tr.majority_needed} needed (${tr.rejections} rejected)
+                </span>
+                ${(can && tr.proposer_team_id === t.id) ? `<button type="button" class="btn btn-ghost btn-sm" data-trade-cancel="${tr.id}" style="font-size:11px;color:var(--color-danger)">Cancel Trade</button>` : ''}
+              </div>
+            </div>
+
+            <div class="grid2" style="margin-bottom:var(--space-3);gap:var(--space-3)">
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px;text-transform:uppercase;font-weight:700">${esc(tr.proposer_team_name)} receives:</div>
+                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+              </div>
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px;text-transform:uppercase;font-weight:700">${esc(tr.counterparty_team_name)} receives:</div>
+                <div>${tr.send_assets.map(assetPill).join('')}</div>
+              </div>
+            </div>
+
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--color-divider)">
+              <div style="font-size:12px">
+                ${hasVoted ? `<span style="color:var(--color-accent);font-weight:600">Your team voted: ${tr.user_vote === 'approve' ? 'Approved ✓' : 'Rejected ✗'}</span>` : '<span class="muted">Your vote is needed for this trade.</span>'}
+              </div>
+              ${can ? `
+                <div style="display:flex;gap:var(--space-2)">
+                  <button type="button" class="btn ${tr.user_vote === 'approve' ? 'btn-primary' : 'btn-secondary'}" data-trade-vote="${tr.id}" data-vote="approve" style="font-size:12px;padding:4px 12px">Approve (${tr.approvals})</button>
+                  <button type="button" class="btn ${tr.user_vote === 'reject' ? 'btn-primary' : 'btn-secondary'}" data-trade-vote="${tr.id}" data-vote="reject" style="font-size:12px;padding:4px 12px;color:var(--color-danger)">Reject (${tr.rejections})</button>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      }).join('') : '<div class="card elev-sm" style="padding:var(--space-4)"><p class="muted" style="margin:0">No active AI trades requiring vote.</p></div>'}
+    </div>
+
+    <!-- Direct Incoming & Outgoing Human Trades -->
+    ${(incomingDirect.length || outgoingDirect.length) ? `
+      <div style="margin-bottom:var(--space-6)">
+        <h3 style="margin:0 0 var(--space-2)">Direct Trade Proposals</h3>
+        ${incomingDirect.map(tr => `
+          <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-3);border-left:4px solid var(--color-primary)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
+              <div><strong>Offer from ${esc(tr.proposer_team_name)}</strong></div>
+              ${can ? `
+                <div style="display:flex;gap:var(--space-2)">
+                  <button type="button" class="btn btn-primary btn-sm" data-trade-respond="${tr.id}" data-accept="true">Accept Trade</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-trade-respond="${tr.id}" data-accept="false">Decline</button>
+                </div>
+              ` : ''}
+            </div>
+            <div class="grid2" style="gap:var(--space-3)">
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px">You receive:</div>
+                <div>${tr.send_assets.map(assetPill).join('')}</div>
+              </div>
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px">You give up:</div>
+                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+
+        ${outgoingDirect.map(tr => `
+          <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-3)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
+              <div><strong>Offer sent to ${esc(tr.counterparty_team_name)}</strong> <span class="muted" style="font-size:12px">(Pending response)</span></div>
+              ${can ? `<button type="button" class="btn btn-ghost btn-sm" data-trade-cancel="${tr.id}" style="color:var(--color-danger)">Cancel</button>` : ''}
+            </div>
+            <div class="grid2" style="gap:var(--space-3)">
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px">You receive:</div>
+                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+              </div>
+              <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
+                <div class="muted" style="font-size:11px;margin-bottom:4px">You send:</div>
+                <div>${tr.send_assets.map(assetPill).join('')}</div>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    <!-- Propose Trade Form -->
+    <div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)">
+      <h3 style="margin:0 0 var(--space-2)">Propose a Trade</h3>
+      <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">
+        Trade players with any team in the league. Select the opponent team, choose players to send from your roster, and players to receive from theirs.
+      </p>
+
+      <div style="margin-bottom:var(--space-4);max-width:360px">
+        <label for="trade-opp" style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">Select trading partner:</label>
+        <select id="trade-opp" class="inp" style="width:100%">
+          ${otherTeams.map(o => `<option value="${o.id}" ${o.id === tradeSelectedOppId ? 'selected' : ''}>${esc(o.name)}${o.is_ai_owned ? ' (AI Team)' : ''}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="note" style="margin-bottom:var(--space-4)">
+        ${isOppAi
+          ? '<strong>Trading with an AI team:</strong> This proposal will be submitted to the league for majority approval (&gt;50% of teams must approve). Proposer automatically votes approve.'
+          : '<strong>Trading with a human manager:</strong> This proposal will be delivered directly to ' + esc(oppTeam?.name || 'them') + ' to review and accept or decline.'}
+      </div>
+
+      <div class="grid2" style="margin-bottom:var(--space-4)">
+        <div style="border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3)">
+          <h4 style="margin:0 0 var(--space-2)">You send (${esc(t.name)})</h4>
+          <div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:4px" id="trade-send-list">
+            ${sortRoster(myRoster).map(p => `
+              <label style="display:flex;align-items:center;gap:var(--space-2);padding:4px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px">
+                <input type="checkbox" name="trade-send-chk" value="${p.draftable_asset_id}">
+                ${posTag(p.position)}
+                <span style="flex:1"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+                <span class="pts muted">${pts(p.last_season_points)} pts</span>
+              </label>
+            `).join('') || '<p class="muted">No players rostered.</p>'}
+          </div>
+        </div>
+
+        <div style="border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3)">
+          <h4 style="margin:0 0 var(--space-2)">You receive (${esc(oppTeam?.name || 'Opponent')})</h4>
+          <div style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:4px" id="trade-recv-list">
+            ${sortRoster(oppRoster).map(p => `
+              <label style="display:flex;align-items:center;gap:var(--space-2);padding:4px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px">
+                <input type="checkbox" name="trade-recv-chk" value="${p.draftable_asset_id}">
+                ${posTag(p.position)}
+                <span style="flex:1"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+                <span class="pts muted">${pts(p.last_season_points)} pts</span>
+              </label>
+            `).join('') || '<p class="muted">No players rostered on opponent team.</p>'}
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:flex-end;gap:var(--space-2)">
+        <button type="button" class="btn btn-primary" id="btn-submit-trade" ${can ? '' : 'disabled'}>Submit Trade Proposal</button>
+      </div>
+    </div>
+
+    <!-- Completed / Past Trades -->
+    <div>
+      <h3 style="margin:0 0 var(--space-2)">Trade History</h3>
+      <div class="card elev-sm" style="padding:var(--space-3) var(--space-4)">
+        ${pastTrades.length ? pastTrades.map(tr => `
+          <div class="row" style="flex-wrap:wrap;gap:var(--space-2);padding:8px 0">
+            <span class="tag" style="min-width:70px;justify-content:center;${tr.status === 'accepted' ? 'background:#052e16;color:#4ade80' : 'background:#451a03;color:#fbbf24'}">${tr.status.toUpperCase()}</span>
+            <div style="flex:1;min-width:240px">
+              <strong>${esc(tr.proposer_team_name)}</strong> gave ${tr.send_assets.map(a => esc(a.display_name)).join(', ') || 'nothing'}
+              <span class="muted">to</span>
+              <strong>${esc(tr.counterparty_team_name)}</strong> for ${tr.receive_assets.map(a => esc(a.display_name)).join(', ') || 'nothing'}
+            </div>
+            <span class="muted" style="font-size:12px">${tr.resolved_at ? new Date(tr.resolved_at).toLocaleDateString() : ''}</span>
+          </div>
+        `).join('') : '<p class="muted" style="margin:var(--space-2) 0">No completed trades yet.</p>'}
+      </div>
+    </div>
+  `;
+
+  $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('trades'); };
+
+  $('trade-opp').onchange = () => {
+    tradeSelectedOppId = Number($('trade-opp').value);
+    renderTrades();
+  };
+
+  $('btn-submit-trade').onclick = async () => {
+    showError(''); showResult('');
+    const sendChecks = document.querySelectorAll('input[name="trade-send-chk"]:checked');
+    const recvChecks = document.querySelectorAll('input[name="trade-recv-chk"]:checked');
+    const sendIds = Array.from(sendChecks).map(c => Number(c.value));
+    const recvIds = Array.from(recvChecks).map(c => Number(c.value));
+
+    if (!sendIds.length || !recvIds.length) {
+      showError('Please select at least one player to send and one player to receive.');
+      return;
+    }
+
+    try {
+      const res = await FSC.post(`/leagues/${LEAGUE_ID}/trades`, {
+        proposer_team_id: t.id,
+        counterparty_team_id: tradeSelectedOppId,
+        send_asset_ids: sendIds,
+        receive_asset_ids: recvIds,
+      });
+      if (res.status === 'accepted') {
+        showResult('Trade approved and executed!');
+      } else if (res.status === 'voting') {
+        showResult(`Trade proposed to ${esc(res.counterparty_team_name)}! Requires league majority approval before executing.`);
+      } else {
+        showResult(`Trade proposal sent to ${esc(res.counterparty_team_name)}.`);
+      }
+      await renderTrades();
+    } catch (e) {
+      showError(e.message);
+    }
+  };
+
+  document.querySelectorAll('[data-trade-vote]').forEach(btn => {
+    btn.onclick = async () => {
+      showError(''); showResult('');
+      const tradeId = Number(btn.dataset.tradeVote);
+      const vote = btn.dataset.vote;
+      try {
+        const res = await FSC.post(`/trades/${tradeId}/vote`, {team_id: t.id, vote});
+        if (res.status === 'accepted') {
+          showResult('League majority approval reached! Trade executed successfully.');
+        } else if (res.status === 'rejected') {
+          showResult('Trade rejected by league majority.');
+        } else {
+          showResult(`Vote recorded: ${vote === 'approve' ? 'Approved' : 'Rejected'}. (${res.approvals} of ${res.majority_needed} approvals)`);
+        }
+        await renderTrades();
+      } catch (e) {
+        showError(e.message);
+      }
+    };
+  });
+
+  document.querySelectorAll('[data-trade-respond]').forEach(btn => {
+    btn.onclick = async () => {
+      showError(''); showResult('');
+      const tradeId = Number(btn.dataset.tradeRespond);
+      const accept = btn.dataset.accept === 'true';
+      try {
+        const res = await FSC.post(`/trades/${tradeId}/respond`, {team_id: t.id, accept});
+        showResult(accept ? 'Trade accepted and executed!' : 'Trade offer declined.');
+        await renderTrades();
+      } catch (e) {
+        showError(e.message);
+      }
+    };
+  });
+
+  document.querySelectorAll('[data-trade-cancel]').forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm('Are you sure you want to cancel this trade proposal?')) return;
+      showError(''); showResult('');
+      const tradeId = Number(btn.dataset.tradeCancel);
+      try {
+        await FSC.post(`/trades/${tradeId}/cancel`, {});
+        showResult('Trade cancelled.');
+        await renderTrades();
+      } catch (e) {
+        showError(e.message);
+      }
+    };
+  });
 }
 
 // ---- SCHEDULE: preseason stage + scoreboard ------------------------------------------------------------

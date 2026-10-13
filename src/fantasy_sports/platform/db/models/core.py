@@ -876,6 +876,69 @@ class FreeAgencyTransaction(Base):
     draftable_asset: Mapped["DraftableAsset"] = relationship()
 
 
+class Trade(Base):
+    """A trade proposal between two teams in a league.
+    status:
+      'proposed': direct trade waiting for counterparty human manager to accept/decline.
+      'voting': trade involves an AI team, waiting for league majority approval.
+      'accepted': trade was agreed upon and executed (players swapped).
+      'declined': counterparty declined the trade.
+      'rejected': trade was voted down by the league.
+      'cancelled': proposer withdrew the trade.
+    """
+
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    proposer_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    counterparty_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="proposed")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    league: Mapped["League"] = relationship(foreign_keys=[league_id])
+    proposer_team: Mapped["Team"] = relationship(foreign_keys=[proposer_team_id])
+    counterparty_team: Mapped["Team"] = relationship(foreign_keys=[counterparty_team_id])
+    items: Mapped[list["TradeItem"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
+    votes: Mapped[list["TradeVote"]] = relationship(back_populates="trade", cascade="all, delete-orphan")
+
+
+class TradeItem(Base):
+    """An asset included in a trade proposal and which team is sending it."""
+
+    __tablename__ = "trade_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("trades.id"), index=True)
+    sender_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+
+    trade: Mapped["Trade"] = relationship(back_populates="items")
+    sender_team: Mapped["Team"] = relationship(foreign_keys=[sender_team_id])
+    draftable_asset: Mapped["DraftableAsset"] = relationship(foreign_keys=[draftable_asset_id])
+
+
+class TradeVote(Base):
+    """A vote cast by a team in the league on an AI-involved trade requiring league majority approval."""
+
+    __tablename__ = "trade_votes"
+    __table_args__ = (
+        UniqueConstraint("trade_id", "team_id", name="uq_trade_vote_team"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("trades.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    vote: Mapped[str] = mapped_column(String(10))   # "approve" or "reject"
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+    trade: Mapped["Trade"] = relationship(back_populates="votes")
+    team: Mapped["Team"] = relationship(foreign_keys=[team_id])
+
+
+
 class ScheduleSettings(Base):
     """The preseason schedule stage of a league (platform/schedule.py): "open" while teams
     may still request different opponents, "closed" once the commissioner has closed it

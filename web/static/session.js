@@ -25,6 +25,13 @@ const FSC = (() => {
   const post = (path, body) => api(path, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}),
   });
+  const put = (path, body) => api(path, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}),
+  });
+  const patch = (path, body) => api(path, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}),
+  });
+  const del = (path) => api(path, { method: 'DELETE' });
 
   async function register(email, displayName, password) {
     const s = await fetch('/sessions/register', {
@@ -126,5 +133,5 @@ const FSC = (() => {
     }
   }
 
-  return {api, post, register, login, logout, signOut: logout, signIn, createGuest, current, user: read, renderNav};
+  return {api, post, put, patch, del, delete: del, register, login, logout, signOut: logout, signIn, createGuest, current, user: read, renderNav};
 })();

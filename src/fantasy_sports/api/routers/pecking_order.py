@@ -63,7 +63,8 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
     team_map = {t.id: t for t in db.query(RealTeam)}
     groups = []
     for g in po.GROUPS:
-        ranked = [_player_out(roster, pid, i, rates, team_map) for i, pid in enumerate(order[g], start=1) if pid in roster]
+        valid_order = order[g][:po.DEPTH[g]]
+        ranked = [_player_out(roster, pid, i, rates, team_map) for i, pid in enumerate(valid_order, start=1) if pid in roster]
         taken = {p.player_id for p in ranked}
         unranked = sorted((_player_out(roster, pid, None, rates, team_map) for pid, (_, pl) in roster.items()
                            if po.GROUP_BY_POSITION.get(pl.position) == g and pid not in taken),
