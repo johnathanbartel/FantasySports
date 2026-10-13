@@ -55,6 +55,24 @@
         <input type="text" id="league-name" placeholder="e.g. The Gridiron Gauntlet" value="My League">
       </div>
 
+      <!-- Signed-in Commissioner Identity Banner -->
+      <div id="commissioner-auth-card" style="display:none;padding:var(--space-3) var(--space-4);background:color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));border:1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-divider));border-radius:var(--radius-md);margin-bottom:var(--space-4)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);flex-wrap:wrap">
+          <div>
+            <div style="font-size:11px;color:var(--color-accent);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:2px">Commissioner Identity</div>
+            <div style="font-size:14px">
+              Creating as <strong id="commissioner-badge-name"></strong>
+              <span id="commissioner-badge-email" class="text-muted" style="font-size:13px;margin-left:4px"></span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--space-2)">
+            <span class="tag tag-accent" style="font-size:11px">Signed In</span>
+            <button type="button" class="btn btn-ghost" id="commissioner-switch-btn" style="font-size:12px;padding:2px 8px">Switch account</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Guest Commissioner Name Field -->
       <div class="field" id="commissioner-name-field">
         <label for="commissioner-name">Your name</label>
         <input type="text" id="commissioner-name" maxlength="100" placeholder="e.g. Alex" value="Commissioner">
@@ -204,6 +222,62 @@ function showError(msg) {
 let league = null; // LeagueOut, once step 1 succeeds
 let leagueUser = null;
 
+function isGuestSession(u) {
+  return !u || !u.email || u.email.endsWith('@users.invalid');
+}
+
+function updateCommissionerUI() {
+  const authCard = document.getElementById('commissioner-auth-card');
+  const nameField = document.getElementById('commissioner-name-field');
+  const badgeName = document.getElementById('commissioner-badge-name');
+  const badgeEmail = document.getElementById('commissioner-badge-email');
+  const nameInput = document.getElementById('commissioner-name');
+
+  if (leagueUser && !isGuestSession(leagueUser)) {
+    if (authCard) authCard.style.display = 'block';
+    if (nameField) nameField.style.display = 'none';
+    if (badgeName) badgeName.textContent = leagueUser.display_name || 'Commissioner';
+    if (badgeEmail) {
+      badgeEmail.textContent = leagueUser.email ? `(${leagueUser.email})` : '';
+    }
+    if (nameInput) nameInput.value = leagueUser.display_name || 'Commissioner';
+  } else {
+    if (authCard) authCard.style.display = 'none';
+    if (nameField) nameField.style.display = 'flex';
+    if (leagueUser && leagueUser.display_name && nameInput && (!nameInput.value || nameInput.value === 'Commissioner')) {
+      nameInput.value = leagueUser.display_name;
+    }
+  }
+}
+
+// Synchronous initial check to avoid UI flicker
+leagueUser = FSC.user();
+updateCommissionerUI();
+
+const switchBtn = document.getElementById('commissioner-switch-btn');
+if (switchBtn) {
+  switchBtn.onclick = async () => {
+    await FSC.logout();
+    location.href = '/static/login.html?redirect=' + encodeURIComponent(location.pathname + location.search);
+  };
+}
+
+async function initSession() {
+  try {
+    const verified = await FSC.current();
+    if (verified) {
+      leagueUser = verified;
+    } else {
+      leagueUser = null;
+    }
+  } catch (e) {
+    leagueUser = null;
+  }
+  updateCommissionerUI();
+  FSC.renderNav('nav-auth');
+}
+initSession();
+
 const DEFAULT_AI_NAMES = [
   "Ridgeline Rams", "Harbor City Hawks", "Prairie Thunder", "Summit State Stags",
   "Iron Valley Bears", "Gulf Coast Gators", "Cascade Wolves", "Delta Ravens",
@@ -261,7 +335,11 @@ function renderTeamSlots(leagueSize) {
   const pro = isProSport();
 
   // Slot 1: Commissioner
-  const commishName = (leagueUser && leagueUser.display_name ? leagueUser.display_name + "'s Team" : "My Team");
+  let commishName = "My Team";
+  if (leagueUser && leagueUser.display_name) {
+    const dn = leagueUser.display_name.trim();
+    commishName = dn.endsWith('s') ? `${dn}' Team` : `${dn}'s Team`;
+  }
   const slot1 = document.createElement('div');
   slot1.className = 'card';
   slot1.style.border = '1px solid var(--color-accent)';
@@ -371,13 +449,19 @@ document.getElementById('create-league-btn').onclick = async () => {
   const scheduledRaw = document.getElementById('draft-scheduled-at').value;
 
   try {
-    leagueUser = await FSC.current();
-    if (!leagueUser) {
+    const verified = await FSC.current();
+    if (verified && !isGuestSession(verified)) {
+      leagueUser = verified;
+    } else {
       const commissionerName = document.getElementById('commissioner-name').value.trim();
       if (!commissionerName) return showError('Your name is required.');
-      leagueUser = await FSC.createGuest(commissionerName);
+      if (!verified || verified.display_name !== commissionerName) {
+        leagueUser = await FSC.createGuest(commissionerName);
+      } else {
+        leagueUser = verified;
+      }
     }
-    const commissionerId = leagueUser.user_id;
+    const commissionerId = leagueUser.user_id || leagueUser.id;
     league = await api('/leagues', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({

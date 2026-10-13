@@ -82,6 +82,8 @@ const FSC = (() => {
       const u = await api('/sessions/me');
       const cur = read();
       if (cur) {
+        cur.id = cur.id || u.id;
+        cur.user_id = cur.user_id || u.id;
         cur.display_name = u.display_name;
         if (u.email) cur.email = u.email;
         write(cur);
