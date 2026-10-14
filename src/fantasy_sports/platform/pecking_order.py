@@ -75,22 +75,27 @@ def resolve_starters(
     return result
 
 
-FORWARDS = {"C", "W", "LW", "RW", "F"}
+WING_POSITIONS = {"W", "LW", "RW"}
+CENTER_POSITIONS = {"C"}
 
 
 def is_eligible_for_group(position: str | None, group: str) -> bool:
     """Returns True if the player's position is eligible for the position group.
-    In hockey, forwards (C, W, LW, RW, F) can play both Center and Wing.
+    Supports dual forward eligibility (e.g. C/LW, C/RW, F) where a player can play both Center and Wing.
     """
     if not position:
         return False
-    pos_parts = [p.strip().upper() for p in position.replace('/', ',').replace('-', ',').split(',')]
-    if group in ("C", "W"):
-        return any(p in FORWARDS for p in pos_parts)
+    pos_parts = set(p.strip().upper() for p in position.replace('/', ',').replace('-', ',').split(','))
+    if "F" in pos_parts:
+        return group in ("C", "W")
+    if group == "C":
+        return bool(pos_parts & CENTER_POSITIONS)
+    if group == "W":
+        return bool(pos_parts & WING_POSITIONS)
     if group == "D":
-        return any(p in ("D", "LD", "RD") for p in pos_parts)
+        return bool(pos_parts & {"D", "LD", "RD", "DEF"})
     if group == "G":
-        return any(p == "G" for p in pos_parts)
+        return bool(pos_parts & {"G", "GOALIE"})
     return False
 
 

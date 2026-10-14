@@ -14,7 +14,7 @@ from fantasy_sports.api.schemas import (
 from fantasy_sports.platform import pecking_order as po
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.player_rates import rates_by_asset
-from fantasy_sports.platform.db.models.core import RealTeam, Team, User
+from fantasy_sports.platform.db.models.core import RealTeam, Team, Universe, User
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(prefix="/teams", tags=["pecking-order"])
@@ -71,7 +71,7 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
         ranked = [_player_out(roster, pid, i, rates, team_map) for i, pid in enumerate(valid_order, start=1) if pid in roster]
         taken = {p.player_id for p in ranked}
         unranked = sorted((_player_out(roster, pid, None, rates, team_map) for pid, (_, pl) in roster.items()
-                           if po.is_eligible_for_group(pl.position, g) and pid not in taken),
+                           if po.GROUP_BY_POSITION.get(pl.position) == g and pid not in taken),
                           key=lambda p: (p.display_name, p.player_id))
         groups.append(PeckingOrderGroupOut(position_group=g, max_depth=po.DEPTH[g], starters=po.STARTERS[g],
                                            ranked=ranked, unranked=unranked))
