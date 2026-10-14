@@ -94,7 +94,8 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
             LeagueUniverse.league_id == league.id, Universe.code == "nhl"
         ).first()
         if nhl:
-            today_date = datetime.date.today()
+            from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+            today_date = current_eastern_date()
             start_day = datetime.datetime.combine(today_date, datetime.time.min)
             end_day = start_day + datetime.timedelta(days=1)
             real_games = db.query(Game).filter(
@@ -169,6 +170,7 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db), user: Us
         auto_sync_league_scoreboard(db, league_id)
     except Exception:
         pass
+    db.commit()
     return _out(league, _league_series(db, league_id), db, viewer_user_id=user.id if user else None)
 
 
@@ -178,6 +180,12 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db)):
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(404, "Team not found")
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, team.league_id)
+        db.commit()
+    except Exception:
+        pass
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=team.league_id)}
     out = []
     for s in _league_series(db, team.league_id):

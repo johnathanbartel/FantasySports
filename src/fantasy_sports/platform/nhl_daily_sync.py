@@ -81,6 +81,17 @@ def to_eastern_naive(utc_dt: datetime.datetime) -> datetime.datetime:
     return utc_naive + offset
 
 
+def current_eastern_date() -> datetime.date:
+    """Returns today's calendar date in North American Eastern Time.
+    Ensures date queries match authentic NHL game dates rather than UTC server midnight rollovers.
+    """
+    try:
+        return to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
+    except Exception:
+        return datetime.date.today()
+
+
+
 def _shot_clock_seconds(period: int, clock_str: str) -> int:
     try:
         minutes, seconds = clock_str.split(":")
@@ -172,24 +183,30 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         home_score = g_meta.get("homeTeam", {}).get("score", 0)
         away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
-        # Match existing Game or insert a new one
-        game = db.query(Game).filter(
+        # Match existing Game or insert a new one (+/- 18h window catches legacy UTC kickoff rows)
+        win_start = game_start_et - datetime.timedelta(hours=18)
+        win_end = game_start_et + datetime.timedelta(hours=18)
+        existing_games = db.query(Game).filter(
             Game.universe_id == nhl.id, Game.home_team_id == home_team.id,
-            Game.away_team_id == away_team.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
-        ).first()
-        if not game:
+            Game.away_team_id == away_team.id, Game.kickoff_at >= win_start, Game.kickoff_at <= win_end
+        ).all()
+        if existing_games:
+            game = existing_games[0]
+            game.home_score = home_score
+            game.away_score = away_score
+            game.status = game_status
+            game.kickoff_at = game_start_et
+            if len(existing_games) > 1:
+                for dup in existing_games[1:]:
+                    db.delete(dup)
+            db.flush()
+        else:
             game = Game(
                 universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
                 home_score=home_score, away_score=away_score, kickoff_at=game_start_et,
                 status=game_status,
             )
             db.add(game)
-            db.flush()
-        else:
-            game.home_score = home_score
-            game.away_score = away_score
-            game.status = game_status
-            game.kickoff_at = game_start_et
             db.flush()
 
         # If already final and has shots, no need to re-fetch PBP
@@ -432,11 +449,11 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
             home_score = g_meta.get("homeTeam", {}).get("score", 0)
             away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
-            day_start = datetime.datetime.combine(d_date, datetime.time.min)
-            day_end = day_start + datetime.timedelta(days=1)
+            win_start = kickoff_naive - datetime.timedelta(hours=18)
+            win_end = kickoff_naive + datetime.timedelta(hours=18)
             existing_games = db.query(Game).filter(
                 Game.universe_id == nhl.id, Game.home_team_id == home_team.id,
-                Game.away_team_id == away_team.id, Game.kickoff_at >= day_start, Game.kickoff_at < day_end
+                Game.away_team_id == away_team.id, Game.kickoff_at >= win_start, Game.kickoff_at <= win_end
             ).all()
             if existing_games:
                 existing = existing_games[0]
@@ -541,32 +558,21 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     if not nhl:
         return
 
-    try:
-        now_et = datetime.datetime.now(ZoneInfo("America/New_York"))
-        today_et = now_et.date()
-    except Exception:
-        today_et = datetime.date.today()
-
-    try:
-        now_pt = datetime.datetime.now(ZoneInfo("America/Los_Angeles"))
-        today_pt = now_pt.date()
-    except Exception:
-        today_pt = today_et
-
-    max_active_date = max(today_et, today_pt)
+    today_et = current_eastern_date()
+    max_active_date = today_et
     # Ensure this week's full schedule is seeded so Pecking Order accurately sees all games in the window
     try:
         seed_week_schedule_if_needed(db, nhl, max_active_date)
-        db.flush()
+        db.commit()
     except Exception:
-        pass
+        db.rollback()
 
     # Sync active NHL team rosters / AHL callups into the player pool
     try:
         sync_nhl_roster_callups(db, nhl)
-        db.flush()
+        db.commit()
     except Exception:
-        pass
+        db.rollback()
 
     # 2. Check unfinalized fantasy daily games up to max_active_date
     unfinalized_dates = [

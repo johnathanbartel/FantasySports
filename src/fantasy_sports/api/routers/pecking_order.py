@@ -103,22 +103,26 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
     real_schedules: dict[str, dict[int, list[dict]]] = {}
     nhl = db.query(Universe).filter_by(code="nhl").first()
     first_series = db.query(LeagueSeries).filter_by(league_id=team.league_id).order_by(LeagueSeries.start_date).first()
-    w_start = first_series.start_date if first_series else week_start(datetime.date.today())
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date, to_eastern_naive
+    w_start = first_series.start_date if first_series else week_start(current_eastern_date())
     w_begin = datetime.datetime.combine(w_start, datetime.time.min)
     w_end = w_begin + datetime.timedelta(days=7)
 
     day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     games = db.query(Game).filter(
         Game.universe_id == (nhl.id if nhl else 2),
-        Game.kickoff_at >= w_begin,
-        Game.kickoff_at < w_end
+        Game.kickoff_at >= w_begin - datetime.timedelta(hours=6),
+        Game.kickoff_at < w_end + datetime.timedelta(hours=6)
     ).order_by(Game.kickoff_at).all()
 
     seen_matchups: set[tuple[str, int, str, str]] = set()
     for g in games:
         if not g.kickoff_at:
             continue
-        g_date = g.kickoff_at.date()
+        et_dt = to_eastern_naive(g.kickoff_at) if g.kickoff_at.hour < 5 else g.kickoff_at
+        g_date = et_dt.date()
+        if g_date < w_start or g_date >= w_start + datetime.timedelta(days=7):
+            continue
         win_idx = series_window_of(g_date, w_start)
         day_str = day_names[g_date.weekday()]
         home_t = team_map.get(g.home_team_id)
@@ -154,6 +158,11 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
 @router.get("/{team_id}/pecking-order", response_model=PeckingOrderOut)
 def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
     team = _team(db, team_id)
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, team.league_id)
+    except Exception:
+        pass
     ai_roster.tick(db, team.league_id)      # AI teams set their own lines (platform/ai/ai_roster.py)
     db.commit()
     return _read(db, team)
