@@ -3,6 +3,9 @@ NHL pecking order: read/reorder a team's ranked depth chart and resolve a day's 
 activity data passed in by the caller (see platform/pecking_order.py for the rules).
 """
 
+from __future__ import annotations
+
+import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -78,7 +81,6 @@ def series_window_of(d: datetime.date, series_start: datetime.date) -> int:
 
 
 def _read(db: Session, team: Team) -> PeckingOrderOut:
-    import datetime
     from fantasy_sports.platform.db.models.core import Game, LeagueSeries
     from fantasy_sports.sports.hockey.pipeline import week_start, window_of
 

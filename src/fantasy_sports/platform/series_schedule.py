@@ -19,6 +19,8 @@ Contract:
     input a later step uses to mark off days.
 """
 
+from __future__ import annotations
+
 import datetime
 from dataclasses import dataclass
 
