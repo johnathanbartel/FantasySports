@@ -160,6 +160,9 @@ def get_league_draft(league_id: int, db: Session = Depends(get_db)):
     draft = db.query(Draft).filter(Draft.league_id == league_id).order_by(Draft.id.desc()).first()
     if draft is None:
         raise HTTPException(404, "This league has no draft yet")
+    if draft.status == "in_progress" and _next_open_pick(db, draft.id) is None:
+        _close_if_finished(db, draft.id)
+        db.commit()
     return draft
 
 
@@ -168,11 +171,18 @@ def get_draft(draft_id: int, db: Session = Depends(get_db)):
     draft = db.get(Draft, draft_id)
     if draft is None:
         raise HTTPException(404, "Draft not found")
+    if draft.status == "in_progress" and _next_open_pick(db, draft.id) is None:
+        _close_if_finished(db, draft.id)
+        db.commit()
     return draft
 
 
 @router.get("/{draft_id}/picks", response_model=list[DraftPickOut])
 def get_pick_history(draft_id: int, db: Session = Depends(get_db)):
+    draft = db.get(Draft, draft_id)
+    if draft and draft.status == "in_progress" and _next_open_pick(db, draft_id) is None:
+        _close_if_finished(db, draft_id)
+        db.commit()
     picks = (
         db.query(DraftPick)
         .filter(DraftPick.draft_id == draft_id)
@@ -223,11 +233,15 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
 def _close_if_finished(db: Session, draft_id: int) -> None:
     if _next_open_pick(db, draft_id) is None:
         draft = db.get(Draft, draft_id)
-        draft.status = "complete"
-        draft.completed_at = datetime.datetime.utcnow()
-        draft_clock.clear(draft)
-        # Free agency opens now (platform/free_agency.is_open), and a league that doesn't set its own schedule gets one.
-        auto_schedule.ensure_schedule(db, db.get(League, draft.league_id))
+        if draft and draft.status != "complete":
+            draft.status = "complete"
+            if not draft.completed_at:
+                draft.completed_at = datetime.datetime.utcnow()
+            draft_clock.clear(draft)
+            # Free agency opens now (platform/free_agency.is_open), and a league that doesn't set its own schedule gets one.
+            league = db.get(League, draft.league_id)
+            if league:
+                auto_schedule.ensure_schedule(db, league)
 
 
 def _next_open_pick(db: Session, draft_id: int) -> DraftPick | None:
@@ -352,6 +366,8 @@ def get_clock(draft_id: int, db: Session = Depends(get_db)):
     draft = _lock_draft(db, draft_id)
     now = utcnow()
     process_overdue(db, draft, now)
+    if draft.status == "in_progress" and _next_open_pick(db, draft.id) is None:
+        _close_if_finished(db, draft.id)
     db.commit()
     return _clock_out(db, draft, now)
 

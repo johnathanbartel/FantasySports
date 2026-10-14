@@ -13,8 +13,31 @@ def is_college(db: Session, league_id: int) -> bool:
 
 def draft_state(db: Session, league_id: int) -> str:
     """not_started / in_progress / complete across snake, auction and recruiting drafts."""
-    from fantasy_sports.platform.db.models.core import AuctionDraft, Draft, RecruitingDraft
-    statuses = [d.status for d in db.query(Draft).filter(Draft.league_id == league_id)]
+    import datetime
+    from fantasy_sports.platform.db.models.core import AuctionDraft, Draft, RecruitingDraft, DraftPick, League
+    from fantasy_sports.platform import auto_schedule, draft_clock
+
+    drafts = db.query(Draft).filter(Draft.league_id == league_id).all()
+    for d in drafts:
+        if d.status == "in_progress":
+            open_pick = db.query(DraftPick.id).filter(
+                DraftPick.draft_id == d.id, DraftPick.draftable_asset_id.is_(None)
+            ).first()
+            if open_pick is None and db.query(DraftPick.id).filter(DraftPick.draft_id == d.id).first() is not None:
+                # Every pick has been made! Close the draft now.
+                d.status = "complete"
+                if not d.completed_at:
+                    d.completed_at = datetime.datetime.utcnow()
+                draft_clock.clear(d)
+                league = db.get(League, league_id)
+                if league:
+                    auto_schedule.ensure_schedule(db, league)
+                try:
+                    db.flush()
+                except Exception:
+                    pass
+
+    statuses = [d.status for d in drafts]
     statuses += [d.status for d in db.query(AuctionDraft).filter(AuctionDraft.league_id == league_id)]
     statuses += [d.status for d in db.query(RecruitingDraft).filter(RecruitingDraft.league_id == league_id)]
     if not statuses:
