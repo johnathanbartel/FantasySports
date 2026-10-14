@@ -57,28 +57,19 @@ def plan_series(team_ids: list[int], series_length_days: int, start_date: dateti
     if n < 2 or n % 2:
         raise ValueError(f"A series schedule needs an even number of teams (at least 2); this league has {n}")
 
-    first_end = start_date + datetime.timedelta(days=(5 - start_date.weekday()) % 7)
-    first_days = (first_end - start_date).days + 1
-
     plan: list[PlannedSeries] = []
     rotating = ids[1:]
     for cycle in range(cycles):
         for rnd in range(n - 1):
             order = [ids[0]] + rotating[-rnd:] + rotating[:-rnd] if rnd else list(ids)
             round_index = cycle * (n - 1) + rnd
-            if round_index == 0:
-                start = start_date
-                end = first_end
-                days = first_days
-            else:
-                start = first_end + datetime.timedelta(days=1 + (round_index - 1) * series_length_days)
-                end = start + datetime.timedelta(days=series_length_days - 1)
-                days = series_length_days
+            start = start_date + datetime.timedelta(days=round_index * series_length_days)
+            end = start + datetime.timedelta(days=series_length_days - 1)
             for i in range(n // 2):
                 a, b = order[i], order[n - 1 - i]
                 if (rnd + i + cycle) % 2:
                     a, b = b, a
-                plan.append(PlannedSeries(round_index, a, b, start, end, days))
+                plan.append(PlannedSeries(round_index, a, b, start, end, series_length_days))
     return plan
 
 
@@ -119,11 +110,11 @@ def generate_schedule(db: Session, league: League, start_date: datetime.date, cy
             raise ValueError("This league already has a series schedule; pass replace=true to regenerate it")
         if _started(db, league.id) and not force:
             raise ValueError("The schedule can't be replaced once any series or game has started; pass force=true to override")
-        series_ids = [s.id for s in db.query(LeagueSeries.id).filter_by(league_id=league.id).all()]
-        dg_ids = [dg.id for dg in db.query(SeriesDailyGame.id).filter(SeriesDailyGame.series_id.in_(series_ids)).all()]
+        series_ids = [s[0] for s in db.query(LeagueSeries.id).filter_by(league_id=league.id).all()]
+        dg_ids = [dg[0] for dg in db.query(SeriesDailyGame.id).filter(SeriesDailyGame.series_id.in_(series_ids)).all()]
         if dg_ids:
             from fantasy_sports.platform.db.models.core import SimulatorGame, SimulatorEvent, SimulatorReveal, BankedCredit
-            sim_ids = [s.id for s in db.query(SimulatorGame.id).filter(SimulatorGame.daily_game_id.in_(dg_ids)).all()]
+            sim_ids = [s[0] for s in db.query(SimulatorGame.id).filter(SimulatorGame.daily_game_id.in_(dg_ids)).all()]
             if sim_ids:
                 db.query(SimulatorReveal).filter(SimulatorReveal.simulator_game_id.in_(sim_ids)).delete(synchronize_session=False)
                 db.query(SimulatorEvent).filter(SimulatorEvent.simulator_game_id.in_(sim_ids)).delete(synchronize_session=False)

@@ -68,7 +68,8 @@ def first_nhl_puck_drop(db: Session, date: datetime.date) -> datetime.datetime:
                 Game.kickoff_at < end_dt,
             ).order_by(Game.kickoff_at).first()
             if first_game and first_game.kickoff_at:
-                return first_game.kickoff_at
+                from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+                return to_eastern_naive(first_game.kickoff_at) if first_game.kickoff_at.hour < 5 else first_game.kickoff_at
     except Exception:
         pass
     # Standard NHL evening slate begins at 7:00 PM Eastern
@@ -126,11 +127,19 @@ def reschedule_nhl_league(db: Session, league: League, today: datetime.date | No
             today = current_eastern_date()
         except Exception:
             today = datetime.date.today()
-    from fantasy_sports.platform.db.models.core import Draft
-    draft = db.query(Draft).filter_by(league_id=league.id).first()
+    from fantasy_sports.platform.db.models.core import Draft, DraftPick
+    draft = db.query(Draft).filter_by(league_id=league.id).order_by(Draft.id.desc()).first()
     completed_at = draft.completed_at if draft else None
+    if draft and not completed_at:
+        last_pick = db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.picked_at.isnot(None)).order_by(DraftPick.pick_number.desc()).first()
+        if last_pick:
+            completed_at = last_pick.picked_at
     series_start = calculate_nhl_series_start(db, completed_at, today)
     series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
+    try:
+        db.commit()
+    except Exception:
+        pass
     return None
 
 
@@ -145,9 +154,13 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
         except Exception:
             today = datetime.date.today()
 
-    from fantasy_sports.platform.db.models.core import Draft
-    draft = db.query(Draft).filter_by(league_id=league.id).first()
+    from fantasy_sports.platform.db.models.core import Draft, DraftPick
+    draft = db.query(Draft).filter_by(league_id=league.id).order_by(Draft.id.desc()).first()
     completed_at = draft.completed_at if draft else None
+    if draft and not completed_at:
+        last_pick = db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.picked_at.isnot(None)).order_by(DraftPick.pick_number.desc()).first()
+        if last_pick:
+            completed_at = last_pick.picked_at
     target_start = calculate_nhl_series_start(db, completed_at, today)
 
     if has_schedule(db, league):
@@ -158,8 +171,10 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
                 try:
                     with db.begin_nested():
                         series_schedule.generate_schedule(db, league, target_start, 1, replace=True, force=True)
-                except Exception:
-                    pass
+                    db.commit()
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning("ensure_schedule failed to regenerate schedule: %s", e)
         return None
     try:
         with db.begin_nested():            # a failed attempt leaves nothing behind
@@ -169,6 +184,7 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
                 series_schedule.generate_schedule(db, league, target_start, 1)
             else:
                 schedule.create_schedule(db, league.id)
+        db.commit()
     except ValueError as e:
         return str(e)
     return None

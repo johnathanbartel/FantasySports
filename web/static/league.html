@@ -172,7 +172,7 @@ function isDraftSoonOrLive() {
     const raw = String(ov.draft_scheduled_at);
     const schedDate = new Date(raw.endsWith('Z') ? raw : raw + 'Z');
     const diff = schedDate.getTime() - Date.now();
-    return diff <= 3600 * 1000;
+    return diff > 0 && diff <= 3600 * 1000;
   }
   return false;
 }

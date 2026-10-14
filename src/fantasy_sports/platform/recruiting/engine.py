@@ -178,9 +178,18 @@ def sync(db: Session, league_id: int, now: datetime.datetime | None = None) -> R
     scheduled start (League.draft_scheduled_at) has passed, then processes
     every period that has ended. Returns the draft, or None if not started."""
     now = now or datetime.datetime.utcnow()
+    league = db.get(League, league_id)
+    if league is None or getattr(league, "draft_type", "snake") != "recruit":
+        draft = get_draft(db, league_id)
+        if draft and draft.status != "closed":
+            draft.status = "closed"
+            try:
+                db.commit()
+            except Exception:
+                db.flush()
+        return None
     draft = get_draft(db, league_id)
     if draft is None:
-        league = db.get(League, league_id)
         scheduled = league.draft_scheduled_at if league else None
         if scheduled is None or now < scheduled.replace(tzinfo=None):
             return None
