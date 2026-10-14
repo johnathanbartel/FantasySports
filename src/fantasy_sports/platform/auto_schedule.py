@@ -38,19 +38,45 @@ def next_full_window_start(d: datetime.date) -> datetime.date:
         return d + datetime.timedelta(days=days if days > 0 else 7)
 
 
+def reschedule_nhl_league(db: Session, league: League, today: datetime.date | None = None, force: bool = False) -> str | None:
+    """Reschedules an NHL league so its series start at the beginning of the next full window."""
+    if not series_schedule.league_is_nhl(db, league.id):
+        return "Not an NHL league"
+    if today is None:
+        try:
+            from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+            today = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
+        except Exception:
+            today = datetime.date.today()
+    series_start = next_full_window_start(today)
+    series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
+    return None
+
+
 def ensure_schedule(db: Session, league: League, today: datetime.date | None = None) -> str | None:
     """Creates the league's schedule if it has none. Returns None if the league now has one, else why it can't."""
     if is_college(db, league.id):
         return "College leagues arrange their own schedule in the schedule stage"
-    if has_schedule(db, league):
-        return None
     if today is None:
         try:
-            from zoneinfo import ZoneInfo
-            # Adjust to user/North American timezone so evening drafts don't prematurely roll over
-            today = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+            from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+            today = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
         except Exception:
             today = datetime.date.today()
+    if has_schedule(db, league):
+        if series_schedule.league_is_nhl(db, league.id):
+            from fantasy_sports.platform.db.models.core import LeagueSeries
+            first_s = db.query(LeagueSeries).filter_by(league_id=league.id).order_by(LeagueSeries.start_date).first()
+            if first_s and first_s.start_date < today:
+                # League drafted after season started; heal schedule if no human watched games
+                target_start = next_full_window_start(today)
+                if first_s.start_date < target_start:
+                    try:
+                        with db.begin_nested():
+                            series_schedule.generate_schedule(db, league, target_start, 1, replace=True, force=True)
+                    except Exception:
+                        pass
+        return None
     try:
         with db.begin_nested():            # a failed attempt leaves nothing behind
             if series_schedule.league_is_nhl(db, league.id):
@@ -64,3 +90,4 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
     except ValueError as e:
         return str(e)
     return None
+

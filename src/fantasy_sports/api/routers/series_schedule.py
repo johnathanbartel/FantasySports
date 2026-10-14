@@ -129,15 +129,27 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
 @router.post("/leagues/{league_id}/series-schedule", response_model=SeriesScheduleOut)
 def create_series_schedule(league_id: int, payload: SeriesScheduleCreateRequest, db: Session = Depends(get_db),
                            user: User = Depends(current_user)):
-    """Commissioner only. Replace-only: 400 if a schedule exists unless replace=true, and never once play has begun."""
+    """Commissioner only. Replace-only: 400 if a schedule exists unless replace=true, and never once play has begun (unless force=true)."""
     league = assert_commissioner(db, user, league_id)
     try:
-        series_schedule.generate_schedule(db, league, payload.start_date, payload.cycles, payload.replace)
+        series_schedule.generate_schedule(db, league, payload.start_date, payload.cycles, payload.replace, payload.force)
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e))
     db.commit()
     return _out(league, _league_series(db, league_id), db)
+
+
+@router.post("/leagues/{league_id}/reschedule-next-window", response_model=SeriesScheduleOut)
+def reschedule_next_window(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner only. Reschedules an NHL league to start at the beginning of the next full window."""
+    league = assert_commissioner(db, user, league_id)
+    from fantasy_sports.platform import auto_schedule
+    err = auto_schedule.reschedule_nhl_league(db, league, force=True)
+    if err:
+        raise HTTPException(400, err)
+    db.commit()
+    return _out(league, _league_series(db, league_id), db, viewer_user_id=user.id)
 
 
 @router.get("/leagues/{league_id}/series-schedule", response_model=SeriesScheduleOut)
@@ -148,11 +160,17 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db), user: Us
     if league.series_length_days is None:
         raise HTTPException(400, "Series schedules are only available for NHL leagues")
     try:
+        from fantasy_sports.platform import auto_schedule
+        auto_schedule.ensure_schedule(db, league)
+    except Exception:
+        pass
+    try:
         from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
         auto_sync_league_scoreboard(db, league_id)
     except Exception:
         pass
     return _out(league, _league_series(db, league_id), db, viewer_user_id=user.id if user else None)
+
 
 
 @router.get("/teams/{team_id}/series-schedule", response_model=TeamSeriesScheduleOut)

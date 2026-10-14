@@ -68,6 +68,19 @@ def _calculate_xg(x: float | None, y: float | None, is_goal: bool, is_empty_net:
     return EMPIRICAL_XG_BANDS.get(band, 0.05)
 
 
+def to_eastern_naive(utc_dt: datetime.datetime) -> datetime.datetime:
+    """Converts a UTC datetime to North American Eastern time (ET/EDT/EST) as a naive datetime.
+    Uses US Daylight Saving Time rules (2nd Sunday in March to 1st Sunday in November).
+    Standard library only, zero external dependencies."""
+    year = utc_dt.year
+    dst_start = datetime.datetime(year, 3, 8) + datetime.timedelta(days=(6 - datetime.datetime(year, 3, 8).weekday()) % 7)
+    dst_end = datetime.datetime(year, 11, 1) + datetime.timedelta(days=(6 - datetime.datetime(year, 11, 1).weekday()) % 7)
+    utc_naive = utc_dt.replace(tzinfo=None) if utc_dt.tzinfo else utc_dt
+    is_dst = dst_start <= utc_naive < dst_end
+    offset = datetime.timedelta(hours=-4 if is_dst else -5)
+    return utc_naive + offset
+
+
 def _shot_clock_seconds(period: int, clock_str: str) -> int:
     try:
         minutes, seconds = clock_str.split(":")
@@ -145,14 +158,15 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         if not home_team or not away_team:
             continue
 
-        game_start_utc = None
+        game_start_et = None
         if g_meta.get("startTimeUTC"):
             try:
                 game_start_utc = datetime.datetime.fromisoformat(g_meta["startTimeUTC"].replace("Z", "+00:00"))
+                game_start_et = to_eastern_naive(game_start_utc)
             except Exception:
                 pass
-        if not game_start_utc:
-            game_start_utc = datetime.datetime.combine(target_date, datetime.time(19, 0))
+        if not game_start_et:
+            game_start_et = datetime.datetime.combine(target_date, datetime.time(19, 0))
 
         game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "live"
         home_score = g_meta.get("homeTeam", {}).get("score", 0)
@@ -166,7 +180,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         if not game:
             game = Game(
                 universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
-                home_score=home_score, away_score=away_score, kickoff_at=game_start_utc.replace(tzinfo=None),
+                home_score=home_score, away_score=away_score, kickoff_at=game_start_et,
                 status=game_status,
             )
             db.add(game)
@@ -175,7 +189,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
             game.home_score = home_score
             game.away_score = away_score
             game.status = game_status
-            game.kickoff_at = game_start_utc.replace(tzinfo=None)
+            game.kickoff_at = game_start_et
             db.flush()
 
         # If already final and has shots, no need to re-fetch PBP
@@ -403,27 +417,37 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
             if not home_team or not away_team:
                 continue
 
-            game_start_utc = None
+            game_start_et = None
             if g_meta.get("startTimeUTC"):
                 try:
                     game_start_utc = datetime.datetime.fromisoformat(g_meta["startTimeUTC"].replace("Z", "+00:00"))
+                    game_start_et = to_eastern_naive(game_start_utc)
                 except Exception:
                     pass
-            if not game_start_utc:
-                game_start_utc = datetime.datetime.combine(d_date, datetime.time(19, 0))
+            if not game_start_et:
+                game_start_et = datetime.datetime.combine(d_date, datetime.time(19, 0))
 
-            kickoff_naive = game_start_utc.replace(tzinfo=None)
+            kickoff_naive = game_start_et
             game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "scheduled"
             home_score = g_meta.get("homeTeam", {}).get("score", 0)
             away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
             day_start = datetime.datetime.combine(d_date, datetime.time.min)
             day_end = day_start + datetime.timedelta(days=1)
-            existing = db.query(Game).filter(
+            existing_games = db.query(Game).filter(
                 Game.universe_id == nhl.id, Game.home_team_id == home_team.id,
                 Game.away_team_id == away_team.id, Game.kickoff_at >= day_start, Game.kickoff_at < day_end
-            ).first()
-            if not existing:
+            ).all()
+            if existing_games:
+                existing = existing_games[0]
+                existing.kickoff_at = kickoff_naive
+                existing.status = game_status
+                existing.home_score = home_score
+                existing.away_score = away_score
+                if len(existing_games) > 1:
+                    for dup in existing_games[1:]:
+                        db.delete(dup)
+            else:
                 new_game = Game(
                     universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
                     home_score=home_score, away_score=away_score, kickoff_at=kickoff_naive, status=game_status

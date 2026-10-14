@@ -495,6 +495,7 @@ class SeriesScheduleCreateRequest(BaseModel):
     start_date: datetime.date
     cycles: int = 1
     replace: bool = False
+    force: bool = False
 
 
 class SeriesDailyGameOut(ORMModel):

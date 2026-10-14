@@ -113,6 +113,18 @@ def _calculate_xg(x: float | None, y: float | None, is_goal: bool, is_empty_net:
     return EMPIRICAL_XG_BANDS.get(band, 0.05)
 
 
+def to_eastern_naive(utc_dt: datetime.datetime) -> datetime.datetime:
+    """Converts a UTC datetime to North American Eastern time (ET/EDT/EST) as a naive datetime."""
+    year = utc_dt.year
+    dst_start = datetime.datetime(year, 3, 8) + datetime.timedelta(days=(6 - datetime.datetime(year, 3, 8).weekday()) % 7)
+    dst_end = datetime.datetime(year, 11, 1) + datetime.timedelta(days=(6 - datetime.datetime(year, 11, 1).weekday()) % 7)
+    utc_naive = utc_dt.replace(tzinfo=None) if utc_dt.tzinfo else utc_dt
+    is_dst = dst_start <= utc_naive < dst_end
+    offset = datetime.timedelta(hours=-4 if is_dst else -5)
+    return utc_naive + offset
+
+
+
 def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None, publish_league_id: int | None = None) -> dict:
     Base.metadata.create_all(bind=engine)
     if cache_dir:
@@ -204,14 +216,15 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                 print(f"Warning: Could not match teams {away_abbrev} vs {home_abbrev}; skipping.")
                 continue
 
-            game_start_utc = None
+            game_start_et = None
             if g_meta.get("startTimeUTC"):
                 try:
                     game_start_utc = datetime.datetime.fromisoformat(g_meta["startTimeUTC"].replace("Z", "+00:00"))
+                    game_start_et = to_eastern_naive(game_start_utc)
                 except Exception:
                     pass
-            if not game_start_utc:
-                game_start_utc = datetime.datetime.combine(target_date, datetime.time(19, 0))
+            if not game_start_et:
+                game_start_et = datetime.datetime.combine(target_date, datetime.time(19, 0))
 
             game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "live"
             home_score = g_meta.get("homeTeam", {}).get("score", 0)
@@ -236,7 +249,7 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                     away_team_id=away_team.id,
                     home_score=home_score,
                     away_score=away_score,
-                    kickoff_at=game_start_utc.replace(tzinfo=None),
+                    kickoff_at=game_start_et,
                     status=game_status,
                 )
                 db.add(game)
@@ -245,7 +258,7 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                 game.home_score = home_score
                 game.away_score = away_score
                 game.status = game_status
-                game.kickoff_at = game_start_utc.replace(tzinfo=None)
+                game.kickoff_at = game_start_et
                 db.flush()
 
             # Clean previous shots, events, and credits for this game for clean idempotency

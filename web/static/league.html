@@ -365,6 +365,37 @@ let activeHockeyWindow = 1;
 let hockeySchedule = null;
 let poRealSchedules = {};
 
+function getSeriesWindows(startDateStr) {
+  if (!startDateStr) {
+    return [
+      { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 0, endOffset: 2 },
+      { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 3, endOffset: 4 },
+      { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 5, endOffset: 6 },
+    ];
+  }
+  const d = new Date(startDateStr + 'T00:00:00');
+  const w = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  if (w === 3) { // Wednesday start
+    return [
+      { num: 1, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 0, endOffset: 1 },
+      { num: 2, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 2, endOffset: 3 },
+      { num: 3, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 4, endOffset: 6 },
+    ];
+  } else if (w === 5) { // Friday start
+    return [
+      { num: 1, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 0, endOffset: 1 },
+      { num: 2, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 2, endOffset: 4 },
+      { num: 3, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 5, endOffset: 6 },
+    ];
+  } else { // Sunday (or default) start
+    return [
+      { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 0, endOffset: 2 },
+      { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 3, endOffset: 4 },
+      { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 5, endOffset: 6 },
+    ];
+  }
+}
+
 function getPlayerWeeklyGames(p) {
   const teamCode = p.real_team_code || p.real_team;
   if (teamCode && poRealSchedules && poRealSchedules[teamCode]) {
@@ -557,6 +588,7 @@ function paintHockeyRoster() {
 
   const seriesInfo = hockeySchedule && hockeySchedule.series && hockeySchedule.series.length ? hockeySchedule.series[0] : null;
   const seriesTitle = seriesInfo ? `Series vs ${esc(seriesInfo.opponent_name)} (${fmtD(seriesInfo.start_date)} – ${fmtD(seriesInfo.end_date)})` : 'Weekly Matchup · 3 Game Windows';
+  const winDefs = getSeriesWindows(seriesInfo ? seriesInfo.start_date : null);
 
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
@@ -571,24 +603,21 @@ function paintHockeyRoster() {
           <div class="card-kicker">3-Game Weekly Series</div>
           <h3 style="margin:2px 0 0">${seriesTitle}</h3>
         </div>
-        <div class="muted" style="font-size:12px">Sunday – Saturday Week · 3 Games</div>
+        <div class="muted" style="font-size:12px">7-Day Series · 3 Game Windows</div>
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
-        <button type="button" class="btn ${activeHockeyWindow === 1 ? 'btn-primary' : 'btn-secondary'}" data-window="1" role="tab" aria-selected="${activeHockeyWindow === 1}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 1</div>
-          <div style="font-size:12px;opacity:0.9">Sun – Tue</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">Sunday – Monday – Tuesday</div>
-        </button>
-        <button type="button" class="btn ${activeHockeyWindow === 2 ? 'btn-primary' : 'btn-secondary'}" data-window="2" role="tab" aria-selected="${activeHockeyWindow === 2}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 2</div>
-          <div style="font-size:12px;opacity:0.9">Wed – Thu</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">Wednesday – Thursday</div>
-        </button>
-        <button type="button" class="btn ${activeHockeyWindow === 3 ? 'btn-primary' : 'btn-secondary'}" data-window="3" role="tab" aria-selected="${activeHockeyWindow === 3}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 3</div>
-          <div style="font-size:12px;opacity:0.9">Fri – Sat</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">Friday – Saturday</div>
-        </button>
+        ${winDefs.map(w => {
+          const sDate = seriesInfo ? fmtD(addDays(seriesInfo.start_date, w.startOffset)) : '';
+          const eDate = seriesInfo ? fmtD(addDays(seriesInfo.start_date, w.endOffset)) : '';
+          const dateRangeStr = sDate && eDate ? (sDate === eDate ? sDate : `${sDate} – ${eDate}`) : '';
+          return `
+            <button type="button" class="btn ${activeHockeyWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-window="${w.num}" role="tab" aria-selected="${activeHockeyWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+              <div style="font-weight:700;font-size:14px">Game ${w.num}</div>
+              <div style="font-size:12px;opacity:0.9">${w.label}</div>
+              <div class="muted" style="font-size:11px;margin-top:2px">${dateRangeStr ? dateRangeStr + ' · ' : ''}${w.full}</div>
+            </button>
+          `;
+        }).join('')}
       </div>
       <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 matchups, Best Matchup counts automatically; use the dropdown to reassign either matchup to open windows.</p>
     </div>
@@ -715,10 +744,10 @@ async function renderHockeyScoreboard() {
     const tB = teamsById[s.team_b_id] || {id: s.team_b_id, name: 'Team ' + s.team_b_id};
 
     const gamesList = s.daily_games || s.games || [];
-    const dayOffsets = {1: [0, 1, 2], 2: [3, 4], 3: [5, 6]};
-    const eligibleOffsets = dayOffsets[activeScoreboardWindow] || [0];
+    const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
+    const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
     const todayStr = new Date().toLocaleDateString('en-CA');
-    const windowGames = gamesList.filter((_, idx) => eligibleOffsets.includes(idx));
+    const windowGames = gamesList.filter((_, idx) => idx >= curWin.startOffset && idx <= curWin.endOffset);
     const liveGame = windowGames.find(g => g.status === 'LIVE_SIMULATING' || g.status === 'LIVE');
     const todayGame = windowGames.find(g => g.calendar_date === todayStr);
     const finalGames = windowGames.filter(g => g.status === 'FINAL');
@@ -867,24 +896,23 @@ async function renderHockeyScoreboard() {
           <span style="font-weight:700;font-size:14px">3-Game Series Windows</span>
           <span class="muted" style="font-size:12px;margin-left:8px">${fmtD(firstS.start_date)} – ${fmtD(firstS.end_date)}</span>
         </div>
-        <div class="muted" style="font-size:12px">Authentic NHL Cadence · Strict Monotonic Scoreboards</div>
+        <div style="display:flex;align-items:center;gap:var(--space-2)">
+          <span class="muted" style="font-size:12px">7-Day Series · Strict Monotonic Scoreboards</span>
+          ${isCommissioner ? `<button type="button" class="btn btn-secondary" id="btn-resched-nhl" style="font-size:11px;padding:3px 8px" title="Reschedule to next full window (Wed, Fri, or Sun)">Reschedule Season Start</button>` : ''}
+        </div>
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
-        <button type="button" class="btn ${activeScoreboardWindow === 1 ? 'btn-primary' : 'btn-secondary'}" data-swindow="1" role="tab" aria-selected="${activeScoreboardWindow === 1}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 1</div>
-          <div style="font-size:12px;opacity:0.9">Sun – Tue</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">${fmtD(firstS.start_date)} – ${fmtD(addDays(firstS.start_date, 2))}</div>
-        </button>
-        <button type="button" class="btn ${activeScoreboardWindow === 2 ? 'btn-primary' : 'btn-secondary'}" data-swindow="2" role="tab" aria-selected="${activeScoreboardWindow === 2}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 2</div>
-          <div style="font-size:12px;opacity:0.9">Wed – Thu</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">${fmtD(addDays(firstS.start_date, 3))} – ${fmtD(addDays(firstS.start_date, 4))}</div>
-        </button>
-        <button type="button" class="btn ${activeScoreboardWindow === 3 ? 'btn-primary' : 'btn-secondary'}" data-swindow="3" role="tab" aria-selected="${activeScoreboardWindow === 3}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-          <div style="font-weight:700;font-size:14px">Game 3</div>
-          <div style="font-size:12px;opacity:0.9">Fri – Sat</div>
-          <div class="muted" style="font-size:11px;margin-top:2px">${fmtD(addDays(firstS.start_date, 5))} – ${fmtD(addDays(firstS.start_date, 6))}</div>
-        </button>
+        ${winDefs.map(w => {
+          const sDate = fmtD(addDays(firstS.start_date, w.startOffset));
+          const eDate = fmtD(addDays(firstS.start_date, w.endOffset));
+          return `
+            <button type="button" class="btn ${activeScoreboardWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-swindow="${w.num}" role="tab" aria-selected="${activeScoreboardWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+              <div style="font-weight:700;font-size:14px">Game ${w.num}</div>
+              <div style="font-size:12px;opacity:0.9">${w.label}</div>
+              <div class="muted" style="font-size:11px;margin-top:2px">${sDate} – ${eDate}</div>
+            </button>
+          `;
+        }).join('')}
       </div>
     </div>
 
@@ -899,6 +927,18 @@ async function renderHockeyScoreboard() {
       renderHockeyScoreboard();
     };
   });
+  if ($('btn-resched-nhl')) {
+    $('btn-resched-nhl').onclick = async () => {
+      if (!confirm('Reschedule series schedule to begin at the start of the next full window?')) return;
+      try {
+        await api(`/leagues/${LEAGUE_ID}/reschedule-next-window`, {method: 'POST'});
+        toast('Season successfully rescheduled to next full window!');
+        renderHockeyScoreboard();
+      } catch (err) {
+        alert('Failed to reschedule: ' + (err.message || err));
+      }
+    };
+  }
   if ($('btn-refresh-score')) {
     $('btn-refresh-score').onclick = () => renderHockeyScoreboard();
   }
@@ -1588,7 +1628,10 @@ async function proScheduleHtml(state) {
           <div style="font-size:11px;margin-top:2px">${x.games.map(g => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}" style="margin-right:6px">${fmtD(g.calendar_date)}</a>`).join('')}</div>
         </td><td class="muted">${esc(x.status.toLowerCase().replace('_', ' '))}</td></tr>`).join('')}
       </tbody></table>
-      <p style="margin:var(--space-2) 0 0"><a href="#" data-go="roster">View 3-Game Windows &amp; Lines on Roster</a></p>`);
+      <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+        <a href="#" data-go="roster" class="btn btn-secondary">View 3-Game Windows &amp; Lines on Roster</a>
+        ${isCommissioner ? `<button type="button" class="btn btn-secondary" id="btn-resched-nhl-tab" style="font-size:12px">Reschedule Season to Next Full Window</button>` : ''}
+      </div>`);
   }
   const sch = await api(`/teams/${t.id}/schedule`);
   return head(`<table class="table"><thead><tr><th>Week</th><th>Starts</th><th>Opponent</th></tr></thead><tbody>
@@ -1597,6 +1640,18 @@ async function proScheduleHtml(state) {
 
 function wireSchedule(state) {
   const act = async (fn) => { try { await fn(); await renderSchedule(); } catch (e) { showError(e.message); } };
+  if ($('btn-resched-nhl-tab')) {
+    $('btn-resched-nhl-tab').onclick = async () => {
+      if (!confirm('Reschedule series schedule to begin at the start of the next full window?')) return;
+      try {
+        await api(`/leagues/${LEAGUE_ID}/reschedule-next-window`, {method: 'POST'});
+        toast('Season successfully rescheduled to next full window!');
+        renderSchedule();
+      } catch (err) {
+        alert('Failed to reschedule: ' + (err.message || err));
+      }
+    };
+  }
   if ($('mk-sched')) $('mk-sched').onclick = () => act(async () => {
     if (state.is_college) return FSC.post(`/leagues/${LEAGUE_ID}/schedule/auto`, {weeks: state.regular_weeks});
     const r = await FSC.post(`/leagues/${LEAGUE_ID}/schedule/generate`);

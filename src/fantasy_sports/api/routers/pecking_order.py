@@ -56,6 +56,27 @@ def _player_out(
     )
 
 
+def series_window_of(d: datetime.date, series_start: datetime.date) -> int:
+    """Returns 1, 2, or 3 corresponding to Game 1, 2, or 3 of the 7-day series."""
+    offset = (d - series_start).days
+    if offset < 0 or offset >= 7:
+        from fantasy_sports.sports.hockey.pipeline import window_of
+        try:
+            _, win_idx = window_of(d)
+            return win_idx
+        except Exception:
+            return 1
+    w = series_start.weekday()
+    if w == 6:  # Sun start: Sun-Tue (0-2), Wed-Thu (3-4), Fri-Sat (5-6)
+        return 1 if offset <= 2 else 2 if offset <= 4 else 3
+    elif w == 2:  # Wed start: Wed-Thu (0-1), Fri-Sat (2-3), Sun-Tue (4-6)
+        return 1 if offset <= 1 else 2 if offset <= 3 else 3
+    elif w == 4:  # Fri start: Fri-Sat (0-1), Sun-Tue (2-4), Wed-Thu (5-6)
+        return 1 if offset <= 1 else 2 if offset <= 4 else 3
+    else:
+        return 1 if offset <= 2 else 2 if offset <= 4 else 3
+
+
 def _read(db: Session, team: Team) -> PeckingOrderOut:
     import datetime
     from fantasy_sports.platform.db.models.core import Game, LeagueSeries
@@ -91,14 +112,12 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
         Game.kickoff_at < w_end
     ).order_by(Game.kickoff_at).all()
 
+    seen_matchups: set[tuple[str, int, str, str]] = set()
     for g in games:
         if not g.kickoff_at:
             continue
         g_date = g.kickoff_at.date()
-        try:
-            _, win_idx = window_of(g_date)
-        except Exception:
-            win_idx = 1
+        win_idx = series_window_of(g_date, w_start)
         day_str = day_names[g_date.weekday()]
         home_t = team_map.get(g.home_team_id)
         away_t = team_map.get(g.away_team_id)
@@ -107,18 +126,25 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
         home_code = home_t.external_ref or home_t.name[:3].upper()
         away_code = away_t.external_ref or away_t.name[:3].upper()
 
-        real_schedules.setdefault(home_code, {}).setdefault(win_idx, []).append({
-            "game_id": g.id,
-            "day": day_str,
-            "opp": away_code,
-            "is_home": True
-        })
-        real_schedules.setdefault(away_code, {}).setdefault(win_idx, []).append({
-            "game_id": g.id,
-            "day": day_str,
-            "opp": home_code,
-            "is_home": False
-        })
+        k_home = (home_code, win_idx, day_str, away_code)
+        if k_home not in seen_matchups:
+            seen_matchups.add(k_home)
+            real_schedules.setdefault(home_code, {}).setdefault(win_idx, []).append({
+                "game_id": g.id,
+                "day": day_str,
+                "opp": away_code,
+                "is_home": True
+            })
+
+        k_away = (away_code, win_idx, day_str, home_code)
+        if k_away not in seen_matchups:
+            seen_matchups.add(k_away)
+            real_schedules.setdefault(away_code, {}).setdefault(win_idx, []).append({
+                "game_id": g.id,
+                "day": day_str,
+                "opp": home_code,
+                "is_home": False
+            })
 
     return PeckingOrderOut(team_id=team.id, groups=groups, real_schedules=real_schedules)
 
