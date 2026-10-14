@@ -20,55 +20,60 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "trades",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("league_id", sa.Integer(), nullable=False),
-        sa.Column("proposer_team_id", sa.Integer(), nullable=False),
-        sa.Column("counterparty_team_id", sa.Integer(), nullable=False),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="proposed"),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.Column("resolved_at", sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(["league_id"], ["leagues.id"]),
-        sa.ForeignKeyConstraint(["proposer_team_id"], ["teams.id"]),
-        sa.ForeignKeyConstraint(["counterparty_team_id"], ["teams.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    with op.batch_alter_table("trades") as batch_op:
-        batch_op.create_index("ix_trades_league_id", ["league_id"])
-        batch_op.create_index("ix_trades_proposer_team_id", ["proposer_team_id"])
-        batch_op.create_index("ix_trades_counterparty_team_id", ["counterparty_team_id"])
+    bind = op.get_bind()
+    tables = set(sa.inspect(bind).get_table_names())
+    if "trades" not in tables:
+        op.create_table(
+            "trades",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("league_id", sa.Integer(), nullable=False),
+            sa.Column("proposer_team_id", sa.Integer(), nullable=False),
+            sa.Column("counterparty_team_id", sa.Integer(), nullable=False),
+            sa.Column("status", sa.String(length=20), nullable=False, server_default="proposed"),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+            sa.Column("resolved_at", sa.DateTime(), nullable=True),
+            sa.ForeignKeyConstraint(["league_id"], ["leagues.id"]),
+            sa.ForeignKeyConstraint(["proposer_team_id"], ["teams.id"]),
+            sa.ForeignKeyConstraint(["counterparty_team_id"], ["teams.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        with op.batch_alter_table("trades") as batch_op:
+            batch_op.create_index("ix_trades_league_id", ["league_id"])
+            batch_op.create_index("ix_trades_proposer_team_id", ["proposer_team_id"])
+            batch_op.create_index("ix_trades_counterparty_team_id", ["counterparty_team_id"])
 
-    op.create_table(
-        "trade_items",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("trade_id", sa.Integer(), nullable=False),
-        sa.Column("sender_team_id", sa.Integer(), nullable=False),
-        sa.Column("draftable_asset_id", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(["trade_id"], ["trades.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["sender_team_id"], ["teams.id"]),
-        sa.ForeignKeyConstraint(["draftable_asset_id"], ["draftable_assets.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    with op.batch_alter_table("trade_items") as batch_op:
-        batch_op.create_index("ix_trade_items_trade_id", ["trade_id"])
+    if "trade_items" not in tables:
+        op.create_table(
+            "trade_items",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("trade_id", sa.Integer(), nullable=False),
+            sa.Column("sender_team_id", sa.Integer(), nullable=False),
+            sa.Column("draftable_asset_id", sa.Integer(), nullable=False),
+            sa.ForeignKeyConstraint(["trade_id"], ["trades.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(["sender_team_id"], ["teams.id"]),
+            sa.ForeignKeyConstraint(["draftable_asset_id"], ["draftable_assets.id"]),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        with op.batch_alter_table("trade_items") as batch_op:
+            batch_op.create_index("ix_trade_items_trade_id", ["trade_id"])
 
-    op.create_table(
-        "trade_votes",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("trade_id", sa.Integer(), nullable=False),
-        sa.Column("team_id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=True),
-        sa.Column("vote", sa.String(length=10), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.ForeignKeyConstraint(["trade_id"], ["trades.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["team_id"], ["teams.id"]),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("trade_id", "team_id", name="uq_trade_vote_team"),
-    )
-    with op.batch_alter_table("trade_votes") as batch_op:
-        batch_op.create_index("ix_trade_votes_trade_id", ["trade_id"])
+    if "trade_votes" not in tables:
+        op.create_table(
+            "trade_votes",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("trade_id", sa.Integer(), nullable=False),
+            sa.Column("team_id", sa.Integer(), nullable=False),
+            sa.Column("user_id", sa.Integer(), nullable=True),
+            sa.Column("vote", sa.String(length=10), nullable=False),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
+            sa.ForeignKeyConstraint(["trade_id"], ["trades.id"], ondelete="CASCADE"),
+            sa.ForeignKeyConstraint(["team_id"], ["teams.id"]),
+            sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+            sa.PrimaryKeyConstraint("id"),
+            sa.UniqueConstraint("trade_id", "team_id", name="uq_trade_vote_team"),
+        )
+        with op.batch_alter_table("trade_votes") as batch_op:
+            batch_op.create_index("ix_trade_votes_trade_id", ["trade_id"])
 
 
 def downgrade() -> None:

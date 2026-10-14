@@ -20,7 +20,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    bind = op.get_bind()
+    tables = set(sa.inspect(bind).get_table_names())
+    if "simulator_games" not in tables:
+        op.create_table(
         "simulator_games",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("daily_game_id", sa.Integer(), nullable=False),
@@ -44,7 +47,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("daily_game_id"),
     )
-    op.create_table(
+    if "simulator_events" not in tables:
+        op.create_table(
         "simulator_events",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("simulator_game_id", sa.Integer(), nullable=False),
@@ -69,7 +73,8 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("simulator_game_id", "seq", name="uq_simulator_event_seq"),
     )
-    op.create_table(
+    if "simulator_reveals" not in tables:
+        op.create_table(
         "simulator_reveals",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("simulator_game_id", sa.Integer(), nullable=False),

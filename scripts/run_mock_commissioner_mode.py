@@ -68,7 +68,8 @@ def check(cond, msg):
 
 
 def main():
-    Base.metadata.create_all(bind=db_engine)
+    from fantasy_sports.platform.db.schema_sync import ensure_latest_schema
+    ensure_latest_schema(db_engine)
     client = TestClient(app)
     db = SessionLocal()
     users = db.query(User).order_by(User.id).all()

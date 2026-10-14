@@ -87,7 +87,8 @@ def main():
     parser.add_argument("--round-seconds", type=int, default=1)
     args = parser.parse_args()
 
-    Base.metadata.create_all(bind=engine)
+    from fantasy_sports.platform.db.schema_sync import ensure_latest_schema
+    ensure_latest_schema(engine)
     client = TestClient(app)
     db = SessionLocal()
 

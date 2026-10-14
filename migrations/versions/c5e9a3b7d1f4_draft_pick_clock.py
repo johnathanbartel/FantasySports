@@ -22,15 +22,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("drafts", sa.Column("pick_seconds", sa.Integer(), nullable=True))
-    op.add_column("drafts", sa.Column("overnight_start_minute", sa.Integer(), nullable=True))
-    op.add_column("drafts", sa.Column("overnight_end_minute", sa.Integer(), nullable=True))
-    op.add_column("drafts", sa.Column("utc_offset_minutes", sa.Integer(), nullable=False, server_default="0"))
-    op.add_column("drafts", sa.Column("paused", sa.Boolean(), nullable=False, server_default=sa.false()))
-    op.add_column("drafts", sa.Column("paused_at", sa.DateTime(), nullable=True))
-    op.add_column("drafts", sa.Column("remaining_seconds", sa.Integer(), nullable=True))
-    op.add_column("drafts", sa.Column("pick_started_at", sa.DateTime(), nullable=True))
-    op.add_column("drafts", sa.Column("deadline_at", sa.DateTime(), nullable=True))
+    bind = op.get_bind()
+    existing_cols = {c["name"] for c in sa.inspect(bind).get_columns("drafts")}
+    cols = [
+        ("pick_seconds", sa.Column("pick_seconds", sa.Integer(), nullable=True)),
+        ("overnight_start_minute", sa.Column("overnight_start_minute", sa.Integer(), nullable=True)),
+        ("overnight_end_minute", sa.Column("overnight_end_minute", sa.Integer(), nullable=True)),
+        ("utc_offset_minutes", sa.Column("utc_offset_minutes", sa.Integer(), nullable=False, server_default="0")),
+        ("paused", sa.Column("paused", sa.Boolean(), nullable=False, server_default=sa.false())),
+        ("paused_at", sa.Column("paused_at", sa.DateTime(), nullable=True)),
+        ("remaining_seconds", sa.Column("remaining_seconds", sa.Integer(), nullable=True)),
+        ("pick_started_at", sa.Column("pick_started_at", sa.DateTime(), nullable=True)),
+        ("deadline_at", sa.Column("deadline_at", sa.DateTime(), nullable=True)),
+    ]
+    for name, col in cols:
+        if name not in existing_cols:
+            op.add_column("drafts", col)
 
 
 def downgrade() -> None:

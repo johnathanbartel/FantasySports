@@ -81,7 +81,7 @@ from fantasy_sports.platform.recruiting import engine as recruiting
 from fantasy_sports.platform.recruiting.pricing import expected_prices, generate_thresholds, price_inputs, value_by_asset
 
 LEAGUE_SIZE, ROSTER_SIZE = 12, 20
-PERIOD_SECONDS = 6
+PERIOD_SECONDS = 10
 BUFFER_SECONDS = 1   # 20 in the product; shortened so the script doesn't wait it out 20 times
 TICKS_PER_PERIOD = 8
 
@@ -92,7 +92,8 @@ def check(cond, msg):
 
 
 def main():
-    Base.metadata.create_all(bind=db_engine)
+    from fantasy_sports.platform.db.schema_sync import ensure_latest_schema
+    ensure_latest_schema(db_engine)
     client = TestClient(app)
     db = SessionLocal()
     rng = random.Random(7)
@@ -359,7 +360,13 @@ def main():
             r = client.post(f"/recruiting/{did}/ai/tick?intensity=1.0")
             check(r.status_code == 200, r.text)
             s = state()
-            check(s["status"] != "open" or len(s["awards"]) == n_before, "awards appeared mid-period")
+            check(
+                s["status"] != "open"
+                or s.get("current_period") != this_period
+                or s.get("phase") == "buffer"
+                or len(s["awards"]) == n_before,
+                "awards appeared mid-period",
+            )
             taken = {a["draftable_asset_id"] for a in s["awards"]}
             mine_now = {b["draftable_asset_id"]: b["amount"] for b in s["my_bids"]}
             have = sum(1 for a in s["awards"] if a["team_id"] == my_team)

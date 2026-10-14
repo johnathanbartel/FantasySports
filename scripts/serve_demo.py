@@ -38,7 +38,9 @@ from fantasy_sports.platform.db.base import Base  # noqa: E402
 from fantasy_sports.platform.db.models import core  # noqa: E402,F401
 from fantasy_sports.platform.db.session import engine  # noqa: E402
 
-Base.metadata.create_all(bind=engine)  # adds tables newer than the seed (e.g. user_sessions)
+from fantasy_sports.platform.db.schema_sync import ensure_latest_schema  # noqa: E402
+
+ensure_latest_schema(engine)  # adds tables and columns newer than the seed
 
 import uvicorn  # noqa: E402
 
