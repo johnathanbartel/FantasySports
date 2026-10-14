@@ -25,7 +25,7 @@ from fantasy_sports.platform.db.models.core import (
     Team, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
-from fantasy_sports.platform.league_features import draft_state, is_college
+from fantasy_sports.platform.league_features import draft_state, is_college, roster_spots
 from fantasy_sports.platform.league_lifecycle import delete_league as purge_league
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
@@ -301,6 +301,12 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    if not is_college(db, league.id):
+        spots = roster_spots(db, league.id)
+        if spots and league.draft_rounds != spots:
+            league.draft_rounds = spots
+            db.commit()
+            db.refresh(league)
     return league
 
 

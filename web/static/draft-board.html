@@ -41,7 +41,10 @@
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-5);flex-wrap:wrap;margin-bottom:var(--space-6)">
       <div>
         <div class="card-kicker" id="clock-kicker" style="margin-bottom:var(--space-1)">&nbsp;</div>
-        <h1 style="margin:0">Draft board</h1>
+        <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span>Draft board</span>
+          <span id="draft-presence-pill" class="pill" style="display:none;font-size:12px;padding:3px 10px;background:color-mix(in srgb, #22c55e 15%, transparent);color:#22c55e;border:1px solid #22c55e;font-weight:700"></span>
+        </h1>
         <div id="user-team-status" style="font-size:13px;margin-top:var(--space-1)" class="text-muted"></div>
       </div>
       <div style="text-align:right" id="on-clock-panel"></div>
@@ -65,7 +68,7 @@
             <h4 id="bc-h" style="margin:0">Broadcast</h4>
             <span style="display:flex;gap:var(--space-2);flex-wrap:wrap">
               <button type="button" class="btn btn-secondary" id="bc-sound" aria-pressed="false">Sound off</button>
-              <button type="button" class="btn btn-secondary" id="bc-replay" disabled>Replay last pick</button>
+              <button type="button" class="btn btn-secondary" id="bc-replay" style="display:none" disabled>Replay last pick</button>
             </span>
           </div>
           <div id="bc-banner" style="min-height:64px" aria-hidden="false"><span class="text-muted">The announcer is waiting for the first pick.</span></div>
@@ -79,12 +82,16 @@
         </section>
         <div role="tablist" aria-label="Draft side panel" style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
           <button class="btn btn-primary" id="tab-roster" role="tab" aria-selected="true">Roster</button>
+          <button class="btn btn-secondary" id="tab-queue" role="tab" aria-selected="false">Queue (<span id="queue-count">0</span>)</button>
           <button class="btn btn-secondary" id="tab-picks" role="tab" aria-selected="false">Pick history</button>
         </div>
         <div id="pane-roster" role="tabpanel">
           <label style="display:block;margin-bottom:var(--space-2)">Team <select id="roster-team"></select></label>
           <div id="roster-assign-container" style="display:none"></div>
           <div id="roster-lines" class="card elev-sm" style="padding:var(--space-3) var(--space-4)"></div>
+        </div>
+        <div id="pane-queue" role="tabpanel" hidden>
+          <div id="queue-container" class="card elev-sm" style="padding:var(--space-4)"></div>
         </div>
         <div id="pane-picks" role="tabpanel" hidden>
         <div style="max-height:640px;overflow:auto">
@@ -159,6 +166,8 @@ async function loadAll() {
   if (!DRAFT_ID) { board = []; picks = []; return renderSetup(teams); }
   document.getElementById('setup-panel').style.display = 'none';
   [board, picks] = await Promise.all([api(`/drafts/${DRAFT_ID}/board`), api(`/drafts/${DRAFT_ID}/picks`)]);
+  loadQueue();
+  startPresence();
   render();
   refreshClock();
   if (!tickTimer) tickClock();
@@ -178,6 +187,7 @@ function renderSetup(teams) {
   }
   const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
   const inviteUrl = `${location.origin}/static/join-league.html?league_id=${LEAGUE_ID}`;
+  const actualRounds = picks.length && teams.length ? Math.max(...picks.map(p => p.round), 1) : (league.draft_rounds || 18);
   const claimBanner = (!myTeam && open > 0)
     ? `<div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-accent) 8%, transparent);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--space-2)">
         <span>You don't have a team in this draft yet (${open} spot${open === 1 ? '' : 's'} open).</span>
@@ -187,7 +197,7 @@ function renderSetup(teams) {
 
   panel.innerHTML = `
     <h3 style="margin:0 0 var(--space-2)">${league.draft_type === 'snake' ? 'Snake draft' : 'Draft'} setup</h3>
-    <p class="muted" style="margin:0 0 var(--space-3)">${teams.length} of ${league.size} teams in the league (${teams.filter(t => t.is_ai_owned).length} AI-owned) · ${league.draft_rounds} rounds.
+    <p class="muted" style="margin:0 0 var(--space-3)">${teams.length} of ${league.size} teams in the league (${teams.filter(t => t.is_ai_owned).length} AI-owned) · ${actualRounds} rounds.
       ${open > 0 ? `${open} spot${open === 1 ? '' : 's'} still open.` : 'The league is full.'}</p>
     ${claimBanner}
     <div style="margin-bottom:var(--space-3);display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
@@ -253,9 +263,11 @@ function renderSetup(teams) {
     listEl.innerHTML = currentTeamOrder.map((tid, idx) => {
       const t = teamsById[tid];
       const name = t ? t.name : `Team ${tid}`;
+      const isOnline = clock && clock.online_team_ids && clock.online_team_ids.includes(tid);
       return `<div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--color-bg);border:1px solid var(--color-divider);border-radius:var(--radius-sm);font-size:12px">
         <span style="font-weight:700;color:var(--color-primary)">#${idx + 1}</span>
         <span>${esc(name)}</span>
+        ${isOnline ? '<span class="pill" style="background:#22c55e;color:white;font-size:9px;padding:1px 5px">● Online</span>' : ''}
         ${t && t.is_ai_owned ? '<span class="pill ai" style="font-size:9px;padding:1px 4px">AI</span>' : ''}
       </div>`;
     }).join('');
@@ -394,28 +406,58 @@ const runAi = () => act(async () => {
   }
 });
 
+let draftCompleteRedirectTimer = null;
+
+function renderPresence() {
+  const pill = document.getElementById('draft-presence-pill');
+  if (!pill) return;
+  const onlineTeams = (clock && clock.online_team_ids) ? clock.online_team_ids : [];
+  const onlineUsers = (clock && clock.online_user_ids) ? clock.online_user_ids : [];
+  const count = Math.max(onlineTeams.length, onlineUsers.length, 1);
+  pill.textContent = `● ${count} in Draft Room`;
+  pill.style.display = 'inline-block';
+}
+
 function renderClock() {
   const kicker = document.getElementById('clock-kicker');
   const panel = document.getElementById('on-clock-panel');
   if (!DRAFT_ID) return;
+  renderPresence();
   const next = onClockPick();
 
   if (!next) {
     kicker.textContent = 'DRAFT COMPLETE';
     panel.innerHTML = `<a class="btn btn-primary" href="${leagueHref()}">Go to league</a>`;
+    if (!draftCompleteRedirectTimer && picks.length > 0) {
+      showError('');
+      const banner = document.getElementById('error-banner');
+      banner.style.display = 'block';
+      banner.style.background = 'color-mix(in srgb, var(--color-accent) 20%, var(--color-surface))';
+      banner.style.color = 'var(--color-accent)';
+      banner.style.fontWeight = '700';
+      banner.innerHTML = '🎉 Draft Complete! Redirecting to League Dashboard...';
+      draftCompleteRedirectTimer = setTimeout(() => {
+        location.href = leagueHref();
+      }, 1500);
+    }
     return;
   }
 
   const n = Object.keys(teamsById).length || 1;
-  kicker.textContent = `ROUND ${next.round} · PICK ${((next.pick_number - 1) % n) + 1} OF ${n} · OVERALL ${next.pick_number} OF ${picks.length}`;
+  const actualRounds = picks.length && n ? Math.max(...picks.map(p => p.round), 1) : (league.draft_rounds || 18);
+  kicker.textContent = `ROUND ${next.round} OF ${actualRounds} · PICK ${((next.pick_number - 1) % n) + 1} OF ${n} · OVERALL ${next.pick_number} OF ${picks.length}`;
   const team = teamsById[next.team_id];
   const teamName = team ? team.name : `Team ${next.team_id}`;
   const isAi = team ? team.is_ai_owned : false;
+  const isOnline = clock && clock.online_team_ids && clock.online_team_ids.includes(next.team_id);
   const canRunAi = isAi && isCommissioner();
 
   panel.innerHTML = `
     <div class="card-kicker" style="margin-bottom:2px">On the clock</div>
-    <div style="font-family:var(--font-heading);font-size:22px">${esc(teamName)}${isMyTeam(team) ? ' (you)' : ''}</div>
+    <div style="font-family:var(--font-heading);font-size:22px;display:flex;align-items:center;justify-content:flex-end;gap:8px">
+      <span>${esc(teamName)}${isMyTeam(team) ? ' (you)' : ''}</span>
+      ${isOnline ? '<span class="pill" style="background:#22c55e;color:white;font-size:10px;padding:1px 6px">● Online</span>' : ''}
+    </div>
     ${canRunAi ? `<div style="display:flex;gap:var(--space-2);justify-content:flex-end;margin-top:var(--space-2)">
       <button class="btn btn-secondary" id="autopick-btn">Autopick</button>
       <button class="btn btn-primary" id="run-ai-btn">Auto-draft AI teams</button></div>` : (isAi ? `<div class="text-muted" style="font-size:12px;margin-top:var(--space-2)">AI team on the clock</div>` : '')}
@@ -437,6 +479,8 @@ try { soundOn = speechSupported && localStorage.getItem('fsc_draft_sound') === '
 function renderSoundButton() {
   const b = document.getElementById('bc-sound'), l = BC.soundLabel(soundOn, speechSupported);
   b.textContent = l.text; b.disabled = l.disabled; b.setAttribute('aria-pressed', String(l.pressed));
+  const r = document.getElementById('bc-replay');
+  if (r) r.style.display = isCommissioner() ? 'inline-block' : 'none';
 }
 
 function showAnnouncement(a, speak) {
@@ -466,7 +510,7 @@ async function pollAnnouncements() {
     if (m.fresh.length) {
       const last = m.fresh[m.fresh.length - 1];
       showAnnouncement(last, BC.toSpeak(m.fresh, {soundOn, supported: speechSupported, backfill}).length > 0);
-      document.getElementById('bc-replay').disabled = false;
+      if (isCommissioner()) document.getElementById('bc-replay').disabled = false;
       if (!backfill && !busy) {
         const [newBoard, newPicks, newClock] = await Promise.all([
           api(`/drafts/${DRAFT_ID}/board`),
@@ -581,13 +625,194 @@ function tickClock() {
   tickTimer = setTimeout(tickClock, 1000);
 }
 
+// ---- live draft presence ----
+let presenceTimer = null;
+async function sendPresenceHeartbeat() {
+  if (!DRAFT_ID) return;
+  try {
+    const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
+    await FSC.post(`/drafts/${DRAFT_ID}/presence`, { team_id: myTeam ? myTeam.id : null });
+  } catch (e) {}
+}
+
+function startPresence() {
+  sendPresenceHeartbeat();
+  if (!presenceTimer) {
+    presenceTimer = setInterval(sendPresenceHeartbeat, 8000);
+  }
+}
+
+// ---- draft queue ----
+let draftQueue = []; // draftable_asset_ids in user's priority order
+
+function loadQueue() {
+  if (!DRAFT_ID) return;
+  try {
+    const raw = localStorage.getItem(`fsc_draft_queue_${DRAFT_ID}`);
+    draftQueue = raw ? JSON.parse(raw) : [];
+  } catch (e) { draftQueue = []; }
+  pruneQueue();
+}
+
+function saveQueue() {
+  if (!DRAFT_ID) return;
+  try {
+    localStorage.setItem(`fsc_draft_queue_${DRAFT_ID}`, JSON.stringify(draftQueue));
+  } catch (e) {}
+  updateQueueBadge();
+}
+
+function pruneQueue() {
+  const pickedIds = new Set(picks.filter(p => p.draftable_asset_id != null).map(p => p.draftable_asset_id));
+  draftQueue = draftQueue.filter(id => !pickedIds.has(id));
+  updateQueueBadge();
+}
+
+function updateQueueBadge() {
+  const el = document.getElementById('queue-count');
+  if (el) el.textContent = String(draftQueue.length);
+}
+
+function addToQueue(assetId) {
+  if (!draftQueue.includes(assetId)) {
+    draftQueue.push(assetId);
+    saveQueue();
+    renderBoard();
+    if (rosterTab === 'queue') renderQueue();
+  }
+}
+
+function removeFromQueue(assetId) {
+  draftQueue = draftQueue.filter(id => id !== assetId);
+  saveQueue();
+  renderBoard();
+  if (rosterTab === 'queue') renderQueue();
+}
+
+function moveQueue(assetId, delta) {
+  const idx = draftQueue.indexOf(assetId);
+  if (idx < 0) return;
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= draftQueue.length) return;
+  const item = draftQueue.splice(idx, 1)[0];
+  draftQueue.splice(newIdx, 0, item);
+  saveQueue();
+  renderQueue();
+}
+
+function renderQueue() {
+  const container = document.getElementById('queue-container');
+  if (!container) return;
+  pruneQueue();
+  if (draftQueue.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center;padding:var(--space-4) 0">
+        <div style="font-size:24px;margin-bottom:var(--space-2)">📋</div>
+        <div style="font-weight:600;margin-bottom:var(--space-1)">Your draft queue is empty</div>
+        <p class="text-muted" style="font-size:13px;margin:0">Click "+ Queue" next to any player in the board to build your target list and easily draft them when you are on the clock.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const next = onClockPick();
+  const canPick = !!next && isMyTeam(teamsById[next.team_id]);
+  const boardMap = Object.fromEntries(board.map(a => [a.draftable_asset_id, a]));
+  const queuedAssets = draftQueue.map(id => boardMap[id]).filter(Boolean);
+
+  const topAsset = queuedAssets[0];
+  const draftTopBtn = (canPick && topAsset)
+    ? `<div style="margin-bottom:var(--space-3);padding-bottom:var(--space-3);border-bottom:1px solid var(--color-divider)">
+         <button class="btn btn-primary" id="btn-draft-top-queue" style="width:100%;padding:10px;font-weight:700">
+           Draft Top Player: ${esc(topAsset.display_name)} (${esc(topAsset.position || '')})
+         </button>
+       </div>`
+    : '';
+
+  const listHtml = queuedAssets.map((a, idx) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--color-bg);border:1px solid var(--color-divider);border-radius:var(--radius-sm);margin-bottom:6px;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;overflow:hidden">
+        <span style="font-weight:700;color:var(--color-accent);font-size:12px;min-width:20px">#${idx + 1}</span>
+        <div style="overflow:hidden">
+          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name)}</div>
+          <div class="text-muted" style="font-size:11px">${esc(a.position || '')} · ${esc(a.team || '—')}${a.points != null ? ` · ${a.points} pts` : ''}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        ${canPick ? `<button class="btn btn-primary" style="font-size:11px;padding:3px 8px" data-queue-draft="${a.draftable_asset_id}">Draft</button>` : ''}
+        <button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" data-queue-up="${a.draftable_asset_id}" ${idx === 0 ? 'disabled' : ''} title="Move Up">▲</button>
+        <button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" data-queue-down="${a.draftable_asset_id}" ${idx === queuedAssets.length - 1 ? 'disabled' : ''} title="Move Down">▼</button>
+        <button class="btn btn-ghost" style="padding:2px 6px;font-size:12px;color:var(--color-accent-2)" data-queue-remove="${a.draftable_asset_id}" title="Remove from Queue">✕</button>
+      </div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    ${draftTopBtn}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+      <span style="font-size:13px;font-weight:600">Draft Queue (${queuedAssets.length})</span>
+      <span class="text-muted" style="font-size:11px">Auto-updates as players are drafted</span>
+    </div>
+    <div style="max-height:480px;overflow-y:auto">
+      ${listHtml}
+    </div>
+  `;
+
+  if (document.getElementById('btn-draft-top-queue') && topAsset) {
+    document.getElementById('btn-draft-top-queue').onclick = () => makePick(topAsset.draftable_asset_id);
+  }
+  container.querySelectorAll('[data-queue-draft]').forEach(b => {
+    b.onclick = () => makePick(Number(b.dataset.queueDraft));
+  });
+  container.querySelectorAll('[data-queue-up]').forEach(b => {
+    b.onclick = () => moveQueue(Number(b.dataset.queueUp), -1);
+  });
+  container.querySelectorAll('[data-queue-down]').forEach(b => {
+    b.onclick = () => moveQueue(Number(b.dataset.queueDown), 1);
+  });
+  container.querySelectorAll('[data-queue-remove]').forEach(b => {
+    b.onclick = () => removeFromQueue(Number(b.dataset.queueRemove));
+  });
+}
+
+function isHockeyLeague() {
+  return board.some(a => ['C', 'LW', 'RW', 'W', 'D', 'G'].includes(a.position)) &&
+         !board.some(a => ['QB', 'RB', 'WR', 'TE'].includes(a.position));
+}
+
+function matchesPos(playerPos, filter) {
+  if (!filter || filter === 'ALL') return true;
+  if (!playerPos) return false;
+  if (playerPos === filter) return true;
+  if (filter === 'W') {
+    return ['W', 'LW', 'RW', 'C', 'F'].includes(playerPos);
+  }
+  if (filter === 'C') {
+    return ['C', 'W', 'LW', 'RW', 'F'].includes(playerPos);
+  }
+  if (filter === 'D') {
+    return ['D', 'LD', 'RD', 'DEF'].includes(playerPos);
+  }
+  if (filter === 'G') {
+    return ['G', 'GOALIE'].includes(playerPos);
+  }
+  return false;
+}
+
 function renderFilters() {
   const el = document.getElementById('pos-filters');
   el.innerHTML = '';
-  const order = ['QB','RB','WR','TE','K','PK','DL','LB','DB','DEF'];
-  const present = [...new Set(board.map(a => a.position).filter(Boolean))];
-  present.sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
-  ['ALL', ...present].forEach(f => {
+  const hockey = isHockeyLeague();
+  let filters = [];
+  if (hockey) {
+    filters = ['ALL', 'C', 'W', 'D', 'G'];
+  } else {
+    const order = ['QB','RB','WR','TE','K','PK','DL','LB','DB','DEF'];
+    const present = [...new Set(board.map(a => a.position).filter(Boolean))];
+    present.sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99) || a.localeCompare(b));
+    filters = ['ALL', ...present];
+  }
+  filters.forEach(f => {
     const btn = document.createElement('button');
     btn.className = `btn ${posFilter === f ? 'btn-primary' : 'btn-secondary'}`;
     btn.textContent = f;
@@ -637,7 +862,7 @@ function renderBoard() {
   const next = onClockPick();
   const canPick = !!next && isMyTeam(teamsById[next.team_id]);
   const q = searchText.trim().toLowerCase();
-  const filtered = sortRows(board.filter(a => (posFilter === 'ALL' || a.position === posFilter) && (!q || a.display_name.toLowerCase().includes(q))));
+  const filtered = sortRows(board.filter(a => matchesPos(a.position, posFilter) && (!q || a.display_name.toLowerCase().includes(q))));
 
   if (filtered.length === 0) {
     el.innerHTML = '<p class="text-muted">No draftable assets left at this position.</p>';
@@ -650,17 +875,32 @@ function renderBoard() {
       <button type="button" class="sort-btn" data-sort="${c.key}" title="${esc(c.title || 'Sort by ' + c.label)}">${esc(c.label)}${arrow}</button></th>`;
   }).join('');
   const cell = v => v == null ? '<span class="text-muted">—</span>' : esc(v);
-  const rows = filtered.slice(0, MAX_ROWS).map(a => `<tr>
+  const rows = filtered.slice(0, MAX_ROWS).map(a => {
+    const inQ = draftQueue.includes(a.draftable_asset_id);
+    return `<tr>
       <th scope="row" style="text-align:left;font-weight:600">${esc(a.display_name)}</th>
       <td>${esc(a.position || '-')}</td><td>${esc(a.team || '—')}</td>
       <td class="num">${cell(a.points)}</td><td class="num">${cell(a.projected)}</td><td class="num">${cell(a.goals)}</td>
       <td class="num">${cell(a.assists)}</td><td class="num">${cell(a.shots)}</td><td class="num">${cell(a.blocks)}</td>
-      <td><button class="btn btn-primary" data-pick="${a.draftable_asset_id}" ${canPick ? '' : 'disabled'} title="${canPick ? '' : 'Only the owner of the team on the clock can pick'}">Draft</button></td></tr>`).join('');
+      <td>
+        <div style="display:flex;gap:4px;align-items:center;justify-content:flex-end">
+          <button class="btn btn-primary" data-pick="${a.draftable_asset_id}" ${canPick ? '' : 'disabled'} title="${canPick ? '' : 'Only the owner of the team on the clock can pick'}">Draft</button>
+          <button class="btn ${inQ ? 'btn-secondary' : 'btn-ghost'}" data-queue-toggle="${a.draftable_asset_id}" style="font-size:11px;padding:3px 8px" title="${inQ ? 'Remove from queue' : 'Add to draft queue'}">${inQ ? '✓ Queued' : '+ Queue'}</button>
+        </div>
+      </td></tr>`;
+  }).join('');
   el.innerHTML = `<table class="table board-table"><thead><tr>${head}<th></th></tr></thead><tbody>${rows}</tbody></table>
     <p class="text-muted" style="font-size:12px;margin:6px 0 0">Click a column to sort; click again to reverse. A dash means that stat has not been loaded for the player.
       ${board.some(a => a.projected != null) ? '' : 'Projected points are not available yet.'}</p>`;
   el.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => setSort(b.dataset.sort));
   el.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => makePick(Number(b.dataset.pick)));
+  el.querySelectorAll('[data-queue-toggle]').forEach(b => {
+    b.onclick = () => {
+      const aid = Number(b.dataset.queueToggle);
+      if (draftQueue.includes(aid)) removeFromQueue(aid);
+      else addToQueue(aid);
+    };
+  });
   if (filtered.length > MAX_ROWS) {
     const more = document.createElement('p');
     more.className = 'text-muted';
@@ -691,10 +931,13 @@ function renderPicks() {
 }
 
 function render() {
+  pruneQueue();
   renderClock();
   renderFilters();
   renderBoard();
   renderPicks();
+  updateQueueBadge();
+  if (rosterTab === 'queue') renderQueue();
   renderRosterTab();
 }
 
@@ -704,14 +947,22 @@ let rosterTeamId = null, rosterTab = 'roster';
 function setSideTab(which) {
   rosterTab = which;
   document.getElementById('pane-roster').hidden = which !== 'roster';
+  document.getElementById('pane-queue').hidden = which !== 'queue';
   document.getElementById('pane-picks').hidden = which !== 'picks';
-  for (const [id, key] of [['tab-roster', 'roster'], ['tab-picks', 'picks']]) {
+  for (const [id, key] of [['tab-roster', 'roster'], ['tab-queue', 'queue'], ['tab-picks', 'picks']]) {
     const b = document.getElementById(id);
-    b.className = `btn ${which === key ? 'btn-primary' : 'btn-secondary'}`;
-    b.setAttribute('aria-selected', String(which === key));
+    if (b) {
+      b.className = `btn ${which === key ? 'btn-primary' : 'btn-secondary'}`;
+      b.setAttribute('aria-selected', String(which === key));
+    }
+  }
+  if (which === 'queue') {
+    renderQueue();
   }
 }
 document.getElementById('tab-roster').onclick = () => setSideTab('roster');
+const tabQueueEl = document.getElementById('tab-queue');
+if (tabQueueEl) tabQueueEl.onclick = () => setSideTab('queue');
 document.getElementById('tab-picks').onclick = () => setSideTab('picks');
 
 async function renderRosterTab() {

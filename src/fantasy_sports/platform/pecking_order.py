@@ -75,6 +75,25 @@ def resolve_starters(
     return result
 
 
+FORWARDS = {"C", "W", "LW", "RW", "F"}
+
+
+def is_eligible_for_group(position: str | None, group: str) -> bool:
+    """Returns True if the player's position is eligible for the position group.
+    In hockey, forwards (C, W, LW, RW, F) can play both Center and Wing.
+    """
+    if not position:
+        return False
+    pos_parts = [p.strip().upper() for p in position.replace('/', ',').replace('-', ',').split(',')]
+    if group in ("C", "W"):
+        return any(p in FORWARDS for p in pos_parts)
+    if group == "D":
+        return any(p in ("D", "LD", "RD") for p in pos_parts)
+    if group == "G":
+        return any(p == "G" for p in pos_parts)
+    return False
+
+
 def assert_hockey_team(db: Session, team: Team) -> None:
     nhl = (
         db.query(LeagueUniverse).join(Universe, Universe.id == LeagueUniverse.universe_id)
@@ -125,12 +144,14 @@ def replace_groups(db: Session, team: Team, assignments: dict[str, list[int]]) -
             if pid not in roster:
                 raise ValueError(f"Player {pid} is not on this team's roster")
             position = roster[pid][1].position
-            if GROUP_BY_POSITION.get(position) != group:
+            if not is_eligible_for_group(position, group):
                 raise ValueError(f"Player {pid} ({position}) is not eligible for {group}")
-    # Eligibility pins each player to one group, so clearing only the named groups and re-inserting
-    # cannot collide with the (team, asset) unique key.
+
+    assigned_asset_ids = [roster[pid][0] for ids in assignments.values() for pid in ids if pid in roster]
     (db.query(TeamPeckingOrder)
-     .filter(TeamPeckingOrder.team_id == team.id, TeamPeckingOrder.position_group.in_(list(assignments)))
+     .filter(TeamPeckingOrder.team_id == team.id,
+             (TeamPeckingOrder.position_group.in_(list(assignments))) |
+             (TeamPeckingOrder.draftable_asset_id.in_(assigned_asset_ids)))
      .delete(synchronize_session=False))
     db.flush()
     for group, ids in assignments.items():
@@ -150,9 +171,20 @@ def rank_new_player(db: Session, team: Team, asset_id: int) -> bool:
         return False
     roster = roster_players(db, team.id)
     entry = next(((pid, pl) for pid, (aid, pl) in roster.items() if aid == asset_id), None)
-    group = GROUP_BY_POSITION.get(entry[1].position) if entry else None
+    if entry is None:
+        return False
+    group = GROUP_BY_POSITION.get(entry[1].position)
     if group is None:
         return False
+    # If primary forward group is full, flex to other forward group if room exists
+    if group in ("C", "W"):
+        cur_c = db.query(TeamPeckingOrder).filter_by(team_id=team.id, position_group="C").count()
+        cur_w = db.query(TeamPeckingOrder).filter_by(team_id=team.id, position_group="W").count()
+        if group == "C" and cur_c >= DEPTH["C"] and cur_w < DEPTH["W"]:
+            group = "W"
+        elif group == "W" and cur_w >= DEPTH["W"] and cur_c < DEPTH["C"]:
+            group = "C"
+
     existing = db.query(TeamPeckingOrder).filter_by(team_id=team.id, position_group=group).count()
     if existing >= DEPTH[group] or db.query(TeamPeckingOrder).filter_by(team_id=team.id, draftable_asset_id=asset_id).first():
         return False

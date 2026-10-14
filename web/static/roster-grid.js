@@ -34,31 +34,61 @@
 
   const orderedIds = g => g.ranked.slice().sort((a, b) => a.priority - b.priority).map(p => p.player_id);
 
-  // A selection is {group, rank} (a filled grid cell) or {group, playerId} (a reserve). Returns {group, ids} - the new
-  // ranking of that one group, for PUT /teams/{id}/pecking-order - or {error}.
+  const FORWARDS = new Set(['C', 'W']);
+  const isForwardGroup = grp => FORWARDS.has(grp);
+
+  // A selection is {group, rank} (a filled grid cell) or {group, playerId} (a reserve). Returns {group, ids, assignments} - the new
+  // ranking of the affected groups, for PUT /teams/{id}/pecking-order - or {error}.
   function swap(groups, a, b) {
     if (!a || !b) return {error: 'Pick two players.'};
-    if (a.group !== b.group) return {error: `A ${GROUP_NAME[a.group] || a.group} can't play ${b.group}.`};
-    const g = (groups || []).find(x => x.position_group === a.group);
-    if (!g) return {error: 'Unknown position.'};
-    const ids = orderedIds(g);
-    const idAt = s => s.playerId != null ? s.playerId : ids[s.rank - 1];
-    const pa = idAt(a), pb = idAt(b);
+    const canCrossSwap = a.group !== b.group && isForwardGroup(a.group) && isForwardGroup(b.group);
+    if (a.group !== b.group && !canCrossSwap) return {error: `A ${GROUP_NAME[a.group] || a.group} can't play ${b.group}.`};
+    const ga = (groups || []).find(x => x.position_group === a.group);
+    const gb = (groups || []).find(x => x.position_group === b.group);
+    if (!ga || !gb) return {error: 'Unknown position.'};
+
+    const idsA = orderedIds(ga);
+    const idsB = orderedIds(gb);
+    const idAt = (s, ids) => s.playerId != null ? s.playerId : ids[s.rank - 1];
+    const pa = idAt(a, idsA), pb = idAt(b, idsB);
     if (pa == null) return {error: 'Nothing to move there.'};
-    if (pa === pb) return {error: null, group: a.group, ids, noop: true};
-    const out = ids.slice();
-    if (pb == null) {                                   // moving onto an empty cell: to the end of the ranking
-      if (a.playerId != null && out.length >= g.max_depth) return {error: `All ${g.max_depth} ${a.group} spots are full.`};
-      if (a.playerId == null) out.splice(out.indexOf(pa), 1);
-      out.push(pa);
-      return {error: null, group: a.group, ids: out};
+    if (pa === pb) return {error: null, group: a.group, ids: idsA, assignments: {[a.group]: idsA}, noop: true};
+
+    const outA = idsA.slice();
+    const outB = a.group === b.group ? outA : idsB.slice();
+
+    if (a.group === b.group) {
+      if (pb == null) {                                   // moving onto an empty cell: to the end of the ranking
+        if (a.playerId != null && outA.length >= ga.max_depth) return {error: `All ${ga.max_depth} ${a.group} spots are full.`};
+        if (a.playerId == null) outA.splice(outA.indexOf(pa), 1);
+        outA.push(pa);
+        return {error: null, group: a.group, ids: outA, assignments: {[a.group]: outA}};
+      }
+      const ia = outA.indexOf(pa), ib = outA.indexOf(pb);
+      if (ia >= 0 && ib >= 0) { outA[ia] = pb; outA[ib] = pa; }          // two ranked players trade places
+      else if (ia < 0 && ib >= 0) outA[ib] = pa;                        // a reserve takes a ranked player's place
+      else if (ia >= 0 && ib < 0) outA[ia] = pb;
+      else return {error: 'Pick a player on a line to swap with.'};
+      return {error: null, group: a.group, ids: outA, assignments: {[a.group]: outA}};
+    } else {
+      // Swapping between Center and Wing forwards
+      const ia = outA.indexOf(pa), ib = outB.indexOf(pb);
+      if (pb == null) {
+        if (outB.length >= gb.max_depth) return {error: `All ${gb.max_depth} ${b.group} spots are full.`};
+        if (ia >= 0) outA.splice(ia, 1);
+        outB.push(pa);
+      } else if (ia >= 0 && ib >= 0) {
+        outA[ia] = pb;
+        outB[ib] = pa;
+      } else if (ia < 0 && ib >= 0) {
+        outB[ib] = pa;
+      } else if (ia >= 0 && ib < 0) {
+        outA[ia] = pb;
+      } else {
+        return {error: 'Pick a player on a line to swap with.'};
+      }
+      return {error: null, group: a.group, ids: outA, assignments: {[a.group]: outA, [b.group]: outB}};
     }
-    const ia = out.indexOf(pa), ib = out.indexOf(pb);
-    if (ia >= 0 && ib >= 0) { out[ia] = pb; out[ib] = pa; }          // two ranked players trade places
-    else if (ia < 0 && ib >= 0) out[ib] = pa;                        // a reserve takes a ranked player's place
-    else if (ia >= 0 && ib < 0) out[ia] = pb;
-    else return {error: 'Pick a player on a line to swap with.'};
-    return {error: null, group: a.group, ids: out};
   }
 
   const api = {LINES, ROWS, build, swap};

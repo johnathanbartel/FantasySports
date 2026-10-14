@@ -24,6 +24,20 @@ def has_schedule(db: Session, league: League) -> bool:
     return db.query(WeeklyMatchup).filter_by(league_id=league.id).count() > 0
 
 
+def next_full_window_start(d: datetime.date) -> datetime.date:
+    """The start date of the next full window strictly after `d` (Wed, Fri, or Sun)."""
+    w = d.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    if w in (6, 0, 1):  # Sun, Mon, Tue -> next full window is Wed (2)
+        days = (2 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+    elif w in (2, 3):  # Wed, Thu -> next full window is Fri (4)
+        days = (4 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+    else:  # Fri (4), Sat (5) -> next full window is Sun (6)
+        days = (6 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+
+
 def ensure_schedule(db: Session, league: League, today: datetime.date | None = None) -> str | None:
     """Creates the league's schedule if it has none. Returns None if the league now has one, else why it can't."""
     if is_college(db, league.id):
@@ -42,9 +56,8 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
             if series_schedule.league_is_nhl(db, league.id):
                 if getattr(league, "league_mode", "standard") == "weekly_redraft":
                     raise ValueError("This league plays weekly redraft contests, not series")
-                from fantasy_sports.sports.hockey.pipeline import week_start
-                # NHL fantasy weeks run Sunday to Saturday. The series schedule begins on the Sunday of the fantasy week.
-                series_start = week_start(today)
+                # NHL leagues begin their season at the beginning of the next full window (Wed, Fri, or Sun)
+                series_start = next_full_window_start(today)
                 series_schedule.generate_schedule(db, league, series_start, 1)
             else:
                 schedule.create_schedule(db, league.id)

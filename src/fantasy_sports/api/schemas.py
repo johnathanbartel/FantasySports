@@ -319,7 +319,7 @@ class DraftStartRequest(BaseModel):
     overnight_start: str | None = None   # "HH:MM" local, with utc_offset_minutes
     overnight_end: str | None = None
     utc_offset_minutes: int = 0
-    randomize_order: bool = True
+    randomize_order: bool = False
     team_order: list[int] | None = None
 
 
@@ -357,6 +357,12 @@ class DraftClockOut(BaseModel):
     on_clock_team_id: int | None
     # Set when an AI-owned team is on the clock: seconds until it makes its pick (the page processes the draft then).
     ai_in_seconds: float | None = None
+    online_team_ids: list[int] = []
+    online_user_ids: list[int] = []
+
+
+class DraftPresenceRequest(BaseModel):
+    team_id: int | None = None
 
 
 class DraftPickOut(BaseModel):
@@ -585,6 +591,7 @@ class PeckingOrderGroupOut(BaseModel):
 class PeckingOrderOut(BaseModel):
     team_id: int
     groups: list[PeckingOrderGroupOut]
+    real_schedules: dict[str, dict[int, list[dict]]] = {}
 
 
 class PeckingOrderResolveRequest(BaseModel):

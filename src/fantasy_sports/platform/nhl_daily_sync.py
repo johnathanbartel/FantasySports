@@ -80,11 +80,14 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
     """Fetches and stores real NHL games for target_date from the NHL API if not already stored. Returns count of games stored."""
     start_day = datetime.datetime.combine(target_date, datetime.time.min)
     end_day = start_day + datetime.timedelta(days=1)
-    existing_games = db.query(Game).filter(
+    games_for_day = db.query(Game).filter(
         Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
-    ).count()
-    if existing_games > 0:
-        return existing_games
+    ).all()
+    game_ids = [g.id for g in games_for_day]
+    has_shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).count() > 0 if game_ids else False
+    all_final = bool(games_for_day) and all(g.status == "final" for g in games_for_day)
+    if has_shots and all_final:
+        return len(games_for_day)
 
     sched_data = _fetch_json(SCHEDULE_URL.format(date=target_date.isoformat()))
     if not sched_data:
@@ -155,18 +158,48 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         home_score = g_meta.get("homeTeam", {}).get("score", 0)
         away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
-        game = Game(
-            universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
-            home_score=home_score, away_score=away_score, kickoff_at=game_start_utc.replace(tzinfo=None),
-            status=game_status,
-        )
-        db.add(game)
-        db.flush()
+        # Match existing Game or insert a new one
+        game = db.query(Game).filter(
+            Game.universe_id == nhl.id, Game.home_team_id == home_team.id,
+            Game.away_team_id == away_team.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
+        ).first()
+        if not game:
+            game = Game(
+                universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
+                home_score=home_score, away_score=away_score, kickoff_at=game_start_utc.replace(tzinfo=None),
+                status=game_status,
+            )
+            db.add(game)
+            db.flush()
+        else:
+            game.home_score = home_score
+            game.away_score = away_score
+            game.status = game_status
+            game.kickoff_at = game_start_utc.replace(tzinfo=None)
+            db.flush()
+
+        # If already final and has shots, no need to re-fetch PBP
+        existing_shot_count = db.query(Shot).filter_by(game_id=game.id).count()
+        if existing_shot_count > 0 and game.status == "final":
+            games_inserted += 1
+            continue
 
         pbp_data = _fetch_json(PBP_URL.format(game=nhl_game_id))
         if not pbp_data:
             games_inserted += 1
             continue
+
+        # If re-syncing an existing game, clear prior live shots/events/credits before re-inserting
+        if existing_shot_count > 0:
+            shot_ids = [s[0] for s in db.query(Shot.id).filter_by(game_id=game.id).all()]
+            event_ids = [e[0] for e in db.query(GameEvent.id).filter_by(game_id=game.id).all()]
+            if shot_ids:
+                db.query(ShotCredit).filter(ShotCredit.shot_id.in_(shot_ids)).delete(synchronize_session=False)
+                db.query(Shot).filter(Shot.id.in_(shot_ids)).delete(synchronize_session=False)
+            if event_ids:
+                db.query(EventCredit).filter(EventCredit.event_id.in_(event_ids)).delete(synchronize_session=False)
+                db.query(GameEvent).filter(GameEvent.id.in_(event_ids)).delete(synchronize_session=False)
+            db.flush()
 
         team_by_nhl_id = {
             pbp_data["homeTeam"]["id"]: home_team.id,
@@ -497,22 +530,6 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
         today_pt = today_et
 
     max_active_date = max(today_et, today_pt)
-    sunday = today_pt - datetime.timedelta(days=today_pt.weekday() + 1 if today_pt.weekday() != 6 else 0)
-
-    # 1. Check schedule alignment
-    first_series = db.query(LeagueSeries).filter_by(league_id=league_id).order_by(LeagueSeries.id).first()
-    if first_series and first_series.start_date != sunday:
-        # Check if games have started
-        started_count = db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
-            LeagueSeries.league_id == league_id, SeriesDailyGame.status != "SCHEDULED"
-        ).count()
-        if started_count == 0:
-            try:
-                series_schedule.generate_schedule(db, league, sunday, 1, replace=True)
-                db.flush()
-            except Exception:
-                pass
-
     # Ensure this week's full schedule is seeded so Pecking Order accurately sees all games in the window
     try:
         seed_week_schedule_if_needed(db, nhl, max_active_date)

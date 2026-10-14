@@ -7,7 +7,7 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
-from fantasy_sports.api.auth import assert_commissioner, current_user
+from fantasy_sports.api.auth import assert_commissioner, current_user, optional_user
 from fantasy_sports.api.schemas import (
     LeagueSeriesOut, SeriesScheduleCreateRequest, SeriesScheduleOut, TeamSeriesGameOut, TeamSeriesOut,
     TeamSeriesScheduleOut,
@@ -27,7 +27,7 @@ def _league_series(db: Session, league_id: int) -> list[LeagueSeries]:
             .order_by(LeagueSeries.start_date, LeagueSeries.team_a_id).all())
 
 
-def _out(league: League, rows: list[LeagueSeries], db: Session | None = None) -> SeriesScheduleOut:
+def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, viewer_user_id: int | None = None) -> SeriesScheduleOut:
     watched_map = {}
     slate_summary = None
     real_total = 0
@@ -37,6 +37,7 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None) ->
     if db is not None:
         teams = db.query(Team).filter_by(league_id=league.id).all()
         team_map = {t.id: t for t in teams}
+
         dg_list = [g for s in rows for g in s.daily_games]
         dg_ids = [g.id for g in dg_list]
         if dg_ids:
@@ -58,22 +59,12 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None) ->
             now_utc = service.utcnow()
 
             for g in dg_list:
-                t_home = team_map.get(g.home_team_id)
-                t_away = team_map.get(g.away_team_id)
-                if (not t_home or t_home.is_ai_owned) and (not t_away or t_away.is_ai_owned):
-                    watched_map[g.id] = True
+                sim = sim_by_dg.get(g.id)
+                if not sim:
+                    watched_map[g.id] = False
                 else:
-                    sim = sim_by_dg.get(g.id)
-                    if not sim:
-                        watched_map[g.id] = False
-                    else:
-                        users_who_watched = revealed_users_by_sim.get(sim.id, set())
-                        owners = set()
-                        if t_home and not t_home.is_ai_owned and t_home.owner_user_id:
-                            owners.add(t_home.owner_user_id)
-                        if t_away and not t_away.is_ai_owned and t_away.owner_user_id:
-                            owners.add(t_away.owner_user_id)
-                        watched_map[g.id] = bool(owners & users_who_watched)
+                    users_who_watched = revealed_users_by_sim.get(sim.id, set())
+                    watched_map[g.id] = bool(viewer_user_id and viewer_user_id in users_who_watched)
 
                 sim = sim_by_dg.get(g.id)
                 g.home_shots = 0
@@ -150,7 +141,7 @@ def create_series_schedule(league_id: int, payload: SeriesScheduleCreateRequest,
 
 
 @router.get("/leagues/{league_id}/series-schedule", response_model=SeriesScheduleOut)
-def read_series_schedule(league_id: int, db: Session = Depends(get_db)):
+def read_series_schedule(league_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
@@ -161,7 +152,7 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db)):
         auto_sync_league_scoreboard(db, league_id)
     except Exception:
         pass
-    return _out(league, _league_series(db, league_id), db)
+    return _out(league, _league_series(db, league_id), db, viewer_user_id=user.id if user else None)
 
 
 @router.get("/teams/{team_id}/series-schedule", response_model=TeamSeriesScheduleOut)

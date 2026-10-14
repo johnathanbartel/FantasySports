@@ -1,3 +1,4 @@
+from collections import defaultdict
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,7 @@ from fantasy_sports.api.schemas import (
     DraftOut,
     DraftOvernightOut,
     DraftPickOut,
+    DraftPresenceRequest,
     DraftProcessOut,
     DraftStartRequest,
     MakePickRequest,
@@ -39,6 +41,21 @@ router = APIRouter(prefix="/drafts", tags=["draft"])
 
 def utcnow() -> datetime.datetime:
     return datetime.datetime.utcnow()
+
+
+# draft_id -> user_key -> (team_id, last_seen)
+_draft_presence: dict[int, dict[int, tuple[int | None, datetime.datetime]]] = defaultdict(dict)
+
+
+def _active_presence(draft_id: int, now: datetime.datetime) -> tuple[list[int], list[int]]:
+    cutoff = now - datetime.timedelta(seconds=20)
+    pres = _draft_presence.get(draft_id, {})
+    stale = [uid for uid, (_, last_seen) in list(pres.items()) if last_seen < cutoff]
+    for uid in stale:
+        del pres[uid]
+    team_ids = sorted(list({tid for _, (tid, _) in pres.items() if tid is not None}))
+    user_ids = sorted(list({uid for uid, _ in pres.items() if uid != 0}))
+    return team_ids, user_ids
 
 
 def _pick_out(p: DraftPick) -> DraftPickOut:
@@ -173,6 +190,12 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     if draft is None:
         raise HTTPException(404, "Draft not found")
 
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, draft.league_id)
+    except Exception:
+        pass
+
     already_picked = {
         p.draftable_asset_id
         for p in db.query(DraftPick).filter(
@@ -288,6 +311,7 @@ def _clock_out(db: Session, draft: Draft, now: datetime.datetime) -> DraftClockO
         ai_at = draft_clock.ai_due_at(draft, pick.pick_number)
         if ai_at is not None:
             ai_in = max(0.0, (ai_at - now).total_seconds())
+    online_teams, online_users = _active_presence(draft.id, now)
     return DraftClockOut(
         draft_id=draft.id, status=draft.status, clock_status=status, mode=draft_clock.mode(draft),
         pick_seconds=draft.pick_seconds, paused=bool(draft.paused), server_time=now, deadline_at=draft.deadline_at,
@@ -296,7 +320,29 @@ def _clock_out(db: Session, draft: Draft, now: datetime.datetime) -> DraftClockO
                                     end=draft_clock.hhmm(draft.overnight_end_minute),
                                     utc_offset_minutes=draft.utc_offset_minutes or 0) if window else None,
         overnight_active=in_window, resumes_at=resumes, pick_number=pick.pick_number if pick else None,
-        on_clock_team_id=pick.team_id if pick else None, ai_in_seconds=ai_in)
+        on_clock_team_id=pick.team_id if pick else None, ai_in_seconds=ai_in,
+        online_team_ids=online_teams, online_user_ids=online_users)
+
+
+@router.post("/{draft_id}/presence")
+def record_presence(
+    draft_id: int,
+    payload: DraftPresenceRequest | None = None,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(optional_user),
+):
+    """Heartbeat endpoint indicating a user/team is currently in the draft room."""
+    now = utcnow()
+    team_id = payload.team_id if payload else None
+    if user and not team_id:
+        draft = db.get(Draft, draft_id)
+        if draft:
+            team = db.query(Team).filter(Team.league_id == draft.league_id, Team.owner_user_id == user.id).first()
+            if team:
+                team_id = team.id
+    user_key = user.id if user else (team_id or 0)
+    _draft_presence[draft_id][user_key] = (team_id, now)
+    return {"status": "ok"}
 
 
 @router.get("/{draft_id}/clock", response_model=DraftClockOut)

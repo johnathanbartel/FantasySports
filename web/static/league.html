@@ -102,9 +102,9 @@ const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
-              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['rankings', 'Rankings']];
+              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
-const tabList = () => ALL_TABS.filter(([id]) => id !== 'rankings' || (ov && ov.has_rankings));
+const tabList = () => ALL_TABS.filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))));
 
 let me = null, ov = null, canActForAi = false, isCommissioner = false;
 let tab = 'home';
@@ -144,7 +144,7 @@ async function go(id, extra = {}) {
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
   try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, trades: renderTrades, schedule: renderSchedule,
-                standings: renderStandings, stats: renderStats, teams: renderTeams, rankings: renderRankings})[id](); }
+                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
 
@@ -361,39 +361,19 @@ function matchupRating(game) {
 let gridGroups = [], gridSel = null;
 let activeHockeyWindow = 1;
 let hockeySchedule = null;
+let poRealSchedules = {};
 
 function getPlayerWeeklyGames(p) {
-  const id = p.draftable_asset_id || p.player_id || 1;
-  const name = p.display_name || '';
-  const isMarquee = /mcdavid|pastrnak|matthews|swayman|mackinnon|draisaitl|kuch|makar/i.test(name);
-  const hash = (id * 37 + 13) % 100;
-  const opps = ['TOR', 'BOS', 'MTL', 'NYR', 'EDM', 'COL', 'FLA', 'VGK', 'CAR', 'DAL', 'VAN', 'TBL'];
-  const opp1 = opps[(id + 1) % opps.length];
-  const opp2 = opps[(id + 4) % opps.length];
-  const opp3 = opps[(id + 7) % opps.length];
-
-  if (isMarquee || hash < 45) {
-    // 2 games in Window 1 (Sun, Tue), 0 in Window 2, 1 in Window 3 (Sat)
+  const teamCode = p.real_team_code || p.real_team;
+  if (teamCode && poRealSchedules && poRealSchedules[teamCode]) {
+    const s = poRealSchedules[teamCode];
     return {
-      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1, is_home: true}, {game_id: id * 10 + 2, day: 'Tue', opp: opp2, is_home: false}],
-      2: [],
-      3: [{game_id: id * 10 + 3, day: 'Sat', opp: opp3, is_home: true}],
-    };
-  } else if (hash < 75) {
-    // 1 in Window 1 (Mon), 1 in Window 2 (Thu), 2 in Window 3 (Fri, Sat)
-    return {
-      1: [{game_id: id * 10 + 1, day: 'Mon', opp: opp1, is_home: false}],
-      2: [{game_id: id * 10 + 2, day: 'Thu', opp: opp2, is_home: true}],
-      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3, is_home: true}, {game_id: id * 10 + 4, day: 'Sat', opp: opp1, is_home: false}],
-    };
-  } else {
-    // 1 in Window 1 (Sun), 1 in Window 2 (Wed), 1 in Window 3 (Fri)
-    return {
-      1: [{game_id: id * 10 + 1, day: 'Sun', opp: opp1, is_home: true}],
-      2: [{game_id: id * 10 + 2, day: 'Wed', opp: opp2, is_home: false}],
-      3: [{game_id: id * 10 + 3, day: 'Fri', opp: opp3, is_home: true}],
+      1: s[1] || s['1'] || [],
+      2: s[2] || s['2'] || [],
+      3: s[3] || s['3'] || [],
     };
   }
+  return { 1: [], 2: [], 3: [] };
 }
 
 function getWindowAssignments(teamId) {
@@ -470,6 +450,7 @@ async function renderHockeyRoster() {
     api(`/teams/${t.id}/series-schedule`).catch(() => null),
   ]);
   gridGroups = po.groups; gridSel = null;
+  poRealSchedules = po.real_schedules || {};
   hockeySchedule = sch;
   paintHockeyRoster();
 }
@@ -793,8 +774,8 @@ async function renderHockeyScoreboard() {
       }
     }
 
-    const awayShots = isVeiled ? '?' : (dailyGame.away_shots != null ? dailyGame.away_shots : 0);
-    const homeShots = isVeiled ? '?' : (dailyGame.home_shots != null ? dailyGame.home_shots : 0);
+    const awayShots = dailyGame.away_shots != null ? dailyGame.away_shots : 0;
+    const homeShots = dailyGame.home_shots != null ? dailyGame.home_shots : 0;
 
     return `
       <div class="card elev-sm" style="padding:var(--space-4);border-left:4px solid ${heatColor};display:flex;flex-direction:column;justify-content:space-between;gap:var(--space-3)">
@@ -1025,8 +1006,8 @@ async function pickGrid(sel) {
   if (!gridSel || sameAs) { gridSel = sameAs ? null : sel; return paintHockeyRoster(); }
   const r = RosterGrid.swap(gridGroups, gridSel, sel);
   if (r.error) { showError(r.error); gridSel = null; return paintHockeyRoster(); }
-  try {
-    const out = await api(`/teams/${activeTeam().id}/pecking-order`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({assignments: {[r.group]: r.ids}})});
+    const payloadAssignments = r.assignments || {[r.group]: r.ids};
+    const out = await api(`/teams/${activeTeam().id}/pecking-order`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({assignments: payloadAssignments})});
     gridGroups = out.groups;
   } catch (e) { showError(e.message); }
   gridSel = null;
@@ -1856,6 +1837,96 @@ async function renderTeams() {
       });
     };
   });
+}
+
+// ---- TEAM SETTINGS --------------------------------------------------------------------------------------------
+async function renderTeamSettings() {
+  await refreshOverview();
+  const mine = myTeam();
+  const teams = ov.teams || [];
+
+  let targetTeam = mine || (isCommissioner && teams.length ? teams[0] : null);
+
+  if (!targetTeam) {
+    $('content').innerHTML = `
+      <div class="card elev-sm" style="padding:var(--space-5);max-width:600px;margin:0 auto">
+        <h3 style="margin:0 0 var(--space-2)">Team Settings</h3>
+        <p class="muted">You do not own a team in this league yet.</p>
+        <a href="/static/join-league.html?league_id=${LEAGUE_ID}" class="btn btn-primary">Claim a Team</a>
+      </div>
+    `;
+    return;
+  }
+
+  $('content').innerHTML = `
+    <div style="max-width:640px;margin:0 auto">
+      <div class="card elev-sm" style="padding:var(--space-5)">
+        <div class="card-kicker">Team Configuration</div>
+        <h2 style="margin:var(--space-1) 0 var(--space-4)">Team Settings</h2>
+
+        ${(isCommissioner && teams.length > 1) ? `
+          <div style="margin-bottom:var(--space-4)">
+            <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Select Team to Edit</label>
+            <select id="settings-team-select" style="width:100%;padding:8px 12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface);color:inherit">
+              ${teams.map(t => `<option value="${t.id}" ${t.id === targetTeam.id ? 'selected' : ''}>${esc(t.name)}${mine && t.id === mine.id ? ' (Your Team)' : ''}${t.is_ai_owned ? ' [AI]' : ''}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+
+        <form id="team-settings-form" style="display:flex;flex-direction:column;gap:var(--space-4)">
+          <div>
+            <label for="settings-team-name" style="display:block;font-size:13px;font-weight:600;margin-bottom:6px">Team Name</label>
+            <input type="text" id="settings-team-name" value="${esc(targetTeam.name)}" required maxlength="60"
+                   style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--color-divider);border-radius:var(--radius-md);font-size:15px;background:var(--color-bg);color:inherit">
+            <p class="muted" style="font-size:12px;margin:6px 0 0">Choose a distinct name for your team across the league and scoreboard.</p>
+          </div>
+
+          <div style="display:flex;gap:var(--space-3);align-items:center;margin-top:var(--space-2)">
+            <button type="submit" class="btn btn-primary" id="btn-save-team-name">Save Team Name</button>
+            <span id="settings-status" class="muted" style="font-size:13px"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  const sel = $('settings-team-select');
+  if (sel) {
+    sel.onchange = () => {
+      const selectedId = Number(sel.value);
+      targetTeam = teams.find(t => t.id === selectedId) || targetTeam;
+      const nameInput = $('settings-team-name');
+      if (nameInput) nameInput.value = targetTeam.name;
+    };
+  }
+
+  const form = $('team-settings-form');
+  if (form) {
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const statusEl = $('settings-status');
+      const submitBtn = $('btn-save-team-name');
+      const newName = ($('settings-team-name').value || '').trim();
+      if (!newName) return showError('Team name cannot be empty');
+      submitBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Saving...';
+      try {
+        const updated = await FSC.patch(`/teams/${targetTeam.id}`, { name: newName });
+        targetTeam.name = updated.name;
+        if (teamsById[targetTeam.id]) teamsById[targetTeam.id].name = updated.name;
+        const ovTeam = ov.teams.find(t => t.id === targetTeam.id);
+        if (ovTeam) ovTeam.name = updated.name;
+        showResult(`Team name successfully updated to "${esc(updated.name)}"`);
+        if (statusEl) statusEl.textContent = 'Saved!';
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      } catch (err) {
+        showError(err.message || 'Failed to update team name');
+        if (statusEl) statusEl.textContent = '';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    };
+  }
 }
 
 // ---- start ------------------------------------------------------------------------------------------------------

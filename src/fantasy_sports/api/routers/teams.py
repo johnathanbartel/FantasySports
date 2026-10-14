@@ -72,6 +72,33 @@ def create_team(
     return team
 
 
+class TeamUpdateRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{team_id}", response_model=TeamOut)
+def update_team(
+    team_id: int, payload: TeamUpdateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    team = db.get(Team, team_id)
+    if team is None:
+        raise HTTPException(404, "Team not found")
+    league = db.get(League, team.league_id)
+    is_commish = bool(league and league.commissioner_user_id == user.id)
+    is_owner = bool(team.owner_user_id == user.id)
+    if not (is_owner or is_commish):
+        raise HTTPException(403, "You can only update your own team or as commissioner")
+    new_name = payload.name.strip()
+    if not new_name:
+        raise HTTPException(400, "Team name cannot be empty")
+    if len(new_name) > 80:
+        raise HTTPException(400, "Team name cannot exceed 80 characters")
+    team.name = new_name
+    db.commit()
+    db.refresh(team)
+    return team
+
+
 @router.get("/{team_id}", response_model=TeamOut)
 def get_team(team_id: int, db: Session = Depends(get_db)):
     team = db.get(Team, team_id)
