@@ -319,6 +319,8 @@ class DraftStartRequest(BaseModel):
     overnight_start: str | None = None   # "HH:MM" local, with utc_offset_minutes
     overnight_end: str | None = None
     utc_offset_minutes: int = 0
+    randomize_order: bool = True
+    team_order: list[int] | None = None
 
 
 class DraftOut(ORMModel):

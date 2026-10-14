@@ -75,15 +75,20 @@
     return clock.mode === 'async' ? 30000 : 5000;
   }
 
-  // Form -> POST /drafts/start body. form: {mode: 'none'|'live'|'slow', value, overnight, from, to, offsetMinutes}.
+  // Form -> POST /drafts/start body. form: {mode: 'none'|'live'|'slow', value, overnight, from, to, offsetMinutes, randomize_order, team_order}.
   function startBody(form) {
-    if (!form || form.mode === 'none') return {body: {}, error: null};
+    const randomize_order = form && form.randomize_order !== undefined ? Boolean(form.randomize_order) : true;
+    const team_order = form && Array.isArray(form.team_order) ? form.team_order : null;
+    const extra = {randomize_order};
+    if (team_order) extra.team_order = team_order;
+
+    if (!form || form.mode === 'none') return {body: extra, error: null};
     const n = Number(form.value);
     if (!Number.isFinite(n) || n <= 0) return {body: null, error: 'Enter how long each pick lasts.'};
     const seconds = Math.round(form.mode === 'slow' ? n * 3600 : n);
     if (seconds < MIN_PICK_SECONDS) return {body: null, error: `A pick must last at least ${MIN_PICK_SECONDS} seconds.`};
     if (seconds > MAX_PICK_SECONDS) return {body: null, error: 'A pick can last at most 7 days.'};
-    const body = {pick_seconds: seconds};
+    const body = Object.assign({pick_seconds: seconds}, extra);
     if (form.overnight) {
       if (!form.from || !form.to) return {body: null, error: 'Choose when the overnight pause starts and ends.'};
       if (form.from === form.to) return {body: null, error: 'The overnight pause must start and end at different times.'};

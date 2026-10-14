@@ -67,7 +67,18 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
         assert_league_full(db, league)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    # TODO: real draft-order randomization/settings. v1 uses team.id order.
+    if payload.team_order:
+        team_map = {t.id: t for t in teams}
+        if set(payload.team_order) == set(team_map.keys()):
+            teams = [team_map[tid] for tid in payload.team_order]
+        elif payload.randomize_order:
+            import random
+            teams = list(teams)
+            random.shuffle(teams)
+    elif payload.randomize_order:
+        import random
+        teams = list(teams)
+        random.shuffle(teams)
     if db.query(Draft).filter(Draft.league_id == league.id, Draft.status == "in_progress").first():
         raise HTTPException(409, "This league already has a draft in progress")
     pool = league_pool(db, league.id)

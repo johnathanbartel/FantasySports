@@ -116,6 +116,7 @@ let me = null;
 let teamsById = {}; // team_id -> {id, name, is_ai_owned, owner_user_id}
 let board = [];
 let picks = [];
+let currentTeamOrder = [];
 
 const api = FSC.api;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -172,6 +173,9 @@ function renderSetup(teams) {
   const panel = document.getElementById('setup-panel');
   panel.style.display = 'block';
   const open = league.size - teams.length;
+  if (!currentTeamOrder.length || currentTeamOrder.length !== teams.length) {
+    currentTeamOrder = teams.map(t => t.id);
+  }
   const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
   const inviteUrl = `${location.origin}/static/join-league.html?league_id=${LEAGUE_ID}`;
   const claimBanner = (!myTeam && open > 0)
@@ -190,6 +194,15 @@ function renderSetup(teams) {
       <button type="button" class="btn btn-secondary" id="copy-invite-btn" style="font-size:13px">Copy Invite Link</button>
       <span id="invite-copied-msg" class="text-muted" style="font-size:12px;display:none">Copied invite link to clipboard!</span>
     </div>
+    ${teams.length > 0 ? `
+      <div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+          <span style="font-size:13px;font-weight:600">Draft Order (Round 1)</span>
+          ${isCommissioner() ? `<button type="button" class="btn btn-secondary" id="randomize-order-btn" style="font-size:12px;padding:3px 10px">🎲 Randomize Order</button>` : ''}
+        </div>
+        <div id="draft-order-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+      </div>
+    ` : ''}
     ${isCommissioner() && teams.some(t => t.is_ai_owned) ? `
       <div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)">
         <div style="font-size:13px;font-weight:600;margin-bottom:var(--space-2)">AI Teams in Draft (${teams.filter(t => t.is_ai_owned).length})</div>
@@ -234,6 +247,32 @@ function renderSetup(teams) {
     };
   });
 
+  const renderOrderList = () => {
+    const listEl = document.getElementById('draft-order-list');
+    if (!listEl) return;
+    listEl.innerHTML = currentTeamOrder.map((tid, idx) => {
+      const t = teamsById[tid];
+      const name = t ? t.name : `Team ${tid}`;
+      return `<div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--color-bg);border:1px solid var(--color-divider);border-radius:var(--radius-sm);font-size:12px">
+        <span style="font-weight:700;color:var(--color-primary)">#${idx + 1}</span>
+        <span>${esc(name)}</span>
+        ${t && t.is_ai_owned ? '<span class="pill ai" style="font-size:9px;padding:1px 4px">AI</span>' : ''}
+      </div>`;
+    }).join('');
+  };
+  renderOrderList();
+
+  const randBtn = document.getElementById('randomize-order-btn');
+  if (randBtn) {
+    randBtn.onclick = () => {
+      for (let i = currentTeamOrder.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [currentTeamOrder[i], currentTeamOrder[j]] = [currentTeamOrder[j], currentTeamOrder[i]];
+      }
+      renderOrderList();
+    };
+  }
+
   const fill = document.getElementById('fill-ai');
   if (fill) fill.onclick = () => act(() => FSC.post(`/leagues/${LEAGUE_ID}/ai-teams`));
   const start = document.getElementById('start-draft');
@@ -251,11 +290,12 @@ function renderSetup(teams) {
 // ---- pick clock setup ----
 function clockFormHtml() {
   return `<fieldset style="border:1px solid var(--color-divider);padding:var(--space-3);margin:0 0 var(--space-3)">
-    <legend>Pick clock</legend>
+    <legend>Pick clock & order</legend>
     <div style="display:flex;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end">
       <label>Mode<br><select id="clk-mode"><option value="live" selected>Live: seconds per pick</option><option value="none">No clock (manual picks)</option><option value="slow">Slow: hours per pick</option></select></label>
       <label id="clk-val-wrap" hidden>Time per pick<br><input id="clk-val" type="number" min="1" step="any" value="60" style="width:100px"> <span id="clk-unit">seconds</span></label>
       <label><input type="checkbox" id="clk-night"> Pause overnight</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="clk-randomize" checked> Randomize draft order on start</label>
     </div>
     <div id="clk-night-wrap" hidden style="display:none;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end;margin-top:var(--space-2)">
       <label>From<br><input id="clk-from" type="time" value="22:00"></label>
@@ -292,8 +332,17 @@ function wireClockForm() {
 
 function readClockForm() {
   const v = id => document.getElementById(id);
-  return {mode: v('clk-mode').value, value: v('clk-val').value, overnight: v('clk-night').checked,
-          from: v('clk-from').value, to: v('clk-to').value, offsetMinutes: Number(v('clk-offset').value)};
+  const randEl = v('clk-randomize');
+  return {
+    mode: v('clk-mode').value,
+    value: v('clk-val').value,
+    overnight: v('clk-night').checked,
+    from: v('clk-from').value,
+    to: v('clk-to').value,
+    offsetMinutes: Number(v('clk-offset').value),
+    randomize_order: randEl ? randEl.checked : true,
+    team_order: currentTeamOrder && currentTeamOrder.length ? currentTeamOrder : null
+  };
 }
 
 // One request chain at a time: overlapping picks/autopicks would race for the same asset.
