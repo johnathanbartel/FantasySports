@@ -56,19 +56,29 @@ def plan_series(team_ids: list[int], series_length_days: int, start_date: dateti
     n = len(ids)
     if n < 2 or n % 2:
         raise ValueError(f"A series schedule needs an even number of teams (at least 2); this league has {n}")
+
+    first_end = start_date + datetime.timedelta(days=(5 - start_date.weekday()) % 7)
+    first_days = (first_end - start_date).days + 1
+
     plan: list[PlannedSeries] = []
     rotating = ids[1:]
     for cycle in range(cycles):
         for rnd in range(n - 1):
             order = [ids[0]] + rotating[-rnd:] + rotating[:-rnd] if rnd else list(ids)
             round_index = cycle * (n - 1) + rnd
-            start = start_date + datetime.timedelta(days=round_index * series_length_days)
-            end = start + datetime.timedelta(days=series_length_days - 1)
+            if round_index == 0:
+                start = start_date
+                end = first_end
+                days = first_days
+            else:
+                start = first_end + datetime.timedelta(days=1 + (round_index - 1) * series_length_days)
+                end = start + datetime.timedelta(days=series_length_days - 1)
+                days = series_length_days
             for i in range(n // 2):
                 a, b = order[i], order[n - 1 - i]
                 if (rnd + i + cycle) % 2:
                     a, b = b, a
-                plan.append(PlannedSeries(round_index, a, b, start, end, series_length_days))
+                plan.append(PlannedSeries(round_index, a, b, start, end, days))
     return plan
 
 

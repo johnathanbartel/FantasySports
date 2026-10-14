@@ -583,6 +583,7 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                 LeagueSeries.league_id == league_id,
                 SeriesDailyGame.calendar_date <= max_active_date,
                 SeriesDailyGame.status != "FINAL",
+                SeriesDailyGame.is_matchup_day.is_(True),
             )
             .distinct()
             .order_by(SeriesDailyGame.calendar_date)
@@ -614,7 +615,11 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
         daily_games = (
             db.query(SeriesDailyGame)
             .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
-            .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.calendar_date == sync_date)
+            .filter(
+                LeagueSeries.league_id == league_id,
+                SeriesDailyGame.calendar_date == sync_date,
+                SeriesDailyGame.is_matchup_day.is_(True),
+            )
             .all()
         )
 

@@ -59,25 +59,17 @@ def _player_out(
     )
 
 
-def series_window_of(d: datetime.date, series_start: datetime.date) -> int:
-    """Returns 1, 2, or 3 corresponding to Game 1, 2, or 3 of the 7-day series."""
-    offset = (d - series_start).days
-    if offset < 0 or offset >= 7:
-        from fantasy_sports.sports.hockey.pipeline import window_of
-        try:
-            _, win_idx = window_of(d)
-            return win_idx
-        except Exception:
-            return 1
-    w = series_start.weekday()
-    if w == 6:  # Sun start: Sun-Tue (0-2), Wed-Thu (3-4), Fri-Sat (5-6)
-        return 1 if offset <= 2 else 2 if offset <= 4 else 3
-    elif w == 2:  # Wed start: Wed-Thu (0-1), Fri-Sat (2-3), Sun-Tue (4-6)
-        return 1 if offset <= 1 else 2 if offset <= 3 else 3
-    elif w == 4:  # Fri start: Fri-Sat (0-1), Sun-Tue (2-4), Wed-Thu (5-6)
-        return 1 if offset <= 1 else 2 if offset <= 4 else 3
+def series_window_of(d: datetime.date, series_start: datetime.date | None = None) -> int:
+    """Returns 1, 2, or 3 corresponding to Game 1, 2, or 3 of the 7-day series.
+    Sun-Tue is always window 1, Wed-Thur is always window 2, Fri-Sat is always window 3.
+    """
+    w = d.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    if w in (6, 0, 1):
+        return 1
+    elif w in (2, 3):
+        return 2
     else:
-        return 1 if offset <= 2 else 2 if offset <= 4 else 3
+        return 3
 
 
 def _read(db: Session, team: Team) -> PeckingOrderOut:
@@ -104,7 +96,7 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
     nhl = db.query(Universe).filter_by(code="nhl").first()
     first_series = db.query(LeagueSeries).filter_by(league_id=team.league_id).order_by(LeagueSeries.start_date).first()
     from fantasy_sports.platform.nhl_daily_sync import current_eastern_date, to_eastern_naive
-    w_start = first_series.start_date if first_series else week_start(current_eastern_date())
+    w_start = week_start(first_series.start_date) if first_series else week_start(current_eastern_date())
     w_begin = datetime.datetime.combine(w_start, datetime.time.min)
     w_end = w_begin + datetime.timedelta(days=7)
 
@@ -158,6 +150,13 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
 @router.get("/{team_id}/pecking-order", response_model=PeckingOrderOut)
 def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
     team = _team(db, team_id)
+    try:
+        from fantasy_sports.platform import auto_schedule
+        league = db.get(League, team.league_id)
+        if league:
+            auto_schedule.ensure_schedule(db, league)
+    except Exception:
+        pass
     try:
         from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
         auto_sync_league_scoreboard(db, team.league_id)

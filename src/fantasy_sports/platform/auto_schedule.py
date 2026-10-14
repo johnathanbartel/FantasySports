@@ -44,11 +44,18 @@ def reschedule_nhl_league(db: Session, league: League, today: datetime.date | No
         return "Not an NHL league"
     if today is None:
         try:
-            from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
-            today = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
+            from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+            today = current_eastern_date()
         except Exception:
             today = datetime.date.today()
-    series_start = next_full_window_start(today)
+    from fantasy_sports.platform.db.models.core import Draft
+    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+    draft = db.query(Draft).filter_by(league_id=league.id).first()
+    if draft and draft.completed_at:
+        draft_d = to_eastern_naive(draft.completed_at).date()
+        series_start = next_full_window_start(draft_d)
+    else:
+        series_start = next_full_window_start(today)
     series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
     return None
 
@@ -59,32 +66,37 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
         return "College leagues arrange their own schedule in the schedule stage"
     if today is None:
         try:
-            from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
-            today = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
+            from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+            today = current_eastern_date()
         except Exception:
             today = datetime.date.today()
+
+    from fantasy_sports.platform.db.models.core import Draft
+    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+    draft = db.query(Draft).filter_by(league_id=league.id).first()
+    if draft and draft.completed_at:
+        draft_d = to_eastern_naive(draft.completed_at).date()
+        target_start = next_full_window_start(draft_d)
+    else:
+        target_start = next_full_window_start(today)
+
     if has_schedule(db, league):
         if series_schedule.league_is_nhl(db, league.id):
             from fantasy_sports.platform.db.models.core import LeagueSeries
             first_s = db.query(LeagueSeries).filter_by(league_id=league.id).order_by(LeagueSeries.start_date).first()
-            if first_s and first_s.start_date < today:
-                # League drafted after season started; heal schedule if no human watched games
-                target_start = next_full_window_start(today)
-                if first_s.start_date < target_start:
-                    try:
-                        with db.begin_nested():
-                            series_schedule.generate_schedule(db, league, target_start, 1, replace=True, force=True)
-                    except Exception:
-                        pass
+            if first_s and first_s.start_date < target_start:
+                try:
+                    with db.begin_nested():
+                        series_schedule.generate_schedule(db, league, target_start, 1, replace=True, force=True)
+                except Exception:
+                    pass
         return None
     try:
         with db.begin_nested():            # a failed attempt leaves nothing behind
             if series_schedule.league_is_nhl(db, league.id):
                 if getattr(league, "league_mode", "standard") == "weekly_redraft":
                     raise ValueError("This league plays weekly redraft contests, not series")
-                # NHL leagues begin their season at the beginning of the next full window (Wed, Fri, or Sun)
-                series_start = next_full_window_start(today)
-                series_schedule.generate_schedule(db, league, series_start, 1)
+                series_schedule.generate_schedule(db, league, target_start, 1)
             else:
                 schedule.create_schedule(db, league.id)
     except ValueError as e:

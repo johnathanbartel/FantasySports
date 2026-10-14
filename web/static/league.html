@@ -368,32 +368,28 @@ let poRealSchedules = {};
 function getSeriesWindows(startDateStr) {
   if (!startDateStr) {
     return [
-      { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 0, endOffset: 2 },
-      { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 3, endOffset: 4 },
-      { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 5, endOffset: 6 },
+      { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', isSkipped: false, startDate: '', endDate: '' },
+      { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', isSkipped: false, startDate: '', endDate: '' },
+      { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', isSkipped: false, startDate: '', endDate: '' },
     ];
   }
   const d = new Date(startDateStr + 'T00:00:00');
-  const w = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-  if (w === 3) { // Wednesday start
-    return [
-      { num: 1, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 0, endOffset: 1 },
-      { num: 2, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 2, endOffset: 3 },
-      { num: 3, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 4, endOffset: 6 },
-    ];
-  } else if (w === 5) { // Friday start
-    return [
-      { num: 1, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 0, endOffset: 1 },
-      { num: 2, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 2, endOffset: 4 },
-      { num: 3, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 5, endOffset: 6 },
-    ];
-  } else { // Sunday (or default) start
-    return [
-      { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startOffset: 0, endOffset: 2 },
-      { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', startOffset: 3, endOffset: 4 },
-      { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', startOffset: 5, endOffset: 6 },
-    ];
-  }
+  const day = d.getDay(); // 0 is Sunday
+  d.setDate(d.getDate() - day);
+  const sunStr = d.toISOString().split('T')[0];
+
+  const w1Start = sunStr;
+  const w1End = addDays(sunStr, 2);
+  const w2Start = addDays(sunStr, 3);
+  const w2End = addDays(sunStr, 4);
+  const w3Start = addDays(sunStr, 5);
+  const w3End = addDays(sunStr, 6);
+
+  return [
+    { num: 1, label: 'Sun – Tue', full: 'Sunday – Monday – Tuesday', startDate: w1Start, endDate: w1End, isSkipped: startDateStr > w1End },
+    { num: 2, label: 'Wed – Thu', full: 'Wednesday – Thursday', startDate: w2Start, endDate: w2End, isSkipped: startDateStr > w2End },
+    { num: 3, label: 'Fri – Sat', full: 'Friday – Saturday', startDate: w3Start, endDate: w3End, isSkipped: false },
+  ];
 }
 
 function addDays(dateStr, days) {
@@ -596,6 +592,9 @@ function paintHockeyRoster() {
   const seriesInfo = hockeySchedule && hockeySchedule.series && hockeySchedule.series.length ? hockeySchedule.series[0] : null;
   const seriesTitle = seriesInfo ? `Series vs ${esc(seriesInfo.opponent_name)} (${fmtD(seriesInfo.start_date)} – ${fmtD(seriesInfo.end_date)})` : 'Weekly Matchup · 3 Game Windows';
   const winDefs = getSeriesWindows(seriesInfo ? seriesInfo.start_date : null);
+  if (winDefs[0].isSkipped && activeHockeyWindow === 1) {
+    activeHockeyWindow = 2;
+  }
 
   $('content').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
@@ -614,19 +613,24 @@ function paintHockeyRoster() {
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
         ${winDefs.map(w => {
-          const sDate = seriesInfo ? fmtD(addDays(seriesInfo.start_date, w.startOffset)) : '';
-          const eDate = seriesInfo ? fmtD(addDays(seriesInfo.start_date, w.endOffset)) : '';
+          const sDate = fmtD(w.startDate);
+          const eDate = fmtD(w.endDate);
           const dateRangeStr = sDate && eDate ? (sDate === eDate ? sDate : `${sDate} – ${eDate}`) : '';
+          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>' : '';
           return `
             <button type="button" class="btn ${activeHockeyWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-window="${w.num}" role="tab" aria-selected="${activeHockeyWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-              <div style="font-weight:700;font-size:14px">Game ${w.num}</div>
+              <div style="font-weight:700;font-size:14px">Game ${w.num} ${badge}</div>
               <div style="font-size:12px;opacity:0.9">${w.label}</div>
               <div class="muted" style="font-size:11px;margin-top:2px">${dateRangeStr ? dateRangeStr + ' · ' : ''}${w.full}</div>
             </button>
           `;
         }).join('')}
       </div>
-      <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 matchups, Best Matchup counts automatically; use the dropdown to reassign either matchup to open windows.</p>
+      ${winDefs.find(w => w.num === activeHockeyWindow && w.isSkipped) ? `
+        <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0;padding:6px 10px;background:var(--color-surface, #f8fafc);border-radius:var(--radius-sm);border:1px solid var(--color-divider)">Game 1 (Sun – Tue) was skipped for this league because the draft completed during Window 1. League matchups begin in <strong>Game 2 (Wed – Thu)</strong>.</p>
+      ` : `
+        <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0">Viewing <strong>Game ${activeHockeyWindow}</strong> lineup. Players with games in this window are Active. Idle players step aside for backups. For players with 2 matchups, Best Matchup counts automatically; use the dropdown to reassign either matchup to open windows.</p>
+      `}
     </div>
 
     ${dropBar}
@@ -746,9 +750,26 @@ async function renderHockeyScoreboard() {
 
     const gamesList = s.daily_games || s.games || [];
     const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
+    if (winDefs[0].isSkipped && activeScoreboardWindow === 1) {
+      activeScoreboardWindow = 2;
+    }
     const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
     const todayStr = new Date().toLocaleDateString('en-CA');
-    const windowGames = gamesList.filter((_, idx) => idx >= curWin.startOffset && idx <= curWin.endOffset);
+    const windowGames = gamesList.filter(g => g.calendar_date >= curWin.startDate && g.calendar_date <= curWin.endDate);
+
+    if (curWin.isSkipped || !windowGames.length) {
+      return `
+        <div class="card elev-sm" style="padding:var(--space-5);text-align:center;border-left:4px solid var(--color-divider);display:flex;flex-direction:column;justify-content:center;min-height:160px">
+          <div style="font-weight:700;font-size:14px;color:var(--color-primary);margin-bottom:var(--space-2)">
+            Game ${curWin.num} (${curWin.label}) Skipped
+          </div>
+          <p class="muted" style="margin:0;font-size:13px">
+            This league completed its draft after Game 1 began. Matchups begin in <strong>Game 2 (${winDefs[1].label})</strong>.
+          </p>
+        </div>
+      `;
+    }
+
     const liveGame = windowGames.find(g => g.status === 'LIVE_SIMULATING' || g.status === 'LIVE');
     const todayGame = windowGames.find(g => g.calendar_date === todayStr);
     const finalGames = windowGames.filter(g => g.status === 'FINAL');
@@ -904,11 +925,12 @@ async function renderHockeyScoreboard() {
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
         ${winDefs.map(w => {
-          const sDate = fmtD(addDays(firstS.start_date, w.startOffset));
-          const eDate = fmtD(addDays(firstS.start_date, w.endOffset));
+          const sDate = fmtD(w.startDate);
+          const eDate = fmtD(w.endDate);
+          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>' : '';
           return `
             <button type="button" class="btn ${activeScoreboardWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-swindow="${w.num}" role="tab" aria-selected="${activeScoreboardWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-              <div style="font-weight:700;font-size:14px">Game ${w.num}</div>
+              <div style="font-weight:700;font-size:14px">Game ${w.num} ${badge}</div>
               <div style="font-size:12px;opacity:0.9">${w.label}</div>
               <div class="muted" style="font-size:11px;margin-top:2px">${sDate} – ${eDate}</div>
             </button>
