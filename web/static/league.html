@@ -101,6 +101,8 @@ const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
+const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
+const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
@@ -1006,6 +1008,7 @@ async function pickGrid(sel) {
   if (!gridSel || sameAs) { gridSel = sameAs ? null : sel; return paintHockeyRoster(); }
   const r = RosterGrid.swap(gridGroups, gridSel, sel);
   if (r.error) { showError(r.error); gridSel = null; return paintHockeyRoster(); }
+  try {
     const payloadAssignments = r.assignments || {[r.group]: r.ids};
     const out = await api(`/teams/${activeTeam().id}/pecking-order`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({assignments: payloadAssignments})});
     gridGroups = out.groups;
@@ -1477,8 +1480,6 @@ async function renderTrades() {
 // ---- SCHEDULE: preseason stage + scoreboard ------------------------------------------------------------
 // Team scores are fantasy points (platform/scoring_scale.py); per-player numbers are raw EPA credit.
 const fmt = (x) => (x === null || x === undefined) ? '-' : (x > 0 ? '+' : '') + x.toFixed(2);
-const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
-const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
 
 async function renderSchedule() {
   await refreshOverview();
