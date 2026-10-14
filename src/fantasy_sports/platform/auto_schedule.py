@@ -24,9 +24,13 @@ def has_schedule(db: Session, league: League) -> bool:
     return db.query(WeeklyMatchup).filter_by(league_id=league.id).count() > 0
 
 
-def next_full_window_start(d: datetime.date) -> datetime.date:
-    """The start date of the next full window strictly after `d` (Wed, Fri, or Sun)."""
+def next_full_window_start(d: datetime.date, allow_today_if_window_start: bool = False) -> datetime.date:
+    """The start date of the next full window strictly after `d` (Wed, Fri, or Sun).
+    If allow_today_if_window_start is True and `d` is the first day of a window (Wed, Fri, or Sun), returns `d`.
+    """
     w = d.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    if allow_today_if_window_start and w in (2, 4, 6):
+        return d
     if w in (6, 0, 1):  # Sun, Mon, Tue -> next full window is Wed (2)
         days = (2 - w) % 7
         return d + datetime.timedelta(days=days if days > 0 else 7)
@@ -53,9 +57,11 @@ def reschedule_nhl_league(db: Session, league: League, today: datetime.date | No
     draft = db.query(Draft).filter_by(league_id=league.id).first()
     if draft and draft.completed_at:
         draft_d = to_eastern_naive(draft.completed_at).date()
-        series_start = next_full_window_start(draft_d)
+        computed_start = next_full_window_start(draft_d, allow_today_if_window_start=True)
+        today_window_start = next_full_window_start(today, allow_today_if_window_start=True)
+        series_start = max(computed_start, today_window_start)
     else:
-        series_start = next_full_window_start(today)
+        series_start = next_full_window_start(today, allow_today_if_window_start=True)
     series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
     return None
 
@@ -76,15 +82,17 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
     draft = db.query(Draft).filter_by(league_id=league.id).first()
     if draft and draft.completed_at:
         draft_d = to_eastern_naive(draft.completed_at).date()
-        target_start = next_full_window_start(draft_d)
+        computed_start = next_full_window_start(draft_d, allow_today_if_window_start=True)
+        today_window_start = next_full_window_start(today, allow_today_if_window_start=True)
+        target_start = max(computed_start, today_window_start)
     else:
-        target_start = next_full_window_start(today)
+        target_start = next_full_window_start(today, allow_today_if_window_start=True)
 
     if has_schedule(db, league):
         if series_schedule.league_is_nhl(db, league.id):
             from fantasy_sports.platform.db.models.core import LeagueSeries
             first_s = db.query(LeagueSeries).filter_by(league_id=league.id).order_by(LeagueSeries.start_date).first()
-            if first_s and first_s.start_date < target_start:
+            if first_s and first_s.start_date != target_start and not series_schedule._started(db, league.id):
                 try:
                     with db.begin_nested():
                         series_schedule.generate_schedule(db, league, target_start, 1, replace=True, force=True)

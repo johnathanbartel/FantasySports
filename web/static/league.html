@@ -744,17 +744,18 @@ async function renderHockeyScoreboard() {
   const currentRoundSeries = seriesList.slice(roundIdx * seriesPerRound, (roundIdx + 1) * seriesPerRound);
   const firstS = currentRoundSeries[0] || seriesList[0];
 
+  const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
+  if (winDefs[0].isSkipped && activeScoreboardWindow === 1) {
+    activeScoreboardWindow = 2;
+  }
+  const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
+  const todayStr = new Date().toLocaleDateString('en-CA');
+
   const matchupCards = currentRoundSeries.map(s => {
     const tA = teamsById[s.team_a_id] || {id: s.team_a_id, name: 'Team ' + s.team_a_id};
     const tB = teamsById[s.team_b_id] || {id: s.team_b_id, name: 'Team ' + s.team_b_id};
 
     const gamesList = s.daily_games || s.games || [];
-    const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
-    if (winDefs[0].isSkipped && activeScoreboardWindow === 1) {
-      activeScoreboardWindow = 2;
-    }
-    const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
-    const todayStr = new Date().toLocaleDateString('en-CA');
     const windowGames = gamesList.filter(g => g.calendar_date >= curWin.startDate && g.calendar_date <= curWin.endDate);
 
     if (curWin.isSkipped || !windowGames.length) {
@@ -764,7 +765,7 @@ async function renderHockeyScoreboard() {
             Game ${curWin.num} (${curWin.label}) Skipped
           </div>
           <p class="muted" style="margin:0;font-size:13px">
-            This league completed its draft after Game 1 began. Matchups begin in <strong>Game 2 (${winDefs[1].label})</strong>.
+            ${curWin.num === 1 ? `This league completed its draft after Game 1 began. Matchups begin in <strong>Game 2 (${winDefs[1].label})</strong>.` : 'No matchups scheduled for this game window.'}
           </p>
         </div>
       `;
@@ -916,7 +917,7 @@ async function renderHockeyScoreboard() {
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)">
         <div>
           <span style="font-weight:700;font-size:14px">3-Game Series Windows</span>
-          <span class="muted" style="font-size:12px;margin-left:8px">${fmtD(firstS.start_date)} – ${fmtD(firstS.end_date)}</span>
+          <span class="muted" style="font-size:12px;margin-left:8px">${firstS ? fmtD(firstS.start_date) + ' – ' + fmtD(firstS.end_date) : ''}</span>
         </div>
         <div style="display:flex;align-items:center;gap:var(--space-2)">
           <span class="muted" style="font-size:12px">7-Day Series · Strict Monotonic Scoreboards</span>
