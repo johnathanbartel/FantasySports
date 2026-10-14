@@ -92,9 +92,14 @@ def has_schedule(db: Session, league_id: int) -> bool:
 def _started(db: Session, league_id: int) -> bool:
     if db.query(LeagueSeries).filter(LeagueSeries.league_id == league_id, LeagueSeries.status != "SCHEDULED").count():
         return True
-    return db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
+    if db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
         LeagueSeries.league_id == league_id).filter(
-        (SeriesDailyGame.status != "SCHEDULED") | (SeriesDailyGame.home_score != 0) | (SeriesDailyGame.away_score != 0)).count() > 0
+        (SeriesDailyGame.status != "SCHEDULED") | (SeriesDailyGame.home_score != 0) | (SeriesDailyGame.away_score != 0)).count() > 0:
+        return True
+    from fantasy_sports.platform.db.models.core import SimulatorGame
+    return db.query(SimulatorGame).join(SeriesDailyGame, SeriesDailyGame.id == SimulatorGame.daily_game_id).join(
+        LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id).filter(
+        LeagueSeries.league_id == league_id, SimulatorGame.status != "SCHEDULED").count() > 0
 
 
 def generate_schedule(db: Session, league: League, start_date: datetime.date, cycles: int = 1, replace: bool = False, force: bool = False) -> list[LeagueSeries]:

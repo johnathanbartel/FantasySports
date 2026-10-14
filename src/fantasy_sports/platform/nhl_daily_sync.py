@@ -70,15 +70,34 @@ def _calculate_xg(x: float | None, y: float | None, is_goal: bool, is_empty_net:
 
 def to_eastern_naive(utc_dt: datetime.datetime) -> datetime.datetime:
     """Converts a UTC datetime to North American Eastern time (ET/EDT/EST) as a naive datetime.
-    Uses US Daylight Saving Time rules (2nd Sunday in March to 1st Sunday in November).
-    Standard library only, zero external dependencies."""
-    year = utc_dt.year
-    dst_start = datetime.datetime(year, 3, 8) + datetime.timedelta(days=(6 - datetime.datetime(year, 3, 8).weekday()) % 7)
-    dst_end = datetime.datetime(year, 11, 1) + datetime.timedelta(days=(6 - datetime.datetime(year, 11, 1).weekday()) % 7)
-    utc_naive = utc_dt.replace(tzinfo=None) if utc_dt.tzinfo else utc_dt
-    is_dst = dst_start <= utc_naive < dst_end
-    offset = datetime.timedelta(hours=-4 if is_dst else -5)
-    return utc_naive + offset
+    Standard library ZoneInfo with fallback to manual DST rules."""
+    if utc_dt.tzinfo is None:
+        utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
+    try:
+        return utc_dt.astimezone(ZoneInfo("America/New_York")).replace(tzinfo=None)
+    except Exception:
+        year = utc_dt.year
+        dst_start = datetime.datetime(year, 3, 8) + datetime.timedelta(days=(6 - datetime.datetime(year, 3, 8).weekday()) % 7)
+        dst_end = datetime.datetime(year, 11, 1) + datetime.timedelta(days=(6 - datetime.datetime(year, 11, 1).weekday()) % 7)
+        utc_naive = utc_dt.replace(tzinfo=None)
+        is_dst = dst_start <= utc_naive < dst_end
+        offset = datetime.timedelta(hours=-4 if is_dst else -5)
+        return utc_naive + offset
+
+
+def eastern_naive_to_utc(dt: datetime.datetime) -> datetime.datetime:
+    """Converts an Eastern naive datetime to UTC naive datetime."""
+    try:
+        aware_et = dt.replace(tzinfo=ZoneInfo("America/New_York"))
+        aware_utc = aware_et.astimezone(datetime.timezone.utc)
+        return aware_utc.replace(tzinfo=None)
+    except Exception:
+        year = dt.year
+        dst_start = datetime.datetime(year, 3, 8) + datetime.timedelta(days=(6 - datetime.datetime(year, 3, 8).weekday()) % 7)
+        dst_end = datetime.datetime(year, 11, 1) + datetime.timedelta(days=(6 - datetime.datetime(year, 11, 1).weekday()) % 7)
+        is_dst = dst_start <= dt < dst_end
+        offset = datetime.timedelta(hours=4 if is_dst else 5)
+        return dt + offset
 
 
 def current_eastern_date() -> datetime.date:
@@ -89,6 +108,31 @@ def current_eastern_date() -> datetime.date:
         return to_eastern_naive(datetime.datetime.now(datetime.timezone.utc)).date()
     except Exception:
         return datetime.date.today()
+
+
+def is_real_game_started(game: Game, now_utc: datetime.datetime | None = None) -> bool:
+    """Returns True if the real NHL game has actually started (puck dropped) in real time."""
+    return game.status in ("live", "final", "in_progress")
+
+
+def get_matchup_real_games(db: Session, dg: SeriesDailyGame, real_games_on_date: list[Game]) -> list[Game]:
+    """Finds the real NHL games on this date that involve players on either team's roster."""
+    if not real_games_on_date:
+        return []
+    home_roster = po.roster_players(db, dg.home_team_id)
+    away_roster = po.roster_players(db, dg.away_team_id)
+    matchup_real_team_ids = set()
+    for _, (_, p) in home_roster.items():
+        if p and p.real_team_id:
+            matchup_real_team_ids.add(p.real_team_id)
+    for _, (_, p) in away_roster.items():
+        if p and p.real_team_id:
+            matchup_real_team_ids.add(p.real_team_id)
+    matchup_games = [
+        g for g in real_games_on_date
+        if g.home_team_id in matchup_real_team_ids or g.away_team_id in matchup_real_team_ids
+    ]
+    return matchup_games if matchup_games else real_games_on_date
 
 
 
@@ -179,7 +223,13 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         if not game_start_et:
             game_start_et = datetime.datetime.combine(target_date, datetime.time(19, 0))
 
-        game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "live"
+        raw_state = g_meta.get("gameState", "")
+        if raw_state in ("OFF", "FINAL"):
+            game_status = "final"
+        elif raw_state in ("LIVE", "CRIT"):
+            game_status = "live"
+        else:
+            game_status = "scheduled"
         home_score = g_meta.get("homeTeam", {}).get("score", 0)
         away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
@@ -445,7 +495,13 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
                 game_start_et = datetime.datetime.combine(d_date, datetime.time(19, 0))
 
             kickoff_naive = game_start_et
-            game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "scheduled"
+            raw_state = g_meta.get("gameState", "")
+            if raw_state in ("OFF", "FINAL"):
+                game_status = "final"
+            elif raw_state in ("LIVE", "CRIT"):
+                game_status = "live"
+            else:
+                game_status = "scheduled"
             home_score = g_meta.get("homeTeam", {}).get("score", 0)
             away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
@@ -606,10 +662,21 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
         # Check if real games for sync_date are final
         start_day = datetime.datetime.combine(sync_date, datetime.time.min)
         end_day = start_day + datetime.timedelta(days=1)
+
+        # Heal any legacy UTC kickoff rows stored with hour < 6 (belonging to yesterday evening)
+        legacy_utc_games = db.query(Game).filter(
+            Game.universe_id == nhl.id,
+            Game.kickoff_at >= start_day,
+            Game.kickoff_at < start_day + datetime.timedelta(hours=6),
+        ).all()
+        for lg in legacy_utc_games:
+            lg.kickoff_at = to_eastern_naive(lg.kickoff_at)
+            db.flush()
+
         real_games = db.query(Game).filter(
             Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
         ).all()
-        any_real_started = bool(real_games) and any(g.status in ("live", "final") for g in real_games)
+        any_real_started = bool(real_games) and any(is_real_game_started(g, now_utc) for g in real_games)
         all_real_final = bool(real_games) and all(g.status == "final" for g in real_games)
 
         daily_games = (
@@ -623,6 +690,32 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
             .all()
         )
 
+        # If real games exist for today's slate but zero have started or finished, ensure all fantasy games are SCHEDULED
+        if bool(real_games) and not any_real_started and not all_real_final:
+            for dg in daily_games:
+                if dg.status != "SCHEDULED" or dg.home_score != 0 or dg.away_score != 0 or dg.current_period != 0 or dg.seconds_remaining != 1200:
+                    dg.status = "SCHEDULED"
+                    dg.home_score = 0
+                    dg.away_score = 0
+                    dg.current_period = 0
+                    dg.seconds_remaining = 1200
+                    dg.home_shots = 0
+                    dg.away_shots = 0
+                    sim = service.get_sim(db, dg.id)
+                    if sim is not None:
+                        sim.status = "SCHEDULED"
+                        sim.started_at = None
+                        sim.finalized_at = None
+                    db.flush()
+                # If series was marked IN_PROGRESS solely due to prematurely started game, reset to SCHEDULED
+                siblings = db.query(SeriesDailyGame).filter_by(series_id=dg.series_id).all()
+                if all(s.status == "SCHEDULED" for s in siblings if s.is_matchup_day):
+                    series_row = db.get(LeagueSeries, dg.series_id)
+                    if series_row and series_row.status != "SCHEDULED":
+                        series_row.status = "SCHEDULED"
+                        db.flush()
+            continue
+
         for dg in daily_games:
             sim = service.get_sim(db, dg.id)
             if sim is None:
@@ -631,18 +724,25 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                 except Exception:
                     continue
             shape = service.shape_of(sim)
-            started_games = [g for g in real_games if g.status in ("live", "final")]
-            earliest_kickoff = min((g.kickoff_at for g in started_games if g.kickoff_at), default=now_utc)
-            start_time = earliest_kickoff if earliest_kickoff < now_utc else now_utc
 
-            if dg.status == "SCHEDULED" and (any_real_started or all_real_final):
+            # Determine real games that involve this specific fantasy matchup's players
+            matchup_games = get_matchup_real_games(db, dg, real_games)
+            matchup_started_games = [g for g in matchup_games if is_real_game_started(g, now_utc)]
+            matchup_started = bool(matchup_started_games)
+            matchup_all_final = bool(matchup_games) and all(g.status == "final" for g in matchup_games)
+
+            matchup_kickoffs_utc = [eastern_naive_to_utc(g.kickoff_at) for g in matchup_started_games if g.kickoff_at]
+            earliest_kickoff_utc = min(matchup_kickoffs_utc, default=now_utc)
+            start_time = earliest_kickoff_utc if earliest_kickoff_utc <= now_utc else now_utc
+
+            if dg.status == "SCHEDULED" and (matchup_started or matchup_all_final):
                 try:
                     service.start_game(db, sim, start_time)
                 except Exception:
                     pass
 
             is_past_date = (sync_date < max_active_date)
-            should_finalize = all_real_final or (is_past_date and any_real_started)
+            should_finalize = matchup_all_final or (is_past_date and matchup_started)
 
             if should_finalize and dg.status != "FINAL":
                 try:
@@ -650,13 +750,12 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass
-            elif any_real_started and not all_real_final:
+            elif matchup_started and not matchup_all_final:
                 try:
-                    if sim.status == "LIVE" and earliest_kickoff and earliest_kickoff < now_utc:
-                        max_elapsed = shape.window_seconds - 300  # keep live in 3rd period while real games active
-                        actual_elapsed = (now_utc - earliest_kickoff).total_seconds()
-                        effective_elapsed = min(actual_elapsed, max_elapsed)
-                        sim.started_at = now_utc - datetime.timedelta(seconds=effective_elapsed)
+                    if sim.status == "LIVE":
+                        elapsed = (now_utc - sim.started_at).total_seconds() if sim.started_at else 0
+                        if elapsed >= shape.window_seconds:
+                            sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds - 60)
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass

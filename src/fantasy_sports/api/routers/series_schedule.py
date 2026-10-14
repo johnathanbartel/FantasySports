@@ -59,12 +59,23 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
             now_utc = service.utcnow()
 
             for g in dg_list:
-                sim = sim_by_dg.get(g.id)
-                if not sim:
-                    watched_map[g.id] = False
+                t_home = team_map.get(g.home_team_id)
+                t_away = team_map.get(g.away_team_id)
+                is_ai_vs_ai = bool(t_home and t_home.is_ai_owned and t_away and t_away.is_ai_owned)
+                if is_ai_vs_ai:
+                    watched_map[g.id] = True
                 else:
-                    users_who_watched = revealed_users_by_sim.get(sim.id, set())
-                    watched_map[g.id] = bool(viewer_user_id and viewer_user_id in users_who_watched)
+                    sim = sim_by_dg.get(g.id)
+                    if not sim:
+                        watched_map[g.id] = False
+                    else:
+                        users_who_watched = revealed_users_by_sim.get(sim.id, set())
+                        owners = set()
+                        if t_home and t_home.owner_user_id:
+                            owners.add(t_home.owner_user_id)
+                        if t_away and t_away.owner_user_id:
+                            owners.add(t_away.owner_user_id)
+                        watched_map[g.id] = bool((owners & users_who_watched) or (viewer_user_id and viewer_user_id in users_who_watched))
 
                 sim = sim_by_dg.get(g.id)
                 g.home_shots = 0
@@ -94,13 +105,14 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
             LeagueUniverse.league_id == league.id, Universe.code == "nhl"
         ).first()
         if nhl:
-            from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+            from fantasy_sports.platform.nhl_daily_sync import current_eastern_date, is_real_game_started
             today_date = current_eastern_date()
             start_day = datetime.datetime.combine(today_date, datetime.time.min)
             end_day = start_day + datetime.timedelta(days=1)
-            real_games = db.query(Game).filter(
+            raw_real_games = db.query(Game).filter(
                 Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
             ).all()
+            real_games = [g for g in raw_real_games if not (g.kickoff_at and 0 <= g.kickoff_at.hour < 6)]
             if real_games:
                 real_total = len(real_games)
                 real_final = len([g for g in real_games if g.status == "final"])

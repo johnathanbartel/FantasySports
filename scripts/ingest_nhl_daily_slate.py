@@ -226,7 +226,13 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
             if not game_start_et:
                 game_start_et = datetime.datetime.combine(target_date, datetime.time(19, 0))
 
-            game_status = "final" if g_meta.get("gameState") in ("OFF", "FINAL") else "live"
+            raw_state = g_meta.get("gameState", "")
+            if raw_state in ("OFF", "FINAL"):
+                game_status = "final"
+            elif raw_state in ("LIVE", "CRIT"):
+                game_status = "live"
+            else:
+                game_status = "scheduled"
             home_score = g_meta.get("homeTeam", {}).get("score", 0)
             away_score = g_meta.get("awayTeam", {}).get("score", 0)
 
