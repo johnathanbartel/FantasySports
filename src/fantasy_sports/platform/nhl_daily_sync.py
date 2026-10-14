@@ -578,26 +578,33 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                     sim = loader.publish_game(db, dg)
                 except Exception:
                     continue
+            shape = service.shape_of(sim)
+            started_games = [g for g in real_games if g.status in ("live", "final")]
+            earliest_kickoff = min((g.kickoff_at for g in started_games if g.kickoff_at), default=now_utc)
+            start_time = earliest_kickoff if earliest_kickoff < now_utc else now_utc
+
             if dg.status == "SCHEDULED" and (any_real_started or all_real_final):
                 try:
-                    service.start_game(db, sim, now_utc)
+                    service.start_game(db, sim, start_time)
                 except Exception:
                     pass
 
-            # Check whether this game's multi-day window has concluded
-            w_start_d, w_idx = window_of(dg.calendar_date)
-            w_dates = window_dates(w_start_d, w_idx)
-            is_window_concluded = (max_active_date >= w_dates[-1])
+            is_past_date = (sync_date < max_active_date)
+            should_finalize = all_real_final or (is_past_date and any_real_started)
 
-            if is_window_concluded and all_real_final and dg.status != "FINAL":
+            if should_finalize and dg.status != "FINAL":
                 try:
-                    shape = service.shape_of(sim)
                     sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds + 120)
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass
-            elif any_real_started or all_real_final:
+            elif any_real_started and not all_real_final:
                 try:
+                    if sim.status == "LIVE" and earliest_kickoff and earliest_kickoff < now_utc:
+                        max_elapsed = shape.window_seconds - 300  # keep live in 3rd period while real games active
+                        actual_elapsed = (now_utc - earliest_kickoff).total_seconds()
+                        effective_elapsed = min(actual_elapsed, max_elapsed)
+                        sim.started_at = now_utc - datetime.timedelta(seconds=effective_elapsed)
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass

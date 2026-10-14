@@ -75,8 +75,9 @@
         <div class="card elev-sm" style="padding:var(--space-4) var(--space-5);gap:var(--space-3);margin-bottom:var(--space-5)">
           <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);flex-wrap:wrap">
             <h3 style="margin:0" id="lg-name"></h3>
-            <span style="display:flex;gap:var(--space-2);align-items:center">
+            <span style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
               <span class="tag tag-neutral" id="lg-status"></span>
+              <button type="button" class="btn btn-secondary" id="cm-scoring-info-btn" style="cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px"><span style="font-size:14px">ℹ️</span> How Scoring Works</button>
               <a class="btn btn-primary" id="home-link" href="#">Open league home &rsaquo;</a>
             </span>
           </div>
@@ -123,6 +124,7 @@
 <script src="/static/session.js"></script>
 <script src="/static/assign-team-modal.js"></script>
 <script src="/static/conference-modal.js"></script>
+<script src="/static/scoring-modal.js"></script>
 <script>
 const api = FSC.api;
 const params = new URLSearchParams(location.search);
@@ -286,6 +288,14 @@ document.getElementById('auto-btn').onclick = async () => {
     showResult(`Set the best lineup for ${r.teams.length} AI teams (week ${weeks.find(x => x.id === Number(w)).week_number}). Open any team's lineup to look at it or change it.`);
   } catch (e) { showError(e.message); }
 };
+
+const cmScoringBtn = document.getElementById('cm-scoring-info-btn');
+if (cmScoringBtn) {
+  cmScoringBtn.onclick = () => {
+    const isH = current && current.universe_codes && current.universe_codes.includes('nhl');
+    ScoringModal.open({ sport: isH ? 'nhl' : 'football' });
+  };
+}
 
 async function start() {
   const session = await FSC.current();

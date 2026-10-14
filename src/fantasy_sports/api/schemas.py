@@ -498,6 +498,8 @@ class SeriesDailyGameOut(ORMModel):
     away_team_id: int
     home_score: int = 0
     away_score: int = 0
+    home_shots: int = 0
+    away_shots: int = 0
     current_period: int = 0
     seconds_remaining: int = 1200
     game_score_rating: int = 50
@@ -522,6 +524,10 @@ class SeriesScheduleOut(BaseModel):
     league_id: int
     series_length_days: int
     series: list[LeagueSeriesOut]
+    real_slate_summary: str | None = None
+    real_games_total: int = 0
+    real_games_final: int = 0
+    real_games_live: int = 0
 
 
 class TeamSeriesGameOut(BaseModel):
