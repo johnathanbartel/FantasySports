@@ -24,6 +24,88 @@ def has_schedule(db: Session, league: League) -> bool:
     return db.query(WeeklyMatchup).filter_by(league_id=league.id).count() > 0
 
 
+def window_start_date_of(d: datetime.date) -> datetime.date:
+    """The calendar start date of the window containing date `d`:
+    Window 1 (Sun-Tue): Sunday
+    Window 2 (Wed-Thu): Wednesday
+    Window 3 (Fri-Sat): Friday
+    """
+    w = d.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+    if w in (6, 0, 1):  # Sun, Mon, Tue -> Sunday
+        days_back = (w + 1) % 7
+        return d - datetime.timedelta(days=days_back)
+    elif w in (2, 3):  # Wed, Thu -> Wednesday
+        return d - datetime.timedelta(days=(w - 2))
+    else:  # Fri, Sat -> Friday
+        return d - datetime.timedelta(days=(w - 4))
+
+
+def next_window_start(d: datetime.date) -> datetime.date:
+    """The start date of the window strictly following date `d`'s window."""
+    w = d.weekday()
+    if w in (6, 0, 1):  # Sun, Mon, Tue (Window 1) -> next is Wed (Window 2)
+        days = (2 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+    elif w in (2, 3):  # Wed, Thu (Window 2) -> next is Fri (Window 3)
+        days = (4 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+    else:  # Fri, Sat (Window 3) -> next is Sun (Window 1 of next week)
+        days = (6 - w) % 7
+        return d + datetime.timedelta(days=days if days > 0 else 7)
+
+
+def first_nhl_puck_drop(db: Session, date: datetime.date) -> datetime.datetime:
+    """Returns the kickoff_at datetime of the earliest NHL game on `date`, or 7:00 PM ET if not in DB."""
+    try:
+        from fantasy_sports.platform.db.models.core import Game, Universe
+        nhl = db.query(Universe).filter_by(code="nhl").first()
+        if nhl:
+            start_dt = datetime.datetime.combine(date, datetime.time(0, 0))
+            end_dt = datetime.datetime.combine(date + datetime.timedelta(days=1), datetime.time(0, 0))
+            first_game = db.query(Game).filter(
+                Game.universe_id == nhl.id,
+                Game.kickoff_at >= start_dt,
+                Game.kickoff_at < end_dt,
+            ).order_by(Game.kickoff_at).first()
+            if first_game and first_game.kickoff_at:
+                return first_game.kickoff_at
+    except Exception:
+        pass
+    # Standard NHL evening slate begins at 7:00 PM Eastern
+    return datetime.datetime.combine(date, datetime.time(19, 0))
+
+
+def calculate_nhl_series_start(db: Session, completed_at: datetime.datetime | None, today: datetime.date) -> datetime.date:
+    """Calculates the series start date based on user completion time and NHL game schedule:
+    - Calculates when the draft ended based on North American user time (Eastern / local timezone).
+    - If the draft completed before the first NHL game of the window, the window is NOT skipped.
+    - If it completed during or after the first NHL game, matchups start at the beginning of the next full window.
+    """
+    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+    if completed_at:
+        completed_et = to_eastern_naive(completed_at)
+        completed_d = completed_et.date()
+        win_start = window_start_date_of(completed_d)
+        puck_drop = first_nhl_puck_drop(db, win_start)
+
+        if completed_et < puck_drop:
+            # Completed before first NHL game of this window: window is not skipped!
+            target = win_start
+        else:
+            # Completed after first NHL game: advance to the next full window
+            target = next_window_start(completed_d)
+
+        today_win_start = window_start_date_of(today)
+        return max(target, today_win_start)
+    else:
+        today_win_start = window_start_date_of(today)
+        puck_drop = first_nhl_puck_drop(db, today_win_start)
+        now_et = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc))
+        if now_et < puck_drop:
+            return today_win_start
+        return next_window_start(today)
+
+
 def next_full_window_start(d: datetime.date, allow_today_if_window_start: bool = False) -> datetime.date:
     """The start date of the next full window strictly after `d` (Wed, Fri, or Sun).
     If allow_today_if_window_start is True and `d` is the first day of a window (Wed, Fri, or Sun), returns `d`.
@@ -31,15 +113,7 @@ def next_full_window_start(d: datetime.date, allow_today_if_window_start: bool =
     w = d.weekday()  # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
     if allow_today_if_window_start and w in (2, 4, 6):
         return d
-    if w in (6, 0, 1):  # Sun, Mon, Tue -> next full window is Wed (2)
-        days = (2 - w) % 7
-        return d + datetime.timedelta(days=days if days > 0 else 7)
-    elif w in (2, 3):  # Wed, Thu -> next full window is Fri (4)
-        days = (4 - w) % 7
-        return d + datetime.timedelta(days=days if days > 0 else 7)
-    else:  # Fri (4), Sat (5) -> next full window is Sun (6)
-        days = (6 - w) % 7
-        return d + datetime.timedelta(days=days if days > 0 else 7)
+    return next_window_start(d)
 
 
 def reschedule_nhl_league(db: Session, league: League, today: datetime.date | None = None, force: bool = False) -> str | None:
@@ -53,15 +127,9 @@ def reschedule_nhl_league(db: Session, league: League, today: datetime.date | No
         except Exception:
             today = datetime.date.today()
     from fantasy_sports.platform.db.models.core import Draft
-    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
     draft = db.query(Draft).filter_by(league_id=league.id).first()
-    if draft and draft.completed_at:
-        draft_d = to_eastern_naive(draft.completed_at).date()
-        computed_start = next_full_window_start(draft_d, allow_today_if_window_start=True)
-        today_window_start = next_full_window_start(today, allow_today_if_window_start=True)
-        series_start = max(computed_start, today_window_start)
-    else:
-        series_start = next_full_window_start(today, allow_today_if_window_start=True)
+    completed_at = draft.completed_at if draft else None
+    series_start = calculate_nhl_series_start(db, completed_at, today)
     series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
     return None
 
@@ -78,15 +146,9 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
             today = datetime.date.today()
 
     from fantasy_sports.platform.db.models.core import Draft
-    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
     draft = db.query(Draft).filter_by(league_id=league.id).first()
-    if draft and draft.completed_at:
-        draft_d = to_eastern_naive(draft.completed_at).date()
-        computed_start = next_full_window_start(draft_d, allow_today_if_window_start=True)
-        today_window_start = next_full_window_start(today, allow_today_if_window_start=True)
-        target_start = max(computed_start, today_window_start)
-    else:
-        target_start = next_full_window_start(today, allow_today_if_window_start=True)
+    completed_at = draft.completed_at if draft else None
+    target_start = calculate_nhl_series_start(db, completed_at, today)
 
     if has_schedule(db, league):
         if series_schedule.league_is_nhl(db, league.id):
