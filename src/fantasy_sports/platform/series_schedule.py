@@ -110,10 +110,10 @@ def generate_schedule(db: Session, league: League, start_date: datetime.date, cy
         series_ids = [s.id for s in db.query(LeagueSeries.id).filter_by(league_id=league.id).all()]
         dg_ids = [dg.id for dg in db.query(SeriesDailyGame.id).filter(SeriesDailyGame.series_id.in_(series_ids)).all()]
         if dg_ids:
-            from fantasy_sports.platform.db.models.core import SimulatorGame, SimulatorEvent, SimulatorViewer, BankedCredit
+            from fantasy_sports.platform.db.models.core import SimulatorGame, SimulatorEvent, SimulatorReveal, BankedCredit
             sim_ids = [s.id for s in db.query(SimulatorGame.id).filter(SimulatorGame.daily_game_id.in_(dg_ids)).all()]
             if sim_ids:
-                db.query(SimulatorViewer).filter(SimulatorViewer.simulator_game_id.in_(sim_ids)).delete(synchronize_session=False)
+                db.query(SimulatorReveal).filter(SimulatorReveal.simulator_game_id.in_(sim_ids)).delete(synchronize_session=False)
                 db.query(SimulatorEvent).filter(SimulatorEvent.simulator_game_id.in_(sim_ids)).delete(synchronize_session=False)
                 db.query(SimulatorGame).filter(SimulatorGame.id.in_(sim_ids)).delete(synchronize_session=False)
             db.query(BankedCredit).filter(BankedCredit.assigned_daily_game_id.in_(dg_ids)).update({"assigned_daily_game_id": None}, synchronize_session=False)
