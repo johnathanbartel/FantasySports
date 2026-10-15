@@ -93,6 +93,10 @@ class League(Base):
             name="ck_league_series_length_days",
         ),
         CheckConstraint("league_mode IN ('standard', 'weekly_redraft')", name="ck_league_mode"),
+        CheckConstraint(
+            "league_format IN ('traditional_redraft', 'future_pick_redraft', 'keeper', 'dynasty')",
+            name="ck_league_format",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -127,11 +131,36 @@ class League(Base):
     series_length_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # "standard" = the league's normal format; "weekly_redraft" = weekly salary-cap head-to-head rosters (FS-033).
     league_mode: Mapped[str] = mapped_column(String(20), default="standard", server_default="standard")
+    # How rosters carry over between seasons (League Settings tab). Only recorded for now - nothing branches on it yet.
+    league_format: Mapped[str] = mapped_column(
+        String(24), default="traditional_redraft", server_default="traditional_redraft"
+    )
+    # Season rollover (platform/season_rollover.py). Offseason = the season is archived and the next draft hasn't been
+    # completed: rosters are frozen to roster moves that get a team within the roster limit, and the draft is pending.
+    season_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    offseason: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Rounds of the next draft for Keeper / Dynasty (rookie drafts); the commissioner sets it when rolling over.
+    offseason_draft_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
     teams: Mapped[list["Team"]] = relationship(back_populates="league")
     series: Mapped[list["LeagueSeries"]] = relationship(back_populates="league")
+
+
+class LeagueSeason(Base):
+    """One archived season of a league: a JSON snapshot of the final standings, matchups, scores, series, rosters,
+    draft and transactions, written by platform/season_rollover.py before the season's live rows are cleared."""
+
+    __tablename__ = "league_seasons"
+    __table_args__ = (UniqueConstraint("league_id", "season_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    season_number: Mapped[int] = mapped_column(Integer)
+    league_format: Mapped[str] = mapped_column(String(24))
+    archived_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    data: Mapped[dict] = mapped_column(JSON)
 
 
 class LeagueUniverse(Base):
@@ -372,6 +401,9 @@ class Draft(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"))
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/in_progress/complete
+    season_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # False for Keeper / Dynasty offseason drafts: the same order every round instead of reversing.
+    is_snake: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     # Pick clock (platform/draft_clock.py). pick_seconds NULL = untimed (the original behaviour). All instants are

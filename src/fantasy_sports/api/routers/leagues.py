@@ -11,16 +11,16 @@ from fantasy_sports.api.auth import assert_commissioner, current_user, require_c
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
-    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
+    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import calendar, lineups, scoring
+from fantasy_sports.platform import calendar, lineups, scoring, season_rollover
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    AuctionDraft, Conference, Division, Draft, League, LeagueUniverse, LineupEntry,
+    AuctionDraft, Conference, Division, Draft, League, LeagueSeason, LeagueUniverse, LineupEntry,
     RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition,
     Team, Universe, User, Week, WeeklyMatchup,
 )
@@ -323,6 +323,51 @@ def rename_league(
     db.commit()
     db.refresh(league)
     return league
+
+
+@router.patch("/{league_id}/settings", response_model=LeagueOut)
+def update_league_settings(
+    league_id: int, payload: LeagueSettingsRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}."""
+    league = assert_commissioner(db, user, league_id)
+    league.league_format = payload.league_format
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.post("/{league_id}/rollover", response_model=LeagueOut)
+def roll_over_season(
+    league_id: int, payload: RolloverRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: archives the finished season and opens the offseason (see platform/season_rollover.py)."""
+    league = assert_commissioner(db, user, league_id)
+    try:
+        season_rollover.roll_over(db, league, payload.offseason_draft_rounds)
+    except season_rollover.RolloverError as e:
+        db.rollback()
+        raise HTTPException(409, str(e))
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.get("/{league_id}/seasons", response_model=list[LeagueSeasonSummary])
+def list_seasons(league_id: int, db: Session = Depends(get_db)):
+    """League history: every archived season, newest first, with its final standings."""
+    rows = db.query(LeagueSeason).filter_by(league_id=league_id).order_by(LeagueSeason.season_number.desc()).all()
+    return [LeagueSeasonSummary(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
+                                standings=r.data.get("standings", [])) for r in rows]
+
+
+@router.get("/{league_id}/seasons/{season_number}", response_model=LeagueSeasonOut)
+def get_season(league_id: int, season_number: int, db: Session = Depends(get_db)):
+    r = db.query(LeagueSeason).filter_by(league_id=league_id, season_number=season_number).one_or_none()
+    if r is None:
+        raise HTTPException(404, "That season isn't in the league's history")
+    return LeagueSeasonOut(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
+                           standings=r.data.get("standings", []), data=r.data)
 
 
 @router.delete("/{league_id}")

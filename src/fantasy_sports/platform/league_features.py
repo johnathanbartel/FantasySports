@@ -21,7 +21,10 @@ def draft_state(db: Session, league_id: int) -> str:
     draft_type = getattr(league, "draft_type", "snake") if league else "snake"
 
     if draft_type == "snake":
-        drafts = db.query(Draft).filter(Draft.league_id == league_id).all()
+        drafts = db.query(Draft).filter(Draft.league_id == league_id)
+        if league:
+            drafts = drafts.filter(Draft.season_number == league.season_number)   # a rolled-over league starts fresh
+        drafts = drafts.all()
         for d in drafts:
             if d.status == "in_progress":
                 open_pick = db.query(DraftPick.id).filter(
@@ -34,6 +37,7 @@ def draft_state(db: Session, league_id: int) -> str:
                         d.completed_at = datetime.datetime.utcnow()
                     draft_clock.clear(d)
                     if league:
+                        league.offseason = False
                         auto_schedule.ensure_schedule(db, league)
                     try:
                         db.commit()

@@ -14,6 +14,7 @@ from fantasy_sports.platform.db.models.core import (
     DraftPick,
     FreeAgencyTransaction,
     League,
+    LeagueSeason,
     LeagueSeries,
     LeagueUniverse,
     LineupEntry,
@@ -150,6 +151,8 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(WeeklyTeamScore).filter(WeeklyTeamScore.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(Team).filter(Team.id.in_(team_ids)).delete(synchronize_session=False)
+
+    db.query(LeagueSeason).filter(LeagueSeason.league_id == league_id).delete(synchronize_session=False)
 
     # 10. Conferences, divisions, universes, and league
     db.query(Division).filter(Division.league_id == league_id).delete(synchronize_session=False)
