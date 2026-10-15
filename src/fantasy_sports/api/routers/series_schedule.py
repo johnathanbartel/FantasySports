@@ -189,7 +189,7 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db), user: Us
 
 
 @router.get("/teams/{team_id}/series-schedule", response_model=TeamSeriesScheduleOut)
-def read_team_series_schedule(team_id: int, db: Session = Depends(get_db)):
+def read_team_series_schedule(team_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(404, "Team not found")
@@ -200,15 +200,27 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db)):
     except Exception:
         pass
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=team.league_id)}
+    league = db.get(League, team.league_id)
+    rows = _league_series(db, team.league_id)
+    # Final scores follow the scoreboard's no-spoiler rule: shown once the owner has watched (AI vs AI games always are).
+    shown = {g.id: g for s in _out(league, rows, db, viewer_user_id=user.id if user else None).series for g in s.daily_games}
     out = []
-    for s in _league_series(db, team.league_id):
+    for s in rows:
         if team_id not in (s.team_a_id, s.team_b_id):
             continue
         opp = s.team_b_id if s.team_a_id == team_id else s.team_a_id
-        games = [TeamSeriesGameOut(daily_game_id=g.id, calendar_date=g.calendar_date, calendar_date_end=g.calendar_date_end,
-                                   window_index=g.window_index, is_matchup_day=g.is_matchup_day,
-                                   home_away="home" if g.home_team_id == team_id else "away", status=g.status)
-                 for g in sorted(s.daily_games, key=lambda g: g.calendar_date)]
+        games = []
+        for g in sorted(s.daily_games, key=lambda g: g.calendar_date):
+            home = g.home_team_id == team_id
+            v = shown.get(g.id)
+            final = g.status == "FINAL" and v is not None
+            visible = final and v.owner_watched
+            games.append(TeamSeriesGameOut(
+                daily_game_id=g.id, calendar_date=g.calendar_date, calendar_date_end=g.calendar_date_end,
+                window_index=g.window_index, is_matchup_day=g.is_matchup_day, home_away="home" if home else "away",
+                status=g.status, team_score=(v.home_score if home else v.away_score) if visible else None,
+                opponent_score=(v.away_score if home else v.home_score) if visible else None,
+                score_hidden=final and not visible))
         out.append(TeamSeriesOut(series_id=s.id, opponent_id=opp, opponent_name=names.get(opp, "Opponent"), start_date=s.start_date,
                                  end_date=s.end_date, total_days=s.total_days, status=s.status, games=games))
     return TeamSeriesScheduleOut(team_id=team_id, league_id=team.league_id, series=out)

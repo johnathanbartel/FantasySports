@@ -1708,11 +1708,23 @@ async function proScheduleHtml(state) {
   if (isHockey()) {
     const s = await api(`/teams/${t.id}/series-schedule`);
     const fmtD = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-    return head(`<table class="table"><thead><tr><th>#</th><th>Dates</th><th>Opponent</th><th>Games</th><th>Status</th></tr></thead><tbody>
-      ${s.series.map((x, i) => `<tr><td>${i + 1}</td><td>${fmtD(x.start_date)} - ${fmtD(x.end_date)}</td><td>${tn(x.opponent_id, x.opponent_name)}</td>
-        <td>${x.total_days} (${x.games.filter(g => g.home_away === 'home').length} home)
-          <div style="font-size:11px;margin-top:2px">${x.games.map(g => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}" style="margin-right:6px">${fmtD(g.calendar_date)}</a>`).join('')}</div>
-        </td><td class="muted">${esc(x.status.toLowerCase().replace('_', ' '))}</td></tr>`).join('')}
+    const WIN_LABEL = {1: 'Sun - Tue', 2: 'Wed - Thu', 3: 'Fri - Sat'};
+    const rows = s.series.flatMap((x, si) => x.games.map(g => ({x, g, si})));
+    const result = (g) => {
+      const link = (txt) => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}">${txt}</a>`;
+      if (!g.is_matchup_day) return '<span class="muted">No matchup</span>';
+      if (g.status === 'LIVE_SIMULATING' || g.status === 'LIVE') return link('<span class="pill" style="background:#ef4444;color:white">LIVE</span>');
+      if (g.status === 'FINAL') {
+        if (g.team_score == null) return link('Final') + ' <span class="muted" style="font-size:11px">(watch highlights to reveal the score)</span>';
+        const w = g.team_score > g.opponent_score;
+        return `${link(`${g.team_score} - ${g.opponent_score}`)} <span class="pill ${w ? 'good' : ''}">${w ? 'W' : g.team_score === g.opponent_score ? 'T' : 'L'}</span>`;
+      }
+      return '<span class="muted">Not played</span>';
+    };
+    return head(`<table class="table"><thead><tr><th>Series</th><th>Window</th><th>Dates</th><th>Opponent</th><th>Home / Away</th><th>Result</th></tr></thead><tbody>
+      ${rows.map(({x, g, si}) => `<tr><td>${si + 1}</td><td>${g.window_index ? `Game ${g.window_index} <span class="muted">${WIN_LABEL[g.window_index]}</span>` : '-'}</td>
+        <td>${fmtD(g.calendar_date)}${g.calendar_date_end && g.calendar_date_end !== g.calendar_date ? ' - ' + fmtD(g.calendar_date_end) : ''}</td>
+        <td>${tn(x.opponent_id, x.opponent_name)}</td><td>${g.is_matchup_day ? (g.home_away === 'home' ? 'Home' : 'Away') : ''}</td><td>${result(g)}</td></tr>`).join('')}
       </tbody></table>
       <div style="margin-top:var(--space-3);display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
         <a href="#" data-go="roster" class="btn btn-secondary">View 3-Game Windows &amp; Lines on Roster</a>

@@ -555,6 +555,9 @@ class TeamSeriesGameOut(BaseModel):
     is_matchup_day: bool
     home_away: str
     status: str
+    team_score: int | None = None       # this team's goals, only for a FINAL game the viewer may see
+    opponent_score: int | None = None
+    score_hidden: bool = False          # FINAL, but the owner hasn't watched the highlights yet (no spoilers)
 
 
 class TeamSeriesOut(BaseModel):
