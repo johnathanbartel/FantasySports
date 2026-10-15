@@ -39,7 +39,14 @@ def nhl_season_year(today: datetime.date | None = None) -> int:
     return today.year if today.month >= 9 else today.year - 1
 
 
-def current_season_stats(db: Session, asset_ids: list[int]) -> dict[int, dict]:
+def last_completed_season_year(today: datetime.date | None = None) -> int:
+    """The NHL season that just finished, as the start year its games are filed under. A season starts in September, so
+    from September on (the new season's dates have begun) it is last year's, and before that it is the season that just
+    ended - either way the calendar year before. The keeper auto-pick reads its stats from this season."""
+    return (today or datetime.date.today()).year - 1
+
+
+def current_season_stats(db: Session, asset_ids: list[int], season: int | None = None) -> dict[int, dict]:
     """asset id -> {"points", "games"} for THIS season only; assets with nothing scored this season are left out.
     Hockey: the stored xG credit (shot credits + blocker event credits, as in stats_by_asset) on games filed under the
     current NHL season, counted over the games the player earned credit in. Football: the platform's weekly player
@@ -47,7 +54,7 @@ def current_season_stats(db: Session, asset_ids: list[int]) -> dict[int, dict]:
     ids = list(asset_ids)
     if not ids:
         return {}
-    season = nhl_season_year()
+    season = season if season is not None else nhl_season_year()
     points: dict[int, float] = {}
     games: dict[int, set] = {}
     if _has(db, ShotCredit) and _has(db, Shot):

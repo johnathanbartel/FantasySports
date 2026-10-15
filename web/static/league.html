@@ -680,7 +680,7 @@ function paintHockeyRoster() {
     activeHockeyWindow = 2;
   }
 
-  $('content').innerHTML = `
+  $('content').innerHTML = keeperBanner() + `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">NHL ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div>${teamPicker('team-pick')}</div></div>
@@ -1164,6 +1164,16 @@ async function pickGrid(sel) {
   paintHockeyRoster();
 }
 
+// The keeper deadline, on the roster pages (set in League Settings). Shown while keepers are open or a deadline is set ahead.
+function keeperBanner() {
+  if (!ov || ov.league_format !== 'keeper' || !ov.keeper_deadline) return '';
+  if (ov.offseason && ov.keepers_finalized) return '';
+  const when = new Date(ov.keeper_deadline + 'Z').toLocaleString();
+  return `<div class="note" style="margin-bottom:var(--space-4)"><b>Keeper deadline: ${esc(when)}.</b> ${ov.offseason
+    ? `Pick your keepers on the <a href="#" onclick="go('league-settings'); return false">League Settings</a> tab. Teams that haven't picked by then are trimmed automatically.`
+    : 'Teams pick their keepers after the season rolls over.'}</div>`;
+}
+
 async function renderRoster() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
@@ -1173,7 +1183,7 @@ async function renderRoster() {
   roster.sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   const counts = {}; roster.forEach(r => counts[r.position] = (counts[r.position] || 0) + 1);
   const open = ov.roster_size - roster.length;
-  $('content').innerHTML = `
+  $('content').innerHTML = keeperBanner() + `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.division_name ? ((t.conference_name || 'Conference') + ' · ' + t.division_name) : (t.conference_name || ''))} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">${teamPicker('team-pick')}
@@ -1865,50 +1875,119 @@ const LEAGUE_FORMATS = [['traditional_redraft', 'Traditional Redraft'], ['future
 const LEAGUE_FORMAT_NOTES = {
   traditional_redraft: "Rosters reset each season. The next season's draft order is randomly selected on draft day.",
   future_pick_redraft: "The next season's draft is a snake draft in reverse order of the standings.",
-  keeper: "The next season's draft is in reverse order of the standings. It does not snake.",
-  dynasty: "The next season's draft is in reverse order of the standings. It does not snake.",
+  keeper: "Owners keep part of their roster (or all of it). The next season's draft is in reverse order of the standings. It does not snake.",
+  dynasty: "Teams keep their whole roster and hold a rookie draft. The draft is in reverse order of the standings. It does not snake.",
 };
+const KEEPER_STYLES = [
+  ['rookie_resign', 'Rookie draft only', 'One rookie draft; owners re-sign keepers as the roster allows.'],
+  ['combined', 'Rookies and refills combined', 'One draft with rookies and refill players together.'],
+  ['separate', 'Separate rookie and refill drafts', 'A rookie draft first, then a refill draft.'],
+];
+// Datetimes from the API are naive UTC; the browser's datetime-local input is local time.
+const utcToLocalInput = (s) => { if (!s) return ''; const d = new Date(s + 'Z'); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const localInputToUtc = (v) => v ? new Date(v).toISOString() : null;
+const fmtUtc = (s) => s ? new Date(s + 'Z').toLocaleString() : '-';
+const jsonOpts = (method, body) => ({method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
 
 // Everyone can read the league's settings; only the commissioner gets the controls (the API enforces it too).
 async function renderLeagueSettings() {
   const lg = await api(`/leagues/${LEAGUE_ID}`);
-  const label = Object.fromEntries(LEAGUE_FORMATS)[lg.league_format] || lg.league_format;
-  $('content').innerHTML = `<div class="card"><h3>League Format</h3>` + (isCommissioner
-    ? `<select id="league-format">${LEAGUE_FORMATS.map(([v, l]) => `<option value="${v}"${v === lg.league_format ? ' selected' : ''}>${l}</option>`).join('')}</select>`
-    : `<p>${esc(label)}</p><p class="muted">Only the commissioner can change league settings.</p>`) + `<p class="muted" id="league-format-note">${esc(LEAGUE_FORMAT_NOTES[lg.league_format] || '')}</p></div>`;
-  const keeps = (f) => f === 'keeper' || f === 'dynasty';
   const seasons = await api(`/leagues/${LEAGUE_ID}/seasons`);
-  $('content').innerHTML += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`
-    + (lg.offseason ? `<p class="muted">Rosters are frozen to moves that get each team under the limit; the next draft can start once every team has room for it.</p>` : '')
-    + (isCommissioner && !lg.offseason ? `<p>When the season is over, roll the league over to archive it and open the offseason.</p>
-         <span id="rollover-rounds-wrap"${keeps(lg.league_format) ? '' : ' style="display:none"'}>Draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"> </span>
-         <button id="rollover-btn">Roll over to season ${lg.season_number + 1}</button>` : '') + `</div>`
-    + `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>Season ${s.season_number} - ${esc(Object.fromEntries(LEAGUE_FORMATS)[s.league_format] || s.league_format)}${s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : ''}</summary>
-        <table><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th></tr>${s.standings.map(r => `<tr><td>${r.rank}</td><td>${esc(r.team_name)}</td><td>${r.wins ?? ''}</td><td>${r.losses ?? ''}</td><td>${r.ties ?? ''}</td></tr>`).join('')}</table></details>`).join('')
-      : `<p class="muted">No archived seasons yet.</p>`) + `</div>`;
+  const fmtName = (f) => Object.fromEntries(LEAGUE_FORMATS)[f] || f;
+  const isKeeper = lg.league_format === 'keeper', isDynasty = lg.league_format === 'dynasty';
+  const keepsRosters = isKeeper || isDynasty;
+  const style = KEEPER_STYLES.find(s => s[0] === lg.keeper_draft_style) || KEEPER_STYLES[0];
+  const needsRefill = isKeeper && lg.keeper_draft_style !== 'rookie_resign';
+  const keeperPhase = lg.offseason && isKeeper && !lg.keepers_finalized;
+  let html = `<div class="card"><h3>League Format</h3>` + (isCommissioner
+    ? `<select id="league-format">${LEAGUE_FORMATS.map(([v, l]) => `<option value="${v}"${v === lg.league_format ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+    : `<p>${esc(fmtName(lg.league_format))}</p><p class="muted">Only the commissioner can change league settings.</p>`)
+    + `<p class="muted">${esc(LEAGUE_FORMAT_NOTES[lg.league_format] || '')}</p></div>`;
+
+  if (isKeeper) {
+    html += `<div class="card"><h3>Keeper Settings</h3>`
+      + `<p>Teams that keep their whole roster only get the rookie draft. Teams that keep less get the draft style below.</p>`
+      + (isCommissioner
+        ? `<p><label>Draft style <select id="keeper-style">${KEEPER_STYLES.map(([v, l]) => `<option value="${v}"${v === lg.keeper_draft_style ? ' selected' : ''}>${l}</option>`).join('')}</select></label></p>
+           <p><label>Most players a team can keep <input id="keeper-limit" type="number" min="0" max="100" value="${lg.keeper_limit ?? ''}" placeholder="whole roster" style="width:8em"></label></p>
+           <p><label>Keeper deadline <input id="keeper-deadline" type="datetime-local" value="${utcToLocalInput(lg.keeper_deadline)}"></label>
+              <button id="keeper-settings-save">Save</button></p>`
+        : `<p>Draft style: ${esc(style[1])}. ${esc(style[2])}</p><p>Most players a team can keep: ${lg.keeper_limit ?? 'its whole roster'}</p>`)
+      + `<p><b>Keeper deadline:</b> ${lg.keeper_deadline ? esc(fmtUtc(lg.keeper_deadline)) : '<span class="muted">not set yet</span>'}</p>`
+      + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
+  }
+
+  html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
+  if (lg.offseason) {
+    html += keeperPhase
+      ? `<p>Keeper selection is open until <b>${esc(fmtUtc(lg.keeper_deadline))}</b>. Teams that haven't picked by then are trimmed automatically: the players with the fewest games played last season are released.</p>`
+      : `<p class="muted">Keepers are set. Each draft starts once every team that takes part has roster room for it - teams that kept their whole roster drop players first.</p>`;
+    if (isCommissioner && keeperPhase) html += `<p><button id="keeper-finalize">Close keepers now</button></p>`;
+  } else if (isCommissioner) {
+    html += `<p>When the season is over, roll the league over to archive it and open the offseason.</p>`
+      + (keepsRosters ? `<p><label>Rookie draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"></label>
+           ${needsRefill ? `<label> Refill rounds <input id="rollover-refill" type="number" min="1" max="60" value="${lg.offseason_refill_rounds || 3}" style="width:4em"></label>` : ''}
+         </p>${isKeeper && !lg.keeper_deadline ? '<p class="muted">Set the keeper deadline in Keeper Settings above before rolling over.</p>' : ''}` : '')
+      + `<button id="rollover-btn">Roll over to season ${lg.season_number + 1}</button>`;
+  }
+  html += `</div><div id="keeper-pick-card"></div>`;
+
+  html += `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>Season ${s.season_number} - ${esc(fmtName(s.league_format))}${s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : ''}</summary>
+      <table><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th></tr>${s.standings.map(r => `<tr><td>${r.rank}</td><td>${esc(r.team_name)}</td><td>${r.wins ?? ''}</td><td>${r.losses ?? ''}</td><td>${r.ties ?? ''}</td></tr>`).join('')}</table></details>`).join('')
+    : `<p class="muted">No archived seasons yet.</p>`) + `</div>`;
+  $('content').innerHTML = html;
+
+  const call = async (fn, done) => {
+    showError(''); showResult('');
+    try { await fn(); await refreshOverview(); await go('league-settings'); if (done) showResult(done); } catch (e) { showError(e.message); }
+  };
+  const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   const sel = $('league-format');
-  const rollBtn = $('rollover-btn');
-  if (rollBtn) rollBtn.onclick = async () => {
-    if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${lg.league_format === 'keeper' || lg.league_format === 'dynasty' ? '' : ' and every roster'}.`)) return;
-    showError(''); showResult('');
-    try {
-      const rounds = keeps(lg.league_format) ? parseInt($('rollover-rounds').value, 10) : null;
-      await api(`/leagues/${LEAGUE_ID}/rollover`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({offseason_draft_rounds: rounds})});
-      await refreshOverview();
-      await go('league-settings');
-      showResult(`Season ${lg.season_number} archived. The league is in the offseason.`);
-    } catch (e) { showError(e.message); }
+  if (sel) sel.onchange = () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {league_format: sel.value})), 'League format saved.');
+  on('keeper-settings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
+    keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
+    keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
+  on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
+  on('rollover-btn', () => {
+    if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
+    const num = (id) => $(id) ? parseInt($(id).value, 10) : null;
+    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill')})),
+      `Season ${lg.season_number} archived. The league is in the offseason.`);
+  });
+
+  if (keeperPhase) await renderKeeperPicks(lg);
+}
+
+// Keeper selection: each owner picks the players their team keeps; everyone else on the roster is released when keepers close.
+async function renderKeeperPicks(lg) {
+  const teams = ov.teams.filter(t => !t.is_ai_owned && t.owner_user_id === me);
+  let html = '';
+  const data = {};
+  for (const t of teams) {
+    const k = await api(`/leagues/${LEAGUE_ID}/teams/${t.id}/keepers`);
+    data[t.id] = k;
+    html += `<div class="card"><h3>Keepers - ${esc(t.name)}</h3>
+      <p>Pick up to ${k.cap} players to keep. <b class="keeper-count" data-team="${t.id}"></b> ${k.submitted ? '<span class="muted">Your picks are saved. You can change them until the deadline.</span>' : '<span class="muted">Not saved yet.</span>'}</p>
+      <table><tr><th>Keep</th><th>Player</th><th>Pos</th><th>GP last season</th></tr>${k.players.map(p => `<tr>
+        <td><input type="checkbox" class="keeper-box" data-team="${t.id}" value="${p.draftable_asset_id}"${p.kept ? ' checked' : ''}></td>
+        <td>${esc(p.display_name)}</td><td>${esc(p.position || '')}</td><td>${p.games_played}</td></tr>`).join('')}</table>
+      <button class="keeper-save" data-team="${t.id}">Save keepers</button></div>`;
+  }
+  if (!teams.length && isCommissioner) html = `<div class="card"><p class="muted">Owners pick their own keepers. AI teams are trimmed automatically when keepers close.</p></div>`;
+  $('keeper-pick-card').innerHTML = html;
+  const count = (tid) => {
+    const n = document.querySelectorAll(`.keeper-box[data-team="${tid}"]:checked`).length;
+    document.querySelector(`.keeper-count[data-team="${tid}"]`).textContent = `${n} of ${data[tid].cap} selected.`;
   };
-  if (sel) sel.onchange = async () => {
+  teams.forEach(t => { count(t.id); });
+  document.querySelectorAll('.keeper-box').forEach(b => b.onchange = () => count(b.dataset.team));
+  document.querySelectorAll('.keeper-save').forEach(b => b.onclick = async () => {
+    const tid = b.dataset.team;
+    const ids = [...document.querySelectorAll(`.keeper-box[data-team="${tid}"]:checked`)].map(x => parseInt(x.value, 10));
     showError(''); showResult('');
-    try {
-      await api(`/leagues/${LEAGUE_ID}/settings`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({league_format: sel.value})});
-      lg.league_format = sel.value;
-      const wrap = $('rollover-rounds-wrap'); if (wrap) wrap.style.display = keeps(sel.value) ? '' : 'none';
-      $('league-format-note').textContent = LEAGUE_FORMAT_NOTES[sel.value] || '';
-      showResult('League format saved.');
-    } catch (e) { showError(e.message); sel.value = lg.league_format; }
-  };
+    try { await api(`/leagues/${LEAGUE_ID}/teams/${tid}/keepers`, jsonOpts('PUT', {draftable_asset_ids: ids})); await go('league-settings'); showResult('Keepers saved.'); }
+    catch (e) { showError(e.message); }
+  });
 }
 
 async function renderRankings() {

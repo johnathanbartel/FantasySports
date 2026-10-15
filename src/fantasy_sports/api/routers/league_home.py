@@ -109,6 +109,10 @@ class OverviewOut(BaseModel):
     draft_scheduled_at: datetime.datetime | None = None
     has_rankings: bool = False          # College Football / College Basketball only, to start
     teams_set_schedule: bool = False    # likewise: only college teams negotiate their own schedules
+    league_format: str = "traditional_redraft"
+    offseason: bool = False
+    keepers_finalized: bool = True
+    keeper_deadline: datetime.datetime | None = None    # naive UTC; Keeper leagues, shown on the roster page
 
 
 @router.get("/leagues/{league_id}/overview", response_model=OverviewOut)
@@ -178,7 +182,8 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
         is_college=college, draft_state=draft_state(db, league_id), draft_scheduled_at=league.draft_scheduled_at,
-        has_rankings=college, teams_set_schedule=college,
+        has_rankings=college, teams_set_schedule=college, league_format=league.league_format, offseason=league.offseason,
+        keepers_finalized=league.keepers_finalized, keeper_deadline=league.keeper_deadline,
     )
 
 

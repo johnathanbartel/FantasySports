@@ -90,13 +90,23 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
         assert_league_full(db, league)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    offseason_order = None
+    offseason_kind = None
     if league.offseason:
         # The next season's draft: the commissioner starts it, the order follows the league format.
         if user is None:
             raise HTTPException(401, "Sign in as the commissioner to start the offseason draft")
         assert_commissioner(db, user, league.id)
-        offseason_order = season_rollover.draft_order(db, league)
+        season_rollover.process_keeper_deadline(db, league, utcnow())
+        db.commit()
+        if not league.keepers_finalized:
+            raise HTTPException(409, "Keepers are still being selected - the draft starts once they close")
+        offseason_kind = season_rollover.next_draft_kind(db, league)
+        if offseason_kind is None:
+            raise HTTPException(409, "This league has no offseason draft left to run")
+        try:
+            offseason_order = season_rollover.draft_order(db, league)
+        except season_rollover.RolloverError as e:
+            raise HTTPException(409, str(e))
         payload = payload.model_copy(update={"team_order": offseason_order, "randomize_order": offseason_order is None})
     if payload.team_order:
         team_map = {t.id: t for t in teams}
@@ -120,16 +130,21 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
             "(for NFL: scripts/ingest_nfl_rosters_and_stats.py)",
         )
     rounds = league.draft_rounds
+    slots = None
     if league.offseason:
         rostered = {r[0] for r in db.query(RosterEntry.draftable_asset_id).join(Team, Team.id == RosterEntry.team_id)
                     .filter(Team.league_id == league.id)}
-        pool = [a for a in pool if a.id not in rostered]
-        rounds = season_rollover.next_draft_rounds(db, league)
-        over = season_rollover.teams_over_cap(db, league, rounds)
-        if over:
-            raise HTTPException(409, "Roster freeze: these teams have to drop players before the draft - " + "; ".join(over))
-        if len(pool) < len(teams) * rounds:
-            raise HTTPException(400, f"Only {len(pool)} undrafted players are left for {len(teams)} teams x {rounds} rounds")
+        pool = season_rollover.pool_for_kind([a for a in pool if a.id not in rostered], offseason_kind)
+        try:
+            slots = season_rollover.offseason_draft_plan(db, league, offseason_kind, [t.id for t in teams],
+                                                           season_rollover.draft_is_snake(league))
+        except season_rollover.RolloverError as e:
+            raise HTTPException(409, str(e))
+        if not slots:
+            raise HTTPException(400, "No team has roster room for this draft")
+        if len(pool) < len(slots):
+            what = "rookies" if offseason_kind == "rookie" else "players"
+            raise HTTPException(400, f"Only {len(pool)} {what} are in this draft's pool but it has {len(slots)} picks")
     elif not is_college(db, league.id):
         # Outside college leagues the draft fills every roster spot (starters and bench): one round per spot.
         spots = roster_spots(db, league.id)
@@ -146,7 +161,8 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     timed = payload.pick_seconds is not None or payload.overnight_start or payload.overnight_end
     now = utcnow()
     draft = Draft(league_id=league.id, status="in_progress", started_at=now, season_number=league.season_number,
-                  is_snake=not league.offseason or league.league_format in ("traditional_redraft", "future_pick_redraft"))
+                  kind=offseason_kind or "standard",
+                  is_snake=not league.offseason or season_rollover.draft_is_snake(league))
     if timed:
         # A pick clock changes how the draft runs for everyone, so only the commissioner may set one. The original
         # untimed start stays open exactly as before.
@@ -163,7 +179,10 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     draft_clock.begin_pick(draft, now)
 
     pick_number = 1
-    for round_number in range(1, rounds + 1):
+    for team_id, round_number in slots or []:
+        db.add(DraftPick(draft_id=draft.id, round=round_number, pick_number=pick_number, team_id=team_id))
+        pick_number += 1
+    for round_number in range(1, 1 if slots else rounds + 1):
         order = teams if (round_number % 2 == 1 or not draft.is_snake) else list(reversed(teams))
         for team in order:
             db.add(
@@ -242,7 +261,8 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     }
     points = season_points_by_asset(db)  # best last-season scorers first; unscored players A-Z after
     available = [
-        (a, draftable_asset_display_name(a)) for a in league_pool(db, draft.league_id) if a.id not in already_picked
+        (a, draftable_asset_display_name(a))
+        for a in season_rollover.pool_for_kind(league_pool(db, draft.league_id), draft.kind) if a.id not in already_picked
     ]
     available.sort(key=lambda pair: (-points.get(pair[0].id, -1.0), pair[1]))
     stats = stats_by_asset(db, [a.id for a, _ in available if a.asset_type == "player"])
@@ -269,7 +289,7 @@ def _close_if_finished(db: Session, draft_id: int) -> None:
             # Free agency opens now (platform/free_agency.is_open), and a league that doesn't set its own schedule gets one.
             league = db.get(League, draft.league_id)
             if league:
-                league.offseason = False
+                season_rollover.after_draft_complete(db, league)
                 auto_schedule.ensure_schedule(db, league)
 
 

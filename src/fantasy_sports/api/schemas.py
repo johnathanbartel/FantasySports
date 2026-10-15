@@ -8,7 +8,14 @@ from __future__ import annotations
 import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def _naive_utc(v):
+    """Deadlines are stored as naive UTC: convert an aware datetime, leave a naive one as sent."""
+    if v is not None and v.tzinfo is not None:
+        return v.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+    return v
 
 
 class ORMModel(BaseModel):
@@ -59,7 +66,13 @@ LEAGUE_FORMATS = ("traditional_redraft", "future_pick_redraft", "keeper", "dynas
 
 
 class LeagueSettingsRequest(BaseModel):
-    league_format: Literal["traditional_redraft", "future_pick_redraft", "keeper", "dynasty"]
+    """Only the fields sent are changed (keeper_limit / keeper_deadline may be sent as null to clear them)."""
+    league_format: Literal["traditional_redraft", "future_pick_redraft", "keeper", "dynasty"] | None = None
+    keeper_draft_style: Literal["rookie_resign", "combined", "separate"] | None = None
+    keeper_limit: int | None = Field(default=None, ge=0, le=100)
+    keeper_deadline: datetime.datetime | None = None
+
+    _deadline = field_validator("keeper_deadline")(_naive_utc)
 
 
 class TeamSetupItem(BaseModel):
@@ -135,10 +148,38 @@ class LeagueOut(ORMModel):
     season_number: int
     offseason: bool
     offseason_draft_rounds: int | None
+    offseason_refill_rounds: int | None
+    keeper_draft_style: str
+    keeper_limit: int | None
+    keeper_deadline: datetime.datetime | None
+    keepers_finalized: bool
 
 
 class RolloverRequest(BaseModel):
-    offseason_draft_rounds: int | None = Field(default=None, ge=1, le=60)   # Keeper / Dynasty only
+    offseason_draft_rounds: int | None = Field(default=None, ge=1, le=60)   # rookie rounds: Keeper / Dynasty only
+    refill_rounds: int | None = Field(default=None, ge=1, le=60)            # Keeper with a combined or separate draft style
+
+
+class KeeperPlayerOut(BaseModel):
+    draftable_asset_id: int
+    display_name: str
+    position: str | None = None
+    games_played: int
+    kept: bool
+
+
+class KeepersOut(BaseModel):
+    team_id: int
+    season_number: int
+    finalized: bool
+    deadline: datetime.datetime | None
+    cap: int
+    submitted: bool
+    players: list[KeeperPlayerOut]
+
+
+class KeepersRequest(BaseModel):
+    draftable_asset_ids: list[int]
 
 
 class LeagueSeasonSummary(BaseModel):

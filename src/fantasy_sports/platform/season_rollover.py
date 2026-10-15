@@ -3,22 +3,30 @@
 League Format (leagues.league_format) decides what carries over and how the next draft is ordered:
   * traditional_redraft  - rosters reset; draft order is randomized on draft day (the commissioner starts it).
   * future_pick_redraft  - rosters reset; snake draft in reverse order of the standings.
-  * keeper / dynasty     - rosters stay; reverse order of the standings, not a snake. The commissioner sets the number
-                           of (rookie) rounds.
-Only Traditional Redraft was stated to reset rosters; Future Draft Pick Redraft is treated the same way, since a
-snake draft of the whole roster only makes sense when the rosters are empty.
+  * keeper               - owners pick keepers (up to keeper_limit, or the whole roster) before the commissioner's
+                           deadline; teams that don't are trimmed automatically, fewest games played first, and everyone
+                           not kept is released. Draft in reverse standings order, not a snake. Draft style
+                           (keeper_draft_style): rookie draft only, rookies and refills combined, or a rookie draft then
+                           a refill draft. A team that keeps its whole roster only gets the rookie draft.
+  * dynasty              - whole rosters stay; a rookie draft in reverse standings order, not a snake.
+Rookie drafts draw on players flagged Player.is_rookie; nothing sets that flag yet, so they can't run until it does.
+A team that has to be under the roster limit before a draft (a full keeper or any Dynasty team) is frozen out of it until
+it drops players: the "roster freeze". Other teams just get fewer picks, as many as they have room for.
+Future Draft Pick Redraft is treated like Traditional for rosters (they reset), which was an assumption.
 
 The archive (LeagueSeason) is a self-contained JSON snapshot so league history survives later schema changes.
 Only snake-draft leagues roll over for now. Nothing here touches scoring or attribution.
 """
 
 import datetime
+import statistics
 
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import scoring, series_standings
 from fantasy_sports.platform.db.models.core import (
-    BankedCredit, Draft, DraftableAsset, DraftPick, FreeAgencyTransaction, League, LeagueSeason, LeagueSeries, LineupEntry,
+    BankedCredit, Draft, DraftableAsset, DraftPick, FreeAgencyTransaction, KeeperCandidate, KeeperSubmission, League,
+    LeagueSeason, LeagueSeries, LineupEntry,
     MatchupRequest, RosterEntry, ScheduleSettings, SeriesDailyGame, SimulatorEvent, SimulatorGame, SimulatorReveal, Team,
     WaiverClaim, Week, WeeklyMatchup, WeeklyTeamScore,
 )
@@ -50,10 +58,14 @@ def final_standings(db: Session, league: League) -> list[dict]:
 
 
 def draft_order(db: Session, league: League) -> list[int] | None:
-    """Team ids in pick order for the next draft, or None when the order is random on draft day."""
+    """Team ids in pick order for the next draft, or None when the order is random on draft day. Read from the archived
+    season's final standings: the live standings are cleared by the rollover."""
     if league.league_format == "traditional_redraft":
         return None
-    return [r["team_id"] for r in reversed(final_standings(db, league))]
+    archive = db.query(LeagueSeason).filter_by(league_id=league.id, season_number=league.season_number - 1).one_or_none()
+    if archive is None:
+        raise RolloverError("The last season isn't archived, so there is no standings order to draft in")
+    return [r["team_id"] for r in reversed(archive.data["standings"])]
 
 
 def _snapshot(db: Session, league: League, standings: list[dict]) -> dict:
@@ -114,7 +126,159 @@ def _clear_season(db: Session, league_id: int, team_ids: list[int]) -> None:
         db.query(WeeklyTeamScore).filter(WeeklyTeamScore.team_id.in_(team_ids)).delete(synchronize_session=False)
 
 
-def roll_over(db: Session, league: League, offseason_rounds: int | None = None) -> LeagueSeason:
+def draft_plan(league: League) -> list[str]:
+    """The offseason drafts this league runs, in order (Draft.kind)."""
+    if league.league_format == "dynasty":
+        return ["rookie"]
+    if league.league_format == "keeper":
+        return {"rookie_resign": ["rookie"], "combined": ["combined"], "separate": ["rookie", "refill"]}[league.keeper_draft_style]
+    return ["standard"]
+
+
+def next_draft_kind(db: Session, league: League) -> str | None:
+    """The next offseason draft still to run (started drafts count as run), or None when the plan is done."""
+    done = {d.kind for d in db.query(Draft).filter_by(league_id=league.id, season_number=league.season_number)
+            if d.status in ("in_progress", "complete")}
+    return next((k for k in draft_plan(league) if k not in done), None)
+
+
+def draft_is_snake(league: League) -> bool:
+    return league.league_format in RESETS_ROSTERS
+
+
+def kind_rounds(db: Session, league: League, kind: str, full_keeper: bool = False) -> int:
+    """Rounds a team takes part in for this kind of draft. Full keepers (a whole roster kept, and all of Dynasty) get the
+    rookie draft only."""
+    rookie, refill = league.offseason_draft_rounds or 0, league.offseason_refill_rounds or 0
+    if kind == "standard":
+        return roster_limit(db, league)
+    if kind == "rookie":
+        return rookie
+    if kind == "refill":
+        return 0 if full_keeper else refill
+    return rookie if full_keeper else rookie + refill
+
+
+def after_draft_complete(db: Session, league: League) -> None:
+    """Ends the offseason once the last draft of the plan is done. Does not commit."""
+    if league.offseason and next_draft_kind(db, league) is None:
+        league.offseason = False
+
+
+def keeper_cap(db: Session, league: League) -> int:
+    """The most players a team may keep: the commissioner's keeper limit, or its whole roster."""
+    full = roster_limit(db, league)
+    return min(full, league.keeper_limit) if league.keeper_limit is not None else full
+
+
+def _candidates(db: Session, league: League, team_id: int) -> list[KeeperCandidate]:
+    return (db.query(KeeperCandidate).filter_by(team_id=team_id, season_number=league.season_number)
+            .order_by(KeeperCandidate.roster_order).all())
+
+
+def is_full_keeper(db: Session, league: League, team_id: int) -> bool:
+    """Dynasty teams, and Keeper teams that kept every player they had: the rookie draft is all they get."""
+    if league.league_format == "dynasty":
+        return True
+    if league.league_format != "keeper":
+        return False
+    cands = _candidates(db, league, team_id)
+    return bool(cands) and all(c.kept for c in cands)
+
+
+def submit_keepers(db: Session, league: League, team: Team, asset_ids: list[int], now: datetime.datetime | None = None) -> None:
+    """A Keeper team's chosen keepers. Everyone else on the roster is released when keepers close. Flushes."""
+    now = now or datetime.datetime.utcnow()
+    if league.league_format != "keeper" or not league.offseason:
+        raise RolloverError("There is no keeper selection open for this league")
+    process_keeper_deadline(db, league, now)
+    if league.keepers_finalized:
+        raise RolloverError("Keepers are closed")
+    cands = {c.draftable_asset_id: c for c in _candidates(db, league, team.id)}
+    chosen = set(asset_ids)
+    if len(chosen) != len(asset_ids) or not chosen <= set(cands):
+        raise RolloverError("Keepers have to be distinct players from this team's roster")
+    cap = keeper_cap(db, league)
+    if len(chosen) > cap:
+        raise RolloverError(f"This league lets a team keep at most {cap} players")
+    for aid, c in cands.items():
+        c.kept = aid in chosen
+    sub = db.query(KeeperSubmission).filter_by(team_id=team.id, season_number=league.season_number).one_or_none()
+    if sub is None:
+        db.add(KeeperSubmission(league_id=league.id, team_id=team.id, season_number=league.season_number,
+                                submitted_at=now, auto=False))
+    else:
+        sub.submitted_at, sub.auto = now, False
+    db.flush()
+
+
+def _release(db: Session, team: Team, asset_id: int) -> None:
+    from fantasy_sports.platform import pecking_order
+    db.query(RosterEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).delete(synchronize_session=False)
+    db.query(LineupEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).delete(synchronize_session=False)
+    pecking_order.unrank_player(db, team, asset_id)
+
+
+def _z_scores(values: list[float | None]) -> list[float]:
+    """Standard deviations from the mean for each value; a missing value, or a pool with no spread, scores 0 (average)."""
+    known = [v for v in values if v is not None]
+    if len(known) < 2:
+        return [0.0] * len(values)
+    mean, sd = statistics.fmean(known), statistics.pstdev(known)
+    return [0.0 if v is None or sd == 0 else (v - mean) / sd for v in values]
+
+
+def ai_keeper_scores(db: Session, league: League) -> dict[int, float]:
+    """KeeperCandidate id -> the AI's keeper score: standard deviations of age BELOW the mean (younger is better), plus
+    standard deviations of points per game ABOVE the mean, plus standard deviations of games played ABOVE the mean, all
+    measured across every player on a roster in the league. The three count equally."""
+    cands = db.query(KeeperCandidate).filter_by(league_id=league.id, season_number=league.season_number).all()
+    age_z = _z_scores([c.age for c in cands])
+    ppg_z = _z_scores([c.points_per_game for c in cands])
+    gp_z = _z_scores([float(c.games_played) for c in cands])
+    return {c.id: -a + p + g for c, a, p, g in zip(cands, age_z, ppg_z, gp_z)}
+
+
+def finalize_keepers(db: Session, league: League, now: datetime.datetime | None = None) -> None:
+    """Closes keeper selection. A team that hasn't submitted keeps its most-played players up to the keeper limit (the ones
+    with the fewest games played last season are trimmed); every player not kept is released. Flushes, does not commit."""
+    now = now or datetime.datetime.utcnow()
+    if league.keepers_finalized:
+        return
+    cap = keeper_cap(db, league)
+    submitted = {s.team_id for s in db.query(KeeperSubmission).filter_by(league_id=league.id, season_number=league.season_number)}
+    scores = ai_keeper_scores(db, league)
+    for team in db.query(Team).filter_by(league_id=league.id).order_by(Team.id):
+        cands = _candidates(db, league, team.id)
+        if team.id not in submitted:
+            if team.is_ai_owned:
+                ranked = sorted(cands, key=lambda c: (-scores[c.id], c.roster_order))
+            else:
+                ranked = sorted(cands, key=lambda c: (-c.games_played, c.roster_order))
+            keep = {c.id for c in ranked[:cap]}
+            for c in cands:
+                c.kept = c.id in keep
+            db.add(KeeperSubmission(league_id=league.id, team_id=team.id, season_number=league.season_number,
+                                    submitted_at=now, auto=True))
+        for c in cands:
+            if not c.kept:
+                _release(db, team, c.draftable_asset_id)
+    league.keepers_finalized = True
+    db.flush()
+
+
+def process_keeper_deadline(db: Session, league: League, now: datetime.datetime | None = None) -> bool:
+    """Finalizes keepers if the commissioner's deadline has passed. There is no scheduler, so this runs whenever the
+    league's keepers or draft are looked at. True if it just finalized."""
+    now = now or datetime.datetime.utcnow()
+    if league.offseason and not league.keepers_finalized and league.keeper_deadline and now >= league.keeper_deadline:
+        finalize_keepers(db, league, now)
+        return True
+    return False
+
+
+def roll_over(db: Session, league: League, offseason_rounds: int | None = None, refill_rounds: int | None = None,
+              today: datetime.date | None = None) -> LeagueSeason:
     """Archives the current season and opens the offseason. Flushes, does not commit."""
     if league.draft_type != "snake":
         raise RolloverError("Season rollover is only available for snake-draft leagues for now")
@@ -122,36 +286,81 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None) 
         raise RolloverError("This league is already in the offseason")
     if draft_state(db, league.id) != "complete":
         raise RolloverError("The league's draft has to finish before the season can roll over")
-    keeps = league.league_format not in RESETS_ROSTERS
+    fmt = league.league_format
+    keeps = fmt not in RESETS_ROSTERS
     if keeps and (offseason_rounds is None or offseason_rounds < 1):
-        raise RolloverError("Set how many rounds the next draft has (at least 1) - Keeper and Dynasty drafts are rookie drafts")
+        raise RolloverError("Set how many rookie draft rounds the next draft has (at least 1)")
+    needs_refill = fmt == "keeper" and league.keeper_draft_style in ("combined", "separate")
+    if needs_refill and (refill_rounds is None or refill_rounds < 1):
+        raise RolloverError("Set how many refill rounds the next draft has (at least 1) - this league's keeper draft style uses them")
+    today = today or datetime.date.today()
+    if fmt == "keeper" and (league.keeper_deadline is None or league.keeper_deadline <= datetime.datetime.utcnow()):
+        raise RolloverError("Set the keeper deadline in League Settings first - it has to be a date in the future")
 
     standings = final_standings(db, league)
-    team_ids = [t.id for t in db.query(Team.id).filter_by(league_id=league.id)]
-    archive = LeagueSeason(league_id=league.id, season_number=league.season_number, league_format=league.league_format,
+    teams = db.query(Team).filter_by(league_id=league.id).order_by(Team.id).all()
+    team_ids = [t.id for t in teams]
+    archive = LeagueSeason(league_id=league.id, season_number=league.season_number, league_format=fmt,
                            archived_at=datetime.datetime.utcnow(), data=_snapshot(db, league, standings))
     db.add(archive)
+    stats, ages = {}, {}
+    if fmt == "keeper":
+        from fantasy_sports.platform.draft_stats import current_season_stats, last_completed_season_year
+        from fantasy_sports.platform.player_age import age_on
+        asset_ids = [r[0] for r in db.query(RosterEntry.draftable_asset_id).filter(RosterEntry.team_id.in_(team_ids or [0]))]
+        # Always the season that just finished: if the new season's dates have begun, last season's games, not the new one's.
+        stats = current_season_stats(db, asset_ids, season=last_completed_season_year(today))
+        for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(asset_ids or [0])):
+            if a.asset_type == "player":
+                ages[a.id] = age_on(a.player.birth_date, today)
     _clear_season(db, league.id, team_ids)
     if not keeps and team_ids:
         db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
     league.season_number += 1
     league.offseason = True
     league.offseason_draft_rounds = offseason_rounds if keeps else None
+    league.offseason_refill_rounds = refill_rounds if needs_refill else None
+    if fmt != "keeper":
+        league.keeper_deadline = None
+    league.keepers_finalized = fmt != "keeper"
+    if fmt == "keeper":
+        for t in teams:
+            for i, e in enumerate(db.query(RosterEntry).filter_by(team_id=t.id).order_by(RosterEntry.id)):
+                s = stats.get(e.draftable_asset_id) or {"games": 0, "points": 0.0}
+                db.add(KeeperCandidate(league_id=league.id, team_id=t.id, draftable_asset_id=e.draftable_asset_id,
+                                       season_number=league.season_number, games_played=s["games"],
+                                       points_per_game=round(s["points"] / s["games"], 3) if s["games"] else 0.0,
+                                       age=ages.get(e.draftable_asset_id), kept=False, roster_order=i))
     db.flush()
     return archive
 
 
-def next_draft_rounds(db: Session, league: League) -> int:
-    """Rounds of the offseason draft: the commissioner's number for Keeper / Dynasty, a full roster otherwise."""
-    return league.offseason_draft_rounds or roster_limit(db, league)
-
-
-def teams_over_cap(db: Session, league: League, rounds: int) -> list[str]:
-    """Teams whose roster plus the draft's rounds would not fit - they drop players during the offseason roster freeze."""
+def offseason_draft_plan(db: Session, league: League, kind: str, order: list[int], snake: bool) -> list[tuple[int, int]]:
+    """(team_id, round) pick slots, in order, for the next offseason draft. Each team takes part in as many rounds as it has
+    roster room for. A team that kept its whole roster (and every Dynasty team) has to drop players first - the roster
+    freeze - so it can take its rookie rounds; any other team just gets fewer picks. Raises RolloverError on a freeze."""
     limit = roster_limit(db, league)
-    over = []
-    for t in db.query(Team).filter_by(league_id=league.id):
-        n = db.query(RosterEntry).filter_by(team_id=t.id, on_injured_list=False).count()
-        if n + rounds > limit:
-            over.append(f"{t.name} ({n} players, room for {max(0, limit - n)})")
-    return over
+    rounds_for: dict[int, int] = {}
+    frozen = []
+    for team_id in order:
+        full = is_full_keeper(db, league, team_id)
+        want = kind_rounds(db, league, kind, full)
+        room = limit - db.query(RosterEntry).filter_by(team_id=team_id, on_injured_list=False).count()
+        if full and room < want:
+            frozen.append(f"{db.get(Team, team_id).name} ({limit - room} players, needs room for {want})")
+        rounds_for[team_id] = max(0, min(want, room))
+    if frozen:
+        raise RolloverError("Roster freeze: these teams have to drop players before the draft - " + "; ".join(frozen))
+    slots = []
+    for r in range(1, max(rounds_for.values(), default=0) + 1):
+        this_round = order if (r % 2 == 1 or not snake) else order[::-1]
+        slots += [(t, r) for t in this_round if r <= rounds_for[t]]
+    return slots
+
+
+def pool_for_kind(assets: list[DraftableAsset], kind: str) -> list[DraftableAsset]:
+    """The draftable pool of an offseason draft: rookies only for a rookie draft, everyone else for a refill draft."""
+    if kind not in ("rookie", "refill"):
+        return assets
+    is_rookie = lambda a: a.asset_type == "player" and bool(a.player.is_rookie)
+    return [a for a in assets if is_rookie(a) == (kind == "rookie")]
