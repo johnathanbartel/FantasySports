@@ -4,6 +4,7 @@ football weekly-matchup routes in schedule.py.
 """
 
 import datetime
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +20,7 @@ from fantasy_sports.platform.db.models.core import (
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.platform.simulator import service, state as st
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["series-schedule"])
 
 
@@ -173,17 +175,26 @@ def read_series_schedule(league_id: int, db: Session = Depends(get_db), user: Us
         raise HTTPException(404, "League not found")
     if league.series_length_days is None:
         raise HTTPException(400, "Series schedules are only available for NHL leagues")
+    # These refreshes are best effort. On Postgres a failed statement aborts the whole transaction, so each failure has
+    # to be rolled back or every query after it (the commit and the read below) fails and the scoreboard shows nothing.
     try:
         from fantasy_sports.platform import auto_schedule
         auto_schedule.ensure_schedule(db, league)
     except Exception:
-        pass
+        logger.exception("ensure_schedule failed for league %s", league_id)
+        db.rollback()
     try:
         from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
         auto_sync_league_scoreboard(db, league_id)
     except Exception:
-        pass
-    db.commit()
+        logger.exception("scoreboard sync failed for league %s", league_id)
+        db.rollback()
+    try:
+        db.commit()
+    except Exception:
+        logger.exception("commit after the scoreboard refresh failed for league %s", league_id)
+        db.rollback()
+    league = db.get(League, league_id)
     return _out(league, _league_series(db, league_id), db, viewer_user_id=user.id if user else None)
 
 
@@ -198,7 +209,8 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db), user:
         auto_sync_league_scoreboard(db, team.league_id)
         db.commit()
     except Exception:
-        pass
+        logger.exception("scoreboard sync failed for league %s", team.league_id)
+        db.rollback()
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=team.league_id)}
     league = db.get(League, team.league_id)
     rows = _league_series(db, team.league_id)
