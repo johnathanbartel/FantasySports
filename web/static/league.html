@@ -1177,7 +1177,7 @@ function futurePicksCard() {
       <h4 style="margin:0">Draft picks <span class="muted" style="font-size:13px;font-weight:normal">Season ${futurePicks.season_number} draft</span></h4>
       <span class="muted" style="font-size:12px">${known ? 'Reverse order of the standings, snaking. The champion picks last.' : 'Pick positions are set by the final standings when the season ends.'}</span>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">${futurePicks.picks.map(p => `<span class="pill" title="${p.overall ? 'Pick ' + p.overall + ' overall' : ''}">Round ${p.round}${p.pick_in_round ? ` &middot; pick ${p.pick_in_round}` : ''}</span>`).join('')}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">${futurePicks.picks.map(p => `<span class="pill" title="${p.overall ? 'Pick ' + p.overall + ' overall' : ''}">Round ${p.round}${p.pick_in_round ? ` &middot; pick ${p.pick_in_round}` : ''}${p.own === false ? ` &middot; from ${esc(p.original_team_name || '')}` : ''}</span>`).join('')}</div>
   </div>`;
 }
 
@@ -1395,10 +1395,13 @@ async function renderTrades() {
     tradeSelectedOppId = otherTeams[0]?.id || null;
   }
 
-  const [tradeList, myRoster, oppRoster] = await Promise.all([
+  const picksTrade = ['future_pick_redraft', 'keeper', 'dynasty'].includes(ov.league_format);
+  const [tradeList, myRoster, oppRoster, myPicks, oppPicks] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/trades`),
     api(`/teams/${t.id}/roster`),
     tradeSelectedOppId ? api(`/teams/${tradeSelectedOppId}/roster`).catch(() => []) : Promise.resolve([]),
+    picksTrade ? api(`/leagues/${LEAGUE_ID}/teams/${t.id}/tradeable-picks`).catch(() => []) : Promise.resolve([]),
+    picksTrade && tradeSelectedOppId ? api(`/leagues/${LEAGUE_ID}/teams/${tradeSelectedOppId}/tradeable-picks`).catch(() => []) : Promise.resolve([]),
   ]);
 
   const votingTrades = tradeList.filter(x => x.status === 'voting');
@@ -1412,6 +1415,26 @@ async function renderTrades() {
   const oppTeam = teamsById[tradeSelectedOppId];
   const isOppAi = oppTeam?.is_ai_owned;
 
+  // A draft pick: "Round 3, season 2 draft (from Team X)", with where it would land today and what that is worth.
+  const pickPill = (k) => `
+    <span class="tag tag-neutral" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;margin:2px">
+      <span class="pill" style="font-size:10px">PICK</span> <strong>Round ${k.round}</strong>
+      <span class="muted" style="font-size:11px">season ${k.season}${k.original_team_name ? ' - from ' + esc(k.original_team_name) : ''}${k.projected_overall ? ' - #' + k.projected_overall + ' overall now' : ''}</span>
+    </span>`;
+  const assetsAndPicks = (assets, picks) => assets.map(assetPill).join('') + (picks || []).map(pickPill).join('');
+  const tradeText = (assets, picks) => [...assets.map(a => esc(a.display_name)), ...(picks || []).map(k => `a round ${k.round} pick (season ${k.season}, ${esc(k.original_team_name)})`)].join(', ') || 'nothing';
+  const pickRow = (name, k) => `
+    <label style="display:flex;align-items:center;gap:var(--space-2);padding:4px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px">
+      <input type="checkbox" name="${name}" value="${k.season}|${k.round}|${k.original_team_id}">
+      <span class="pill" style="font-size:10px">PICK</span>
+      <span style="flex:1"><strong>Round ${k.round}</strong> <span class="muted">season ${k.season} draft - ${esc(k.original_team_name)}</span></span>
+      <span class="pts muted">${k.projected_overall ? '#' + k.projected_overall + ' now' : ''} ${k.value ? '(' + pts(k.value) + ' pts)' : ''}</span>
+    </label>`;
+  const picksBlock = (name, picks, who) => !picksTrade ? '' : `
+    <div style="margin-top:var(--space-3)"><h5 style="margin:0 0 4px">Draft picks</h5>
+      <div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
+        ${picks.map(k => pickRow(name, k)).join('') || `<p class="muted" style="margin:0;font-size:12px">${who} no tradeable draft picks.</p>`}
+      </div></div>`;
   const assetPill = (a) => `
     <span class="tag tag-neutral" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;margin:2px">
       ${posTag(a.position)} <strong>${esc(a.display_name)}</strong>
@@ -1453,11 +1476,11 @@ async function renderTrades() {
             <div class="grid2" style="margin-bottom:var(--space-3);gap:var(--space-3)">
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px;text-transform:uppercase;font-weight:700">${esc(tr.proposer_team_name)} receives:</div>
-                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.receive_assets, tr.receive_picks)}</div>
               </div>
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px;text-transform:uppercase;font-weight:700">${esc(tr.counterparty_team_name)} receives:</div>
-                <div>${tr.send_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.send_assets, tr.send_picks)}</div>
               </div>
             </div>
 
@@ -1495,11 +1518,11 @@ async function renderTrades() {
             <div class="grid2" style="gap:var(--space-3)">
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px">You receive:</div>
-                <div>${tr.send_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.send_assets, tr.send_picks)}</div>
               </div>
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px">You give up:</div>
-                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.receive_assets, tr.receive_picks)}</div>
               </div>
             </div>
           </div>
@@ -1514,11 +1537,11 @@ async function renderTrades() {
             <div class="grid2" style="gap:var(--space-3)">
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px">You receive:</div>
-                <div>${tr.receive_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.receive_assets, tr.receive_picks)}</div>
               </div>
               <div style="padding:var(--space-2) var(--space-3);background:var(--color-surface);border-radius:var(--radius-md);border:1px solid var(--color-divider)">
                 <div class="muted" style="font-size:11px;margin-bottom:4px">You send:</div>
-                <div>${tr.send_assets.map(assetPill).join('')}</div>
+                <div>${assetsAndPicks(tr.send_assets, tr.send_picks)}</div>
               </div>
             </div>
           </div>
@@ -1530,7 +1553,7 @@ async function renderTrades() {
     <div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)">
       <h3 style="margin:0 0 var(--space-2)">Propose a Trade</h3>
       <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">
-        Trade players with any team in the league. Select the opponent team, choose players to send from your roster, and players to receive from theirs.
+        Trade players${picksTrade ? ' and draft picks' : ''} with any team in the league. Select the opponent team, choose what to send from your side and what to receive from theirs.${picksTrade ? ' AI teams value a pick by where it would land if the season ended today, and need to get back at least that much.' : ''}
       </p>
 
       <div style="margin-bottom:var(--space-4);max-width:360px">
@@ -1559,6 +1582,7 @@ async function renderTrades() {
               </label>
             `).join('') || '<p class="muted">No players rostered.</p>'}
           </div>
+          ${picksBlock('trade-send-pick', myPicks, 'You have')}
         </div>
 
         <div style="border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3)">
@@ -1573,6 +1597,7 @@ async function renderTrades() {
               </label>
             `).join('') || '<p class="muted">No players rostered on opponent team.</p>'}
           </div>
+          ${picksBlock('trade-recv-pick', oppPicks, esc(oppTeam?.name || 'They') + ' has')}
         </div>
       </div>
 
@@ -1589,9 +1614,9 @@ async function renderTrades() {
           <div class="row" style="flex-wrap:wrap;gap:var(--space-2);padding:8px 0">
             <span class="tag" style="min-width:70px;justify-content:center;${tr.status === 'accepted' ? 'background:var(--good);color:#fff' : 'background:var(--hi);color:var(--ink)'}">${tr.status.toUpperCase()}</span>
             <div style="flex:1;min-width:240px">
-              <strong>${esc(tr.proposer_team_name)}</strong> gave ${tr.send_assets.map(a => esc(a.display_name)).join(', ') || 'nothing'}
+              <strong>${esc(tr.proposer_team_name)}</strong> gave ${tradeText(tr.send_assets, tr.send_picks)}
               <span class="muted">to</span>
-              <strong>${esc(tr.counterparty_team_name)}</strong> for ${tr.receive_assets.map(a => esc(a.display_name)).join(', ') || 'nothing'}
+              <strong>${esc(tr.counterparty_team_name)}</strong> for ${tradeText(tr.receive_assets, tr.receive_picks)}
             </div>
             <span class="muted" style="font-size:12px">${tr.resolved_at ? new Date(tr.resolved_at).toLocaleDateString() : ''}</span>
           </div>
@@ -1614,8 +1639,14 @@ async function renderTrades() {
     const sendIds = Array.from(sendChecks).map(c => Number(c.value));
     const recvIds = Array.from(recvChecks).map(c => Number(c.value));
 
-    if (!sendIds.length || !recvIds.length) {
-      showError('Please select at least one player to send and one player to receive.');
+    const readPicks = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(c => {
+      const [season, round, original_team_id] = c.value.split('|').map(Number);
+      return {season, round, original_team_id};
+    });
+    const sendPicks = readPicks('trade-send-pick'), recvPicks = readPicks('trade-recv-pick');
+
+    if (!(sendIds.length || sendPicks.length) || !(recvIds.length || recvPicks.length)) {
+      showError(`Please select at least one player${picksTrade ? ' or draft pick' : ''} to send and one to receive.`);
       return;
     }
 
@@ -1625,6 +1656,8 @@ async function renderTrades() {
         counterparty_team_id: tradeSelectedOppId,
         send_asset_ids: sendIds,
         receive_asset_ids: recvIds,
+        send_picks: sendPicks,
+        receive_picks: recvPicks,
       });
       if (res.status === 'accepted') {
         showResult('Trade approved and executed!');
@@ -1934,6 +1967,12 @@ async function renderLeagueSettings() {
       + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
   }
 
+  if (isKeeper || isDynasty) {
+    html += `<div class="card"><h3>Draft Pick Trading</h3>` + (isCommissioner
+      ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label> <button id="pick-trade-save">Save</button></p>`
+      : `<p>Picks for the next ${lg.pick_trade_seasons} draft${lg.pick_trade_seasons === 1 ? '' : 's'} can be traded.</p>`)
+      + `<p class="muted">Pick rounds follow the rookie rounds you set when rolling over (3 until then).</p></div>`;
+  }
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
   if (lg.offseason) {
     html += keeperPhase
@@ -1965,6 +2004,7 @@ async function renderLeagueSettings() {
   on('keeper-settings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
     keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
+  on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)})), 'Pick trading saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;

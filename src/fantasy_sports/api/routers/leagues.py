@@ -340,6 +340,8 @@ def update_league_settings(
         league.league_format = payload.league_format
     if payload.keeper_draft_style is not None:
         league.keeper_draft_style = payload.keeper_draft_style
+    if payload.pick_trade_seasons is not None:
+        league.pick_trade_seasons = payload.pick_trade_seasons
     if "keeper_limit" in sent:
         league.keeper_limit = payload.keeper_limit
     if "keeper_deadline" in sent:

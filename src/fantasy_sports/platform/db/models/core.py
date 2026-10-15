@@ -152,6 +152,8 @@ class League(Base):
     keeper_deadline: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)   # naive UTC
     keepers_finalized: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     offseason_refill_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Pick trading (platform/pick_trading.py): how many upcoming drafts' picks Keeper / Dynasty teams can trade.
+    pick_trade_seasons: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
@@ -1066,11 +1068,30 @@ class TradeItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     trade_id: Mapped[int] = mapped_column(ForeignKey("trades.id"), index=True)
     sender_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
-    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    # A player or defense group, or - when draftable_asset_id is NULL - a draft pick (season, round, original team).
+    draftable_asset_id: Mapped[int | None] = mapped_column(ForeignKey("draftable_assets.id"), nullable=True)
+    pick_season: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pick_round: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pick_original_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
 
     trade: Mapped["Trade"] = relationship(back_populates="items")
     sender_team: Mapped["Team"] = relationship(foreign_keys=[sender_team_id])
-    draftable_asset: Mapped["DraftableAsset"] = relationship(foreign_keys=[draftable_asset_id])
+    draftable_asset: Mapped["DraftableAsset | None"] = relationship(foreign_keys=[draftable_asset_id])
+
+
+class TradedPick(Base):
+    """A draft pick that has changed hands. Every pick belongs to its original team unless a row here says otherwise;
+    a pick is identified by (season_number of the draft, round, original team)."""
+
+    __tablename__ = "traded_picks"
+    __table_args__ = (UniqueConstraint("league_id", "season_number", "round", "original_team_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    season_number: Mapped[int] = mapped_column(Integer)
+    round: Mapped[int] = mapped_column(Integer)
+    original_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    owner_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
 
 
 class TradeVote(Base):

@@ -13,7 +13,7 @@ import datetime
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import pecking_order
+from fantasy_sports.platform import pecking_order, pick_trading
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
@@ -30,8 +30,20 @@ from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import roster_limit
 
 
+PickRef = tuple[int, int, int]      # (season_number of the draft, round, original team id)
+
+
 def _roster_count(db: Session, team_id: int) -> int:
     return db.query(RosterEntry).filter_by(team_id=team_id).count()
+
+
+def _players(trade: Trade, team_id: int) -> list[int]:
+    return [it.draftable_asset_id for it in trade.items if it.sender_team_id == team_id and it.draftable_asset_id is not None]
+
+
+def _picks(trade: Trade, team_id: int) -> list[PickRef]:
+    return [(it.pick_season, it.pick_round, it.pick_original_team_id) for it in trade.items
+            if it.sender_team_id == team_id and it.draftable_asset_id is None]
 
 
 def evaluate_ai_votes(db: Session, trade: Trade, now: datetime.datetime) -> None:
@@ -43,12 +55,23 @@ def evaluate_ai_votes(db: Session, trade: Trade, now: datetime.datetime) -> None
     """
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
-    p_asset_ids = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id]
-    c_asset_ids = [it.draftable_asset_id for it in trade.items if it.sender_team_id == c_team.id]
+    p_asset_ids = _players(trade, p_team.id)
+    c_asset_ids = _players(trade, c_team.id)
+    p_picks, c_picks = _picks(trade, p_team.id), _picks(trade, c_team.id)
 
     stats = stats_by_asset(db, p_asset_ids + c_asset_ids)
     p_val = sum(stats.get(aid, {}).get("points") or 0.0 for aid in p_asset_ids)
     c_val = sum(stats.get(aid, {}).get("points") or 0.0 for aid in c_asset_ids)
+    has_picks = bool(p_picks or c_picks)
+    if has_picks:
+        # A pick is worth the points of the player who would go at its projected spot if the season ended today.
+        league = db.get(League, trade.league_id)
+        order = pick_trading.projected_order(db, league)
+        points = pick_trading.ranked_points(db, league)
+        value = lambda picks: sum(pick_trading.pick_value(points, pick_trading.projected_overall(league, order, r, o))
+                                  for _, r, o in picks)
+        p_val += value(p_picks)
+        c_val += value(c_picks)
 
     ai_teams = db.query(Team).filter_by(league_id=trade.league_id, is_ai_owned=True).all()
     for team in ai_teams:
@@ -58,7 +81,10 @@ def evaluate_ai_votes(db: Session, trade: Trade, now: datetime.datetime) -> None
         if team.id == c_team.id:
             # The counterparty AI receives p_val and gives up c_val
             # Approves if offer is fair (receives >= 85% of given value, or difference is small)
-            is_fair = (p_val >= c_val * 0.85) or (c_val - p_val <= 1.5) or (c_val == 0.0)
+            if has_picks:
+                is_fair = p_val >= c_val        # picks are valued exactly, so the AI has to come out ahead
+            else:
+                is_fair = (p_val >= c_val * 0.85) or (c_val - p_val <= 1.5) or (c_val == 0.0)
             vote = "approve" if is_fair else "reject"
         else:
             # Third-party AI team checks that the human didn't severely fleece the AI
@@ -106,6 +132,8 @@ def propose_trade(
     receive_asset_ids: list[int],
     user_id: int | None = None,
     now: datetime.datetime | None = None,
+    send_picks: list[PickRef] | None = None,
+    receive_picks: list[PickRef] | None = None,
 ) -> Trade:
     """Proposes a trade between proposer_team and counterparty_team.
 
@@ -120,8 +148,18 @@ def propose_trade(
         raise ValueError("Teams must belong to the same league")
     if proposer_team.id == counterparty_team.id:
         raise ValueError("Cannot trade with your own team")
-    if not send_asset_ids or not receive_asset_ids:
-        raise ValueError("Trade must include at least one player to send and one player to receive")
+    send_picks, receive_picks = list(send_picks or []), list(receive_picks or [])
+    if not (send_asset_ids or send_picks) or not (receive_asset_ids or receive_picks):
+        raise ValueError("Each side of a trade has to give at least one player or draft pick")
+    for picks, owner, label in ((send_picks, proposer_team, "send"), (receive_picks, counterparty_team, "receive")):
+        for season, rnd, original in picks:
+            why = pick_trading.pick_available(db, league, season, rnd, original)
+            if why:
+                raise ValueError(why)
+            if pick_trading.current_owner(db, league.id, season, rnd, original) != owner.id:
+                raise ValueError(f"{owner.name} doesn't own the round {rnd} pick (season {season}) you listed to {label}")
+        if len(set(picks)) != len(picks):
+            raise ValueError("A draft pick is listed twice")
 
     # Validate roster ownership
     p_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=proposer_team.id)}
@@ -160,6 +198,12 @@ def propose_trade(
         db.add(TradeItem(trade_id=trade.id, sender_team_id=proposer_team.id, draftable_asset_id=aid))
     for aid in receive_asset_ids:
         db.add(TradeItem(trade_id=trade.id, sender_team_id=counterparty_team.id, draftable_asset_id=aid))
+    for season, rnd, original in send_picks:
+        db.add(TradeItem(trade_id=trade.id, sender_team_id=proposer_team.id, pick_season=season, pick_round=rnd,
+                         pick_original_team_id=original))
+    for season, rnd, original in receive_picks:
+        db.add(TradeItem(trade_id=trade.id, sender_team_id=counterparty_team.id, pick_season=season, pick_round=rnd,
+                         pick_original_team_id=original))
     db.flush()
 
     if has_ai:
@@ -237,8 +281,9 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     now = now or datetime.datetime.utcnow()
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
-    p_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id]
-    c_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == c_team.id]
+    p_items = _players(trade, p_team.id)
+    c_items = _players(trade, c_team.id)
+    p_picks, c_picks = _picks(trade, p_team.id), _picks(trade, c_team.id)
 
     p_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=p_team.id)}
     c_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=c_team.id)}
@@ -251,6 +296,11 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
             raise ValueError(f"Asset {aid} is no longer on {c_team.name}'s roster")
 
     league = db.get(League, trade.league_id)
+    for picks, owner in ((p_picks, p_team), (c_picks, c_team)):
+        for season, rnd, original in picks:
+            why = pick_trading.pick_available(db, league, season, rnd, original)
+            if why or pick_trading.current_owner(db, league.id, season, rnd, original) != owner.id:
+                raise ValueError(why or f"{owner.name} no longer owns the round {rnd} pick (season {season})")
     limit = roster_limit(db, league)
     if len(p_roster) - len(p_items) + len(c_items) > limit:
         raise ValueError(f"{p_team.name} would exceed roster limit ({limit})")
@@ -294,6 +344,9 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
             league_id=trade.league_id, team_id=p_team.id, draftable_asset_id=aid,
             kind="add", price=0, reason=f"Traded from {c_team.name}", created_at=now,
         ))
+
+    pick_trading.transfer(db, league, p_picks, c_team.id)
+    pick_trading.transfer(db, league, c_picks, p_team.id)
 
     trade.status = "accepted"
     trade.resolved_at = now
