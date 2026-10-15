@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import trades
-from fantasy_sports.platform.db.models.core import DraftableAsset, RealTeam, Team, Trade, TradeVote, User
+from fantasy_sports.platform import pick_trading, trades
+from fantasy_sports.platform.db.models.core import DraftableAsset, League, RealTeam, Team, Trade, TradeVote, User
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
@@ -21,11 +21,28 @@ from fantasy_sports.platform.player_rates import rates_by_asset
 router = APIRouter(tags=["trades"])
 
 
+class PickRefIn(BaseModel):
+    season: int                 # season number of the draft the pick is in
+    round: int
+    original_team_id: int       # the team the pick started with
+
+
 class TradeProposeRequest(BaseModel):
     proposer_team_id: int
     counterparty_team_id: int
-    send_asset_ids: list[int]
-    receive_asset_ids: list[int]
+    send_asset_ids: list[int] = []
+    receive_asset_ids: list[int] = []
+    send_picks: list[PickRefIn] = []
+    receive_picks: list[PickRefIn] = []
+
+
+class TradePickOut(BaseModel):
+    season: int
+    round: int
+    original_team_id: int
+    original_team_name: str
+    projected_overall: int | None = None     # where it would land if the season ended today
+    value: float | None = None               # points of the player at that spot (what AI teams count it as)
 
 
 class TradeRespondRequest(BaseModel):
@@ -69,6 +86,8 @@ class TradeOut(BaseModel):
     resolved_at: datetime.datetime | None
     send_assets: list[TradeAssetOut]
     receive_assets: list[TradeAssetOut]
+    send_picks: list[TradePickOut] = []
+    receive_picks: list[TradePickOut] = []
     votes: list[TradeVoteOut]
     approvals: int
     rejections: int
@@ -80,8 +99,8 @@ class TradeOut(BaseModel):
 def _format_trade(db: Session, trade: Trade, active_user: User | None = None) -> TradeOut:
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
-    p_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id]
-    c_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == c_team.id]
+    p_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id and it.draftable_asset_id is not None]
+    c_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == c_team.id and it.draftable_asset_id is not None]
 
     all_ids = p_items + c_items
     assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(all_ids or [0]))}
@@ -107,6 +126,22 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
 
     send_assets = [asset_out(aid) for aid in p_items]
     receive_assets = [asset_out(aid) for aid in c_items]
+
+    names = {t.id: t.name for t in db.query(Team).filter_by(league_id=trade.league_id)}
+    league = db.get(League, trade.league_id)
+    pick_items = [it for it in trade.items if it.draftable_asset_id is None]
+    order, points = (pick_trading.projected_order(db, league), pick_trading.ranked_points(db, league)) if pick_items else ([], [])
+
+    def picks_out(team_id: int) -> list[TradePickOut]:
+        out = []
+        for it in pick_items:
+            if it.sender_team_id != team_id:
+                continue
+            overall = pick_trading.projected_overall(league, order, it.pick_round, it.pick_original_team_id)
+            out.append(TradePickOut(season=it.pick_season, round=it.pick_round, original_team_id=it.pick_original_team_id,
+                                    original_team_name=names.get(it.pick_original_team_id, "?"), projected_overall=overall,
+                                    value=round(pick_trading.pick_value(points, overall), 2)))
+        return out
 
     total_teams = db.query(Team).filter_by(league_id=trade.league_id).count()
     majority_needed = (total_teams // 2) + 1
@@ -144,6 +179,8 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
         resolved_at=trade.resolved_at,
         send_assets=send_assets,
         receive_assets=receive_assets,
+        send_picks=picks_out(p_team.id),
+        receive_picks=picks_out(c_team.id),
         votes=votes_out,
         approvals=approvals,
         rejections=rejections,
@@ -180,6 +217,8 @@ def create_trade(
             payload.send_asset_ids,
             payload.receive_asset_ids,
             user_id=user.id,
+            send_picks=[(p.season, p.round, p.original_team_id) for p in payload.send_picks],
+            receive_picks=[(p.season, p.round, p.original_team_id) for p in payload.receive_picks],
         )
         db.commit()
     except ValueError as e:
@@ -187,6 +226,27 @@ def create_trade(
         raise HTTPException(400, str(e))
 
     return _format_trade(db, trade, user)
+
+
+@router.get("/leagues/{league_id}/teams/{team_id}/tradeable-picks", response_model=list[TradePickOut])
+def tradeable_picks(league_id: int, team_id: int, db: Session = Depends(get_db)):
+    """The draft picks a team owns that can be traded now, each with where it would land today and what that is worth."""
+    league = db.get(League, league_id)
+    team = db.get(Team, team_id)
+    if league is None or team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    mine = pick_trading.owned_picks(db, league, team_id)
+    if not mine:
+        return []
+    names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
+    order, points = pick_trading.projected_order(db, league), pick_trading.ranked_points(db, league)
+    out = []
+    for p in mine:
+        overall = pick_trading.projected_overall(league, order, p["round"], p["original_team_id"])
+        out.append(TradePickOut(season=p["season"], round=p["round"], original_team_id=p["original_team_id"],
+                                original_team_name=names.get(p["original_team_id"], "?"), projected_overall=overall,
+                                value=round(pick_trading.pick_value(points, overall), 2)))
+    return out
 
 
 @router.get("/leagues/{league_id}/trades", response_model=list[TradeOut])

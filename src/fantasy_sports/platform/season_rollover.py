@@ -370,8 +370,13 @@ def offseason_draft_plan(db: Session, league: League, kind: str, order: list[int
 def future_picks(db: Session, league: League, team_id: int) -> dict:
     """A Future Draft Pick Redraft team's picks in the next draft, for its roster page: one per round. The pick positions
     are known once the season is archived (reverse standings, champion last, snake) or the draft has started."""
+    from fantasy_sports.platform import pick_trading
     rounds = roster_limit(db, league)
     n = db.query(Team).filter_by(league_id=league.id).count()
+    names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league.id)}
+    season = pick_trading.next_draft_season(league)
+    owners = pick_trading.owner_map(db, league.id, season)
+    team_ids = sorted(names)
     order = None
     if league.offseason:
         try:
@@ -383,13 +388,18 @@ def future_picks(db: Session, league: League, team_id: int) -> dict:
     actual = {p.round: p.pick_number for p in db.query(DraftPick).filter_by(draft_id=draft.id, team_id=team_id)} if draft else {}
     picks = []
     for r in range(1, rounds + 1):
-        overall = actual.get(r)
-        if overall is None and order and team_id in order:
-            i = order.index(team_id)
-            overall = (r - 1) * n + (i if r % 2 == 1 else n - 1 - i) + 1
-        picks.append({"round": r, "pick_in_round": ((overall - 1) % n + 1) if overall else None, "overall": overall})
-    return {"season_number": league.season_number if league.offseason else league.season_number + 1,
-            "order_set": order is not None or bool(actual), "picks": picks}
+        for original in team_ids:
+            if owners.get((r, original), original) != team_id:
+                continue
+            overall = None
+            if draft is not None:       # the draft exists: the actual pick this slot became
+                overall = next((p.pick_number for p in db.query(DraftPick).filter_by(draft_id=draft.id, round=r, team_id=team_id)), None)
+            if overall is None and order and original in order:
+                i = order.index(original)
+                overall = (r - 1) * n + (i if r % 2 == 1 else n - 1 - i) + 1
+            picks.append({"round": r, "pick_in_round": ((overall - 1) % n + 1) if overall else None, "overall": overall,
+                          "original_team_id": original, "original_team_name": names[original], "own": original == team_id})
+    return {"season_number": season, "order_set": order is not None or bool(actual), "picks": picks}
 
 
 def pool_for_kind(assets: list[DraftableAsset], kind: str) -> list[DraftableAsset]:

@@ -70,6 +70,7 @@ class LeagueSettingsRequest(BaseModel):
     league_format: Literal["traditional_redraft", "future_pick_redraft", "keeper", "dynasty"] | None = None
     keeper_draft_style: Literal["rookie_resign", "combined", "separate"] | None = None
     keeper_limit: int | None = Field(default=None, ge=0, le=100)
+    pick_trade_seasons: int | None = Field(default=None, ge=1, le=10)
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline")(_naive_utc)
@@ -153,6 +154,7 @@ class LeagueOut(ORMModel):
     keeper_limit: int | None
     keeper_deadline: datetime.datetime | None
     keepers_finalized: bool
+    pick_trade_seasons: int
 
 
 class RolloverRequest(BaseModel):
@@ -183,6 +185,9 @@ class FuturePickOut(BaseModel):
     round: int
     pick_in_round: int | None
     overall: int | None
+    original_team_id: int | None = None
+    original_team_name: str | None = None
+    own: bool = True
 
 
 class FuturePicksOut(BaseModel):

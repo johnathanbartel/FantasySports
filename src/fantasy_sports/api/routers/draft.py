@@ -17,7 +17,7 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order, season_rollover
+from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order, pick_trading, season_rollover
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import is_college, roster_spots
@@ -179,8 +179,11 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     draft_clock.begin_pick(draft, now)
 
     pick_number = 1
+    owners = pick_trading.owner_map(db, league.id, league.season_number) if slots else {}
     for team_id, round_number in slots or []:
-        db.add(DraftPick(draft_id=draft.id, round=round_number, pick_number=pick_number, team_id=team_id))
+        # A traded pick is made by the team that owns it now.
+        db.add(DraftPick(draft_id=draft.id, round=round_number, pick_number=pick_number,
+                         team_id=owners.get((round_number, team_id), team_id)))
         pick_number += 1
     for round_number in range(1, 1 if slots else rounds + 1):
         order = teams if (round_number % 2 == 1 or not draft.is_snake) else list(reversed(teams))
