@@ -233,7 +233,8 @@ function statCard(label, value, sub, href, goTab) {
 // ---- HOME ----------------------------------------------------------------------------------
 async function renderHome() {
   await refreshOverview();
-  const [log, standings] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`), api(`/leagues/${LEAGUE_ID}/standings`)]);
+  const [log, standings] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`),
+    isHockey() ? api(`/leagues/${LEAGUE_ID}/series-standings`).then(r => r.standings) : api(`/leagues/${LEAGUE_ID}/standings`)]);
   const played = standings.some(s => s.wins + s.losses + s.ties > 0);
   const mine = myTeam();
   const openSpots = ov.teams.reduce((n, t) => n + t.open_spots, 0);
@@ -1712,8 +1713,10 @@ async function proScheduleHtml(state) {
   if (isHockey()) {
     const s = await api(`/teams/${t.id}/series-schedule`);
     const fmtD = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-    const WIN_LABEL = {1: 'Sun - Tue', 2: 'Wed - Thu', 3: 'Fri - Sat'};
-    const rows = s.series.flatMap((x, si) => x.games.map(g => ({x, g, si})));
+    const rows = s.series.flatMap((x, si) => x.games.map(g => ({x, g, si})))
+      .sort((a, b) => a.g.calendar_date.localeCompare(b.g.calendar_date) || a.g.daily_game_id - b.g.daily_game_id);
+    let gameNo = 0;
+    rows.forEach(r => { r.no = r.g.is_matchup_day ? ++gameNo : null; });   // the team's game number of the season
     const result = (g) => {
       const link = (txt) => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}">${txt}</a>`;
       if (!g.is_matchup_day) return '<span class="muted">No matchup</span>';
@@ -1725,8 +1728,8 @@ async function proScheduleHtml(state) {
       }
       return '<span class="muted">Not played</span>';
     };
-    return head(`<table class="table"><thead><tr><th>Series</th><th>Window</th><th>Dates</th><th>Opponent</th><th>Home / Away</th><th>Result</th></tr></thead><tbody>
-      ${rows.map(({x, g, si}) => `<tr><td>${si + 1}</td><td>${g.window_index ? `Game ${g.window_index} <span class="muted">${WIN_LABEL[g.window_index]}</span>` : '-'}</td>
+    return head(`<table class="table"><thead><tr><th>Game</th><th>Series</th><th>Dates</th><th>Opponent</th><th>Home / Away</th><th>Result</th></tr></thead><tbody>
+      ${rows.map(({x, g, si, no}) => `<tr><td>${no ?? '-'}</td><td>${si + 1}</td>
         <td>${fmtD(g.calendar_date)}${g.calendar_date_end && g.calendar_date_end !== g.calendar_date ? ' - ' + fmtD(g.calendar_date_end) : ''}</td>
         <td>${tn(x.opponent_id, x.opponent_name)}</td><td>${g.is_matchup_day ? (g.home_away === 'home' ? 'Home' : 'Away') : ''}</td><td>${result(g)}</td></tr>`).join('')}
       </tbody></table>
@@ -1823,6 +1826,7 @@ async function renderRankings() {
 // ---- STANDINGS -------------------------------------------------------------------------------------------
 async function renderStandings() {
   await refreshOverview();
+  if (isHockey()) return renderHockeyStandings();
   const rows = await api(`/leagues/${LEAGUE_ID}/standings`);
   const played = rows.some(r => r.wins + r.losses + r.ties > 0);
   const byConf = {};
@@ -1836,6 +1840,25 @@ async function renderStandings() {
       list.sort((a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_name.localeCompare(b.team_name));
       return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr></thead><tbody>
         ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td></tr>`).join('')}
+        </tbody></table></div>`; }).join('') + '</div>';
+}
+
+// NHL standings: built from the simulated games the viewer may see (the same ones the scoreboard shows).
+async function renderHockeyStandings() {
+  const {standings} = await api(`/leagues/${LEAGUE_ID}/series-standings`);
+  const played = standings.some(r => r.wins + r.losses + r.ties > 0);
+  const byConf = {};
+  standings.forEach(r => {
+    const t = teamsById[r.team_id];
+    const groupName = t?.division_name ? `${t.conference_name || 'Conference'} · ${t.division_name}` : (t?.conference_name || 'Other');
+    (byConf[groupName] = byConf[groupName] || []).push({...r, t});
+  });
+  const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
+  $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
+    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
+      list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
+      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td></tr>`).join('')}
         </tbody></table></div>`; }).join('') + '</div>';
 }
 

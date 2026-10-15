@@ -3,16 +3,17 @@ NHL series standings, rivalry history and Game Score (derived on read; see platf
 platform/game_score.py). Only the publish endpoint writes, and only series_daily_games.game_score_rating.
 """
 
+import dataclasses
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_commissioner, current_user
+from fantasy_sports.api.auth import assert_commissioner, current_user, optional_user
 from fantasy_sports.api.schemas import (
     GameScoreOut, GameScoresOut, RivalriesOut, RivalryOut, SeriesStandingOut, SeriesStandingsOut,
 )
-from fantasy_sports.platform import game_score, series_standings
+from fantasy_sports.platform import game_score, series_standings, spoilers
 from fantasy_sports.platform.db.models.core import League, LeagueSeries, SeriesDailyGame, Team, User
 from fantasy_sports.platform.db.session import get_db
 
@@ -29,15 +30,22 @@ def _nhl_league(db: Session, league_id: int) -> League:
 
 
 @router.get("/leagues/{league_id}/series-standings", response_model=SeriesStandingsOut)
-def read_series_standings(league_id: int, as_of: datetime.date | None = None, db: Session = Depends(get_db)):
+def read_series_standings(league_id: int, as_of: datetime.date | None = None, db: Session = Depends(get_db),
+                          user: User | None = Depends(optional_user)):
     _nhl_league(db, league_id)
     team_ids, series, games = series_standings.load_league(db, league_id)
+    # Results the viewer has not been allowed to see yet (unwatched games) stay out of the table.
+    _, held = spoilers.final_sims(db, league_id, user.id if user else None)
+    held_ids = {dg.id for _, dg in held}
+    games = [dataclasses.replace(g, final=False) if g.game_id in held_ids else g for g in games]
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
     rows = series_standings.compute_standings(team_ids, series, games, as_of)
     return SeriesStandingsOut(league_id=league_id, as_of=as_of, tiebreak_order=series_standings.RANK_KEYS, standings=[
         SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], wins=r.wins, losses=r.losses,
                           ties=r.ties, goals_for=r.goals_for,
-                          goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins) for r in rows])
+                          goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins,
+                          home_wins=r.home_wins, home_losses=r.home_losses, home_ties=r.home_ties,
+                          away_wins=r.away_wins, away_losses=r.away_losses, away_ties=r.away_ties) for r in rows])
 
 
 def _rivalry_out(league_id: int, p: series_standings.PairRecord) -> RivalryOut:

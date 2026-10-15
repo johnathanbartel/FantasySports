@@ -657,6 +657,12 @@ class SeriesStandingOut(BaseModel):
     goals_against: int
     goal_diff: int
     h2h_wins: int
+    home_wins: int = 0
+    home_losses: int = 0
+    home_ties: int = 0
+    away_wins: int = 0
+    away_losses: int = 0
+    away_ties: int = 0
 
 
 class SeriesStandingsOut(BaseModel):

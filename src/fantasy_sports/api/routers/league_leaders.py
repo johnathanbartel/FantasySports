@@ -22,9 +22,9 @@ from sqlalchemy.orm import Session, joinedload
 from fantasy_sports.api.auth import optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name
 from fantasy_sports.platform.db.models.core import (
-    DraftableAsset, League, LeagueSeries, RealTeam, RosterEntry, SeriesDailyGame, SimulatorEvent, SimulatorGame,
-    SimulatorReveal, Team, User,
+    DraftableAsset, League, RealTeam, RosterEntry, SimulatorEvent, SimulatorGame, Team, User,
 )
+from fantasy_sports.platform import spoilers
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(tags=["league-leaders"])
@@ -60,26 +60,9 @@ def league_leaders(league_id: int, db: Session = Depends(get_db), user: User | N
     if league.series_length_days is None:
         raise HTTPException(400, "League leaders are only available for NHL leagues")
 
-    sims = (db.query(SimulatorGame, SeriesDailyGame).join(SeriesDailyGame, SeriesDailyGame.id == SimulatorGame.daily_game_id)
-            .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
-            .filter(LeagueSeries.league_id == league_id, SimulatorGame.status == "FINAL").all())
     teams = {t.id: t for t in db.query(Team).filter_by(league_id=league_id)}
-    sim_ids = [s.id for s, _ in sims]
-    revealed: dict[int, set[int]] = {}
-    if sim_ids:
-        for sim_id, uid in db.query(SimulatorReveal.simulator_game_id, SimulatorReveal.user_id).filter(
-                SimulatorReveal.simulator_game_id.in_(sim_ids)):
-            revealed.setdefault(sim_id, set()).add(uid)
-
-    visible = []
-    for sim, dg in sims:
-        home, away = teams.get(dg.home_team_id), teams.get(dg.away_team_id)
-        ai_vs_ai = bool(home and away and home.is_ai_owned and away.is_ai_owned)
-        seen = revealed.get(sim.id, set())
-        owners = {t.owner_user_id for t in (home, away) if t and t.owner_user_id}
-        if ai_vs_ai or (user is not None and user.id in seen) or (owners & seen):
-            visible.append((sim, dg))
-    hidden = len(sims) - len(visible)
+    visible, held = spoilers.final_sims(db, league_id, user.id if user else None)
+    hidden = len(held)
 
     stat: dict[int, dict[str, int]] = {}
     row = lambda a: stat.setdefault(a, {"gp": 0, "g": 0, "a": 0, "sv": 0, "so": 0})   # noqa: E731
