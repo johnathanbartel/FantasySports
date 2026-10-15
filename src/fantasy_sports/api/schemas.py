@@ -573,8 +573,8 @@ class PeckingOrderPlayerOut(BaseModel):
     player_id: int
     draftable_asset_id: int
     display_name: str
-    position: str
-    priority: int | None  # None = on the roster but unranked
+    position: str | None = None
+    priority: int | None = None  # None = on the roster but unranked
     games: int | None = None
     points_per_game: float | None = None
     real_team: str | None = None

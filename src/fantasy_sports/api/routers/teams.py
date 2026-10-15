@@ -24,10 +24,13 @@ router = APIRouter(prefix="/teams", tags=["teams"])
 
 def _ai_tick(db: Session, team_id: int) -> None:
     """Apply the league's AI teams' due roster decisions before reading a roster (platform/ai/ai_roster.py)."""
-    team = db.get(Team, team_id)
-    if team is not None:
-        ai_roster.tick(db, team.league_id)
-        db.commit()
+    try:
+        team = db.get(Team, team_id)
+        if team is not None:
+            ai_roster.tick(db, team.league_id)
+            db.commit()
+    except Exception:
+        db.rollback()
 
 
 @router.post("", response_model=TeamOut)
@@ -124,7 +127,7 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             asset_type=a.asset_type,
             display_name=draftable_asset_display_name(a),
             position=draftable_asset_position(a),
-            real_team=school.get(a.player.real_team_id if a.player else a.defense_group.real_team_id),
+            real_team=school.get(a.player.real_team_id if a.player else (a.defense_group.real_team_id if a.defense_group else None)),
             last_season_points=points.get(a.id),
             acquired_via=e.acquired_via,
             games=rates.get(a.id, {}).get("games"), points_per_game=rates.get(a.id, {}).get("points_per_game"),

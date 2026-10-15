@@ -123,7 +123,8 @@ def load_order(db: Session, team_id: int) -> dict[str, list[int]]:
     order: dict[str, list[int]] = {g: [] for g in GROUPS}
     rows = db.query(TeamPeckingOrder).filter_by(team_id=team_id).order_by(TeamPeckingOrder.priority).all()
     for row in rows:
-        order[row.position_group].append(row.draftable_asset.player_id)
+        if row.position_group in order and row.draftable_asset and row.draftable_asset.player_id:
+            order[row.position_group].append(row.draftable_asset.player_id)
     return order
 
 
@@ -134,7 +135,7 @@ def replace_groups(db: Session, team: Team, assignments: dict[str, list[int]]) -
     back, so the update is all-or-nothing."""
     assert_hockey_team(db, team)
     if not assignments:
-        raise ValueError("No position groups given")
+        return
     roster = roster_players(db, team.id)
     seen: set[int] = set()
     for group, ids in assignments.items():

@@ -481,6 +481,7 @@ function resolvePlayerInWindow(p, w, teamId) {
 
 async function renderHockeyRoster() {
   const t = activeTeam();
+  if (!t) return;
   const [po, sch] = await Promise.all([
     api(`/teams/${t.id}/pecking-order`),
     api(`/teams/${t.id}/series-schedule`).catch(() => null),
@@ -881,7 +882,8 @@ async function renderHockeyScoreboard() {
             ${isVeiled ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
             <a href="/static/nhl-game.html?daily_game_id=${dgId}#boxscore" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
           ` : ''}
-          <a href="#" data-go="roster" data-team="${roadTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">Lines</a>
+          <a href="#" data-go="roster" data-team="${roadTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(roadTeam.name)} Lines</a>
+          <a href="#" data-go="roster" data-team="${homeTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(homeTeam.name)} Lines</a>
         </div>
       </div>
     `;

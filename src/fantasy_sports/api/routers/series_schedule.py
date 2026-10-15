@@ -207,6 +207,6 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db)):
         games = [TeamSeriesGameOut(daily_game_id=g.id, calendar_date=g.calendar_date, is_matchup_day=g.is_matchup_day,
                                    home_away="home" if g.home_team_id == team_id else "away", status=g.status)
                  for g in sorted(s.daily_games, key=lambda g: g.calendar_date)]
-        out.append(TeamSeriesOut(series_id=s.id, opponent_id=opp, opponent_name=names[opp], start_date=s.start_date,
+        out.append(TeamSeriesOut(series_id=s.id, opponent_id=opp, opponent_name=names.get(opp, "Opponent"), start_date=s.start_date,
                                  end_date=s.end_date, total_days=s.total_days, status=s.status, games=games))
     return TeamSeriesScheduleOut(team_id=team_id, league_id=team.league_id, series=out)
