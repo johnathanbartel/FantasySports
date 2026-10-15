@@ -11,7 +11,7 @@ from fantasy_sports.api.auth import assert_commissioner, current_user, require_c
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
-    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest,
+    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSettingsRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
@@ -320,6 +320,18 @@ def rename_league(
     if not new_name:
         raise HTTPException(400, "League name cannot be empty")
     league.name = new_name
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.patch("/{league_id}/settings", response_model=LeagueOut)
+def update_league_settings(
+    league_id: int, payload: LeagueSettingsRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}."""
+    league = assert_commissioner(db, user, league_id)
+    league.league_format = payload.league_format
     db.commit()
     db.refresh(league)
     return league

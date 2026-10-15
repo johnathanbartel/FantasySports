@@ -93,6 +93,10 @@ class League(Base):
             name="ck_league_series_length_days",
         ),
         CheckConstraint("league_mode IN ('standard', 'weekly_redraft')", name="ck_league_mode"),
+        CheckConstraint(
+            "league_format IN ('traditional_redraft', 'future_pick_redraft', 'keeper', 'dynasty')",
+            name="ck_league_format",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -127,6 +131,10 @@ class League(Base):
     series_length_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # "standard" = the league's normal format; "weekly_redraft" = weekly salary-cap head-to-head rosters (FS-033).
     league_mode: Mapped[str] = mapped_column(String(20), default="standard", server_default="standard")
+    # How rosters carry over between seasons (League Settings tab). Only recorded for now - nothing branches on it yet.
+    league_format: Mapped[str] = mapped_column(
+        String(24), default="traditional_redraft", server_default="traditional_redraft"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")

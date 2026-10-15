@@ -129,7 +129,7 @@ const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
-              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['rankings', 'Rankings']];
+              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['league-settings', 'League Settings'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
 const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : label]).filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))));
 
@@ -172,7 +172,7 @@ async function go(id, extra = {}) {
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
   try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, trades: renderTrades, schedule: renderSchedule,
-                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, rankings: renderRankings})[id](); }
+                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, 'league-settings': renderLeagueSettings, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
 
@@ -1860,6 +1860,25 @@ async function showMatchup(m, index, wk) {
 }
 
 // ---- RANKINGS ---------------------------------------------------------------------------------------------
+const LEAGUE_FORMATS = [['traditional_redraft', 'Traditional Redraft'], ['future_pick_redraft', 'Future Draft Pick Redraft'], ['keeper', 'Keeper'], ['dynasty', 'Dynasty']];
+
+// Everyone can read the league's settings; only the commissioner gets the controls (the API enforces it too).
+async function renderLeagueSettings() {
+  const lg = await api(`/leagues/${LEAGUE_ID}`);
+  const label = Object.fromEntries(LEAGUE_FORMATS)[lg.league_format] || lg.league_format;
+  $('content').innerHTML = `<div class="card"><h3>League Format</h3>` + (isCommissioner
+    ? `<select id="league-format">${LEAGUE_FORMATS.map(([v, l]) => `<option value="${v}"${v === lg.league_format ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+    : `<p>${esc(label)}</p><p class="muted">Only the commissioner can change league settings.</p>`) + `</div>`;
+  const sel = $('league-format');
+  if (sel) sel.onchange = async () => {
+    showError(''); showResult('');
+    try {
+      await api(`/leagues/${LEAGUE_ID}/settings`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({league_format: sel.value})});
+      showResult('League format saved.');
+    } catch (e) { showError(e.message); sel.value = lg.league_format; }
+  };
+}
+
 async function renderRankings() {
   await refreshOverview();
   const p = await api(`/leagues/${LEAGUE_ID}/rankings`);

@@ -6,6 +6,7 @@ so they read directly off the SQLAlchemy ORM objects returned by db/models.
 from __future__ import annotations
 
 import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,6 +53,13 @@ class LeagueCreateRequest(BaseModel):
 
 class LeagueRenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+
+
+LEAGUE_FORMATS = ("traditional_redraft", "future_pick_redraft", "keeper", "dynasty")
+
+
+class LeagueSettingsRequest(BaseModel):
+    league_format: Literal["traditional_redraft", "future_pick_redraft", "keeper", "dynasty"]
 
 
 class TeamSetupItem(BaseModel):
@@ -123,6 +131,7 @@ class LeagueOut(ORMModel):
     draft_type: str
     draft_scheduled_at: datetime.datetime | None
     series_length_days: int | None
+    league_format: str
 
 
 class DivisionOut(BaseModel):
