@@ -685,8 +685,11 @@ def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: date
             if day not in ingested:
                 ingested.add(day)
                 try:
-                    ingest_daily_slate_if_needed(db, nhl, day)
-                    db.flush()
+                    # A savepoint, so a failed ingest (e.g. two requests ingesting the same live slate at once and hitting
+                    # the game_events unique key) rolls back only itself. Without it Postgres aborts the whole request.
+                    with db.begin_nested():
+                        ingest_daily_slate_if_needed(db, nhl, day)
+                        db.flush()
                 except Exception:
                     logging.getLogger(__name__).exception("slate ingest failed for %s", day)
             day += datetime.timedelta(days=1)
@@ -755,8 +758,9 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     for sync_date in unfinalized_dates:
         # Ingest today's slate if not stored
         try:
-            ingest_daily_slate_if_needed(db, nhl, sync_date)
-            db.flush()
+            with db.begin_nested():      # savepoint: a failed ingest must not abort the request's transaction
+                ingest_daily_slate_if_needed(db, nhl, sync_date)
+                db.flush()
         except Exception:
             pass
 
