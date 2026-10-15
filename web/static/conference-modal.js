@@ -26,12 +26,12 @@ const ConferenceModal = (() => {
           Conferences contain divisions. Configure the number of conferences and divisions, customize names, and randomize or manually assign teams.
         </p>
 
-        <div id="cm-banner-locked" style="display:none;background:#451a03;color:#fbbf24;border:1px solid #78350f;padding:10px 14px;border-radius:var(--radius-md);margin-bottom:var(--space-4);font-size:13px">
+        <div id="cm-banner-locked" style="display:none;background:var(--hi);color:var(--ink);border:3px solid var(--ink);padding:10px 14px;border-radius:var(--radius-md);margin-bottom:var(--space-4);font-size:13px">
           <strong>Season in progress:</strong> Conferences and divisions are locked while regular season games or series are active. Realignment unlocks before or after the season.
         </div>
 
         <div id="cm-error" style="display:none;background:var(--color-accent-2-100, #fee2e2);color:var(--color-accent-2-800, #991b1b);padding:8px 12px;border-radius:var(--radius-md);margin-bottom:var(--space-3);font-size:13px"></div>
-        <div id="cm-success" style="display:none;background:#052e16;color:#4ade80;border:1px solid #166534;padding:8px 12px;border-radius:var(--radius-md);margin-bottom:var(--space-3);font-size:13px"></div>
+        <div id="cm-success" style="display:none;background:var(--good);color:#fff;border:3px solid var(--ink);padding:8px 12px;border-radius:var(--radius-md);margin-bottom:var(--space-3);font-size:13px"></div>
 
         <!-- Section 1: Structure Setup (Conferences & Divisions) -->
         <div style="background:var(--color-surface, rgba(255,255,255,0.03));border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)">
@@ -273,8 +273,8 @@ const ConferenceModal = (() => {
       const statusBadge = t.is_ai_owned
         ? '<span class="tag tag-neutral" style="font-size:11px">AI</span>'
         : (t.invite_status === 'pending_claim'
-          ? `<span class="tag" style="font-size:11px;background:#451a03;color:#fbbf24">Pending (${esc(t.owner_email || '')})</span>`
-          : `<span class="tag" style="font-size:11px;background:#052e16;color:#4ade80">Claimed (${esc(t.owner_name || 'Manager')})</span>`);
+          ? `<span class="tag" style="font-size:11px;background:var(--hi);color:var(--ink)">Pending (${esc(t.owner_email || '')})</span>`
+          : `<span class="tag" style="font-size:11px;background:var(--good);color:#fff">Claimed (${esc(t.owner_name || 'Manager')})</span>`);
 
       let optionsHtml = '<option value="">-- Unassigned --</option>';
       if (hasAnyDivisions) {

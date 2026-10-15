@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Commissioner Mode - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
 <style>
   body{margin:0}
   .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);max-width:100%}
@@ -198,12 +199,12 @@ async function refreshLeague() {
     if (t.is_ai_owned) {
       claimBadge = '<span class="tag tag-neutral">AI</span>';
     } else if (t.invite_status === 'pending_claim') {
-      claimBadge = `<span class="tag" style="background:#451a03;color:#fbbf24;border:1px solid #78350f" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
+      claimBadge = `<span class="tag" style="background:var(--hi);color:var(--ink);border:3px solid var(--ink)" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
       if (t.invite_url) {
         claimBadge += ` <button class="btn btn-ghost" style="font-size:11px;padding:1px 5px" data-cm-copy-invite="${esc(t.invite_url)}" title="Copy invite link">Copy Link</button>`;
       }
     } else {
-      claimBadge = `<span class="tag tag-neutral" style="background:#052e16;color:#4ade80;border:1px solid #166534">Claimed: ${esc(t.owner_name || t.owner_email || 'Manager')}</span>`;
+      claimBadge = `<span class="tag tag-neutral" style="background:var(--good);color:#fff;border:3px solid var(--ink)">Claimed: ${esc(t.owner_name || t.owner_email || 'Manager')}</span>`;
     }
 
     const sizeTd = isCollege ? `<td><span class="tag tag-neutral">${t.program_size}</span></td>` : '';

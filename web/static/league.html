@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>League Home - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
 <style>
   body{margin:0}
   .inp{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px;font-family:var(--font-body);max-width:100%}
@@ -37,7 +38,7 @@
   .sb-body{padding:6px 14px}
   .sb-team{display:flex;align-items:center;gap:12px;padding:10px 0}
   .sb-team + .sb-team{border-top:1px solid var(--color-divider)}
-  .sb-logo{width:34px;height:34px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;letter-spacing:.02em;color:#fff}
+  .sb-logo{flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:0}
   .sb-name{flex:1;min-width:0;font-size:16px;font-weight:700;display:flex;align-items:center;gap:6px}
   .sb-name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sb-sog{font-size:12px;color:color-mix(in srgb, var(--color-text) 60%, transparent);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -940,7 +941,7 @@ async function renderHockeyScoreboard() {
             const mine = myTeam() && myTeam().id === tm.id;
             return `
               <div class="sb-team ${cls}">
-                <div class="sb-logo" style="background:${heatColor}">${esc(abbr)}</div>
+                <div class="sb-logo" title="${esc(abbr)}">${Retro.badge(tm.name, 4)}</div>
                 <div class="sb-name">
                   <span class="t">${esc(tm.name)}</span>
                   ${mine ? '<span class="pill good" style="font-size:9px;padding:1px 5px">You</span>' : ''}
@@ -1370,7 +1371,7 @@ async function renderTrades() {
                 <strong style="font-size:15px">${esc(tr.counterparty_team_name)}</strong> ${tr.counterparty_is_ai ? '<span class="pill ai">AI</span>' : ''}
               </div>
               <div style="display:flex;gap:var(--space-2);align-items:center">
-                <span class="tag" style="background:#451a03;color:#fbbf24;font-size:11px;font-weight:600">
+                <span class="tag" style="background:var(--hi);color:var(--ink);font-size:11px;font-weight:600">
                   Majority Vote: ${tr.approvals} / ${tr.majority_needed} needed (${tr.rejections} rejected)
                 </span>
                 ${(can && tr.proposer_team_id === t.id) ? `<button type="button" class="btn btn-ghost btn-sm" data-trade-cancel="${tr.id}" style="font-size:11px;color:var(--color-danger)">Cancel Trade</button>` : ''}
@@ -1514,7 +1515,7 @@ async function renderTrades() {
       <div class="card elev-sm" style="padding:var(--space-3) var(--space-4)">
         ${pastTrades.length ? pastTrades.map(tr => `
           <div class="row" style="flex-wrap:wrap;gap:var(--space-2);padding:8px 0">
-            <span class="tag" style="min-width:70px;justify-content:center;${tr.status === 'accepted' ? 'background:#052e16;color:#4ade80' : 'background:#451a03;color:#fbbf24'}">${tr.status.toUpperCase()}</span>
+            <span class="tag" style="min-width:70px;justify-content:center;${tr.status === 'accepted' ? 'background:var(--good);color:#fff' : 'background:var(--hi);color:var(--ink)'}">${tr.status.toUpperCase()}</span>
             <div style="flex:1;min-width:240px">
               <strong>${esc(tr.proposer_team_name)}</strong> gave ${tr.send_assets.map(a => esc(a.display_name)).join(', ') || 'nothing'}
               <span class="muted">to</span>
@@ -1916,7 +1917,7 @@ async function renderTeams() {
           if (t.is_ai_owned) {
             claimStatusBadge = '<span class="pill ai">AI Team</span>';
           } else if (t.invite_status === 'pending_claim') {
-            claimStatusBadge = `<span class="pill" style="background:#451a03;color:#fbbf24;border:1px solid #78350f" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
+            claimStatusBadge = `<span class="pill" style="background:var(--hi);color:var(--ink);border:3px solid var(--ink)" title="Invited: ${esc(t.owner_email || '')}">Pending: ${esc(t.owner_email || t.owner_name)}</span>`;
             if (isCommissioner && t.invite_url) {
               claimStatusBadge += ` <button class="btn btn-ghost" style="font-size:11px;padding:2px 6px" data-copy-invite-url="${esc(t.invite_url)}" title="Copy invite link">Copy Link</button>`;
             }
@@ -2128,7 +2129,7 @@ async function start() {
   isCommissioner = ov.commissioner_user_id === me;
   canActForAi = isCommissioner && ent.commissioner_mode;
   $('nav-brand').textContent = ov.name;
-  $('league-name').textContent = ov.name;
+  $('league-name').innerHTML = `${Retro.sportSprite(ov.universe_codes, 5)} ` + esc(ov.name);
   $('kicker').textContent = `${isHockey() ? 'NHL' : ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
   $('nav-cm').style.display = isCommissioner ? '' : 'none';
   document.title = ov.name;

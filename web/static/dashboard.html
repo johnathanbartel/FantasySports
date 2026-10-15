@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>My Leagues - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
 <style>body{margin:0}</style>
 </head>
 <body>
@@ -66,6 +67,7 @@
 const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football', nhl: 'Hockey', nba: 'Basketball', mlb: 'Baseball'};
 const sportLabel = code => SPORT_LABELS[code] || String(code).toUpperCase();
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SPORT_COLORS = {hockey: '#1d4fd8', baseball: '#2f7d3a', football: '#14803a', basketball: '#c4510a'};
 const DRAFT_LABELS = {not_started: 'Draft not started', in_progress: 'Draft in progress', complete: 'Draft complete'};
 
 let all = [];
@@ -126,19 +128,25 @@ function card(l) {
         <button class="btn btn-secondary" style="font-size:12px;padding:3px 8px;color:#b91c1c;border-color:color-mix(in srgb, #b91c1c 35%, transparent)" data-delete-league="${l.league_id}">Delete</button>
       </div>
     </div>` : '';
-  return `<div class="card elev-sm" style="padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
-    <div style="display:flex;justify-content:space-between;gap:var(--space-2);align-items:baseline">
-      <h3 style="margin:0">${esc(l.name)}</h3>
-      <span class="tag tag-neutral">${l.sports.map(sportLabel).map(esc).join(' + ') || '—'}</span>
+  const stripe = SPORT_COLORS[l.sports.map(c => Retro.THEME_BY_UNIVERSE[c]).find(Boolean)] || 'var(--accent)';
+  return `<div class="card elev-sm" style="padding:0;gap:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-2);padding:10px var(--space-3);background:${stripe};border-bottom:var(--bw) solid var(--ink);color:#fff">
+      <span style="display:flex;align-items:center;gap:8px;font-family:var(--font-pixel);font-size:9px;text-transform:uppercase">${Retro.sportSprite(l.sports, 3)} ${l.sports.map(sportLabel).map(esc).join(' + ') || '—'}</span>
+      <span class="tag ${draftTag}">${DRAFT_LABELS[l.draft_state] || esc(l.draft_state)}</span>
     </div>
-    <div class="text-muted" style="font-size:13px">${role || '—'}</div>
-    <div style="font-size:14px">${l.teams_filled} of ${l.size} teams${full ? '' : ' · <strong>not full</strong>'}</div>
-    <div><span class="tag ${draftTag}">${DRAFT_LABELS[l.draft_state] || esc(l.draft_state)}</span></div>
-    ${sched}
-    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2);flex-wrap:wrap">
-      <a class="btn btn-primary" href="${leagueHref(l)}">Open league</a>${draftBtn}
+    <div style="padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        ${Retro.badge(l.name, 4)}
+        <h3 style="margin:0">${esc(l.name)}</h3>
+      </div>
+      <div class="text-muted" style="font-size:15px">${role || '—'}</div>
+      <div>${l.teams_filled} of ${l.size} teams${full ? '' : ' · <strong>not full</strong>'}</div>
+      ${sched}
+      <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2);flex-wrap:wrap">
+        <a class="btn btn-primary" data-whistle href="${leagueHref(l)}">Open league</a>${draftBtn}
+      </div>
+      ${commishActions}
     </div>
-    ${commishActions}
   </div>`;
 }
 
