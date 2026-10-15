@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="hub">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retro UI Mockup - FantasyMotion</title>
+<!-- DESIGN MOCKUP ONLY. Self-contained: fake data, no API calls, not linked from the site. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens: one set per theme ---------- */
+:root{
+  --font-pixel:"Press Start 2P", ui-monospace, monospace;   /* headings, numbers, buttons, labels */
+  --font-body:"Pixelify Sans", ui-monospace, monospace;     /* tables and paragraphs: pixel flavored but readable */
+  --bw:4px;                                                  /* the one border width everything shares */
+  --ink:#1a1030; --panel:#fff; --panel-2:#eee; --accent:#ff2e93; --accent-2:#00b8d9; --on-accent:#fff;
+  --hi:#ffe14d; --board:#1a1030; --board-ink:#ffe14d; --page-ink:#fff; --good:#1f9d44; --bad:#d8202e;
+  --page:#140c3a;
+}
+html[data-theme="hub"]{
+  --ink:#140c3a; --panel:#fffdf5; --panel-2:#ffe9f4; --accent:#ff2e93; --accent-2:#00c2e0; --on-accent:#fff;
+  --hi:#ffe14d; --board:#140c3a; --board-ink:#ffe14d; --page-ink:#fff;
+  --page:
+    radial-gradient(#ffffff55 1px, transparent 1.5px) 0 0/48px 48px,
+    radial-gradient(#00e5ff44 1px, transparent 1.5px) 24px 24px/48px 48px,
+    linear-gradient(#140c3a,#2a1070);
+}
+html[data-theme="hockey"]{
+  --ink:#0a1f5c; --panel:#ffffff; --panel-2:#dff0ff; --accent:#e0202e; --accent-2:#1d4fd8; --on-accent:#fff;
+  --hi:#bfe0ff; --board:#0a1f5c; --board-ink:#ff5a64; --page-ink:#0a1f5c;
+  --page:
+    linear-gradient(90deg, transparent 0 calc(50% - 6px), #1d4fd833 calc(50% - 6px) calc(50% + 6px), transparent calc(50% + 6px)),
+    radial-gradient(ellipse at 20% 0%, #ffffff, transparent 60%),
+    #e6f4ff;
+}
+html[data-theme="baseball"]{
+  --ink:#3b2412; --panel:#fff6dc; --panel-2:#ecc791; --accent:#c8472b; --accent-2:#2f7d3a; --on-accent:#fff;
+  --hi:#ffe9a8; --board:#14391f; --board-ink:#f4f1e4; --page-ink:#fff;
+  --page: repeating-linear-gradient(90deg,#3dae5a 0 56px,#35a052 56px 112px);
+}
+html[data-theme="football"]{
+  --ink:#0e3b1d; --panel:#ffffff; --panel-2:#e3f4e6; --accent:#14803a; --accent-2:#e8b800; --on-accent:#fff;
+  --hi:#fff3a8; --board:#0e3b1d; --board-ink:#ffffff; --page-ink:#fff;
+  --page:
+    linear-gradient(90deg, transparent 0 calc(100% - 4px), #ffffffaa calc(100% - 4px)) 0 0/96px 100%,
+    repeating-linear-gradient(0deg,#2f9d4a 0 80px,#2a9144 80px 160px);
+}
+html[data-theme="basketball"]{
+  --ink:#3a1f0a; --panel:#fff3dd; --panel-2:#f2d29c; --accent:#ff6a13; --accent-2:#1b5fd1; --on-accent:#fff;
+  --hi:#ffe0a6; --board:#2a1608; --board-ink:#ffb04d; --page-ink:#3a1f0a;
+  --page:
+    repeating-linear-gradient(90deg, #00000014 0 3px, transparent 3px 64px),
+    repeating-linear-gradient(0deg, #ffffff10 0 2px, transparent 2px 32px),
+    #d99a55;
+}
+
+/* ---------- Base ---------- */
+*,*::before,*::after{box-sizing:border-box}
+html{image-rendering:pixelated}
+body{margin:0;min-height:100vh;background:var(--page);color:var(--ink);font-family:var(--font-body);font-size:18px;line-height:1.35;transition:none}
+h1,h2,h3,h4{font-family:var(--font-pixel);font-weight:400;line-height:1.4;margin:0}
+h1{font-size:22px} h2{font-size:15px} h3{font-size:12px}
+a{color:inherit}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 16px 60px}
+.sprite{display:inline-block;vertical-align:middle;image-rendering:pixelated}
+
+/* ---------- Panels ---------- */
+.panel{background:var(--panel);border:var(--bw) solid var(--ink);box-shadow:6px 6px 0 var(--ink), inset 4px 4px 0 #ffffff88, inset -4px -4px 0 #00000014;padding:16px}
+.panel-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:-16px -16px 14px;padding:10px 14px;background:var(--ink);color:var(--panel);font-family:var(--font-pixel);font-size:11px;text-transform:uppercase}
+.panel-title .sprite{margin-right:8px}
+
+/* ---------- Nav ---------- */
+.nav{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:10px 16px;margin-bottom:16px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-pixel);font-size:13px;text-decoration:none}
+.brand b{color:var(--accent)}
+.nav a.link{font-family:var(--font-pixel);font-size:10px;text-decoration:none;padding:8px 10px;border:var(--bw) solid transparent}
+.nav a.link:hover{border-color:var(--ink);background:var(--hi)}
+.nav a.link[aria-current]{background:var(--ink);color:var(--panel)}
+.nav .spacer{flex:1}
+
+/* ---------- Buttons ---------- */
+.btn{font-family:var(--font-pixel);font-size:11px;text-transform:uppercase;cursor:pointer;color:var(--on-accent);background:var(--accent);
+  border:var(--bw) solid var(--ink);padding:12px 16px;box-shadow:0 6px 0 var(--ink), inset 0 4px 0 #ffffff66;position:relative;top:0;transition:none}
+.btn:hover{filter:brightness(1.1)}
+.btn:active,.btn.pressed{top:4px;box-shadow:0 2px 0 var(--ink), inset 0 4px 0 #ffffff33}
+.btn.alt{background:var(--accent-2)}
+.btn.ghost{background:var(--panel);color:var(--ink)}
+.btn.small{font-size:9px;padding:8px 10px;box-shadow:0 4px 0 var(--ink), inset 0 3px 0 #ffffff66}
+.btn.small:active{top:3px;box-shadow:0 1px 0 var(--ink)}
+.btn:focus-visible,.tab:focus-visible,.chip:focus-visible{outline:4px dashed var(--accent-2);outline-offset:3px}
+.btn-row{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+
+/* ---------- Theme chips (mockup-only preview switcher) ---------- */
+.themebar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px;color:var(--page-ink)}
+.themebar .lbl{font-family:var(--font-pixel);font-size:10px;margin-right:4px;text-shadow:2px 2px 0 #00000055}
+.chip{font-family:var(--font-pixel);font-size:10px;text-transform:uppercase;cursor:pointer;display:flex;align-items:center;gap:8px;
+  background:var(--panel);color:var(--ink);border:var(--bw) solid var(--ink);padding:9px 12px;box-shadow:4px 4px 0 var(--ink)}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--panel);box-shadow:none;transform:translate(4px,4px)}
+.chip:hover{background:var(--hi);color:var(--ink)}
+
+/* ---------- Banner ---------- */
+.banner{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+.banner .kicker{font-family:var(--font-pixel);font-size:9px;color:var(--accent);margin-bottom:8px}
+.banner .meta{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}
+.tag{display:inline-block;font-family:var(--font-pixel);font-size:9px;text-transform:uppercase;padding:5px 7px;border:3px solid var(--ink);background:var(--hi);color:var(--ink)}
+.tag.red{background:var(--bad);color:#fff} .tag.green{background:var(--good);color:#fff}
+.tag.acc{background:var(--accent);color:var(--on-accent)} .tag.blue{background:var(--accent-2);color:#fff}
+.live{animation:blink 1s steps(2,jump-none) infinite}
+@keyframes blink{50%{opacity:.25}}
+
+/* ---------- Scoreboard ---------- */
+.board{background:var(--board);color:var(--board-ink);border:var(--bw) solid var(--ink);box-shadow:6px 6px 0 var(--ink);padding:18px;margin-bottom:22px;
+  background-image:repeating-linear-gradient(0deg,#00000030 0 2px,transparent 2px 4px)}
+.board-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center}
+.side{display:flex;align-items:center;gap:14px}
+.side.right{flex-direction:row-reverse;text-align:right}
+.team-name{font-family:var(--font-pixel);font-size:13px;line-height:1.5;color:#fff}
+.team-rec{font-family:var(--font-body);font-size:16px;opacity:.8;color:#fff}
+.score{font-family:var(--font-pixel);font-size:44px;text-shadow:0 0 12px currentColor;min-width:2.6em;text-align:center}
+.mid{display:flex;align-items:center;gap:14px;justify-content:center}
+.clock{text-align:center;font-family:var(--font-pixel);font-size:10px;line-height:2;color:#fff}
+.clock .big{display:block;font-size:16px;color:var(--board-ink)}
+.winprob{height:16px;margin-top:16px;border:3px solid #fff;display:flex;background:#00000066}
+.winprob i{display:block;height:100%;background:var(--accent)} .winprob i+i{background:var(--accent-2)}
+.winprob-lbl{display:flex;justify-content:space-between;font-family:var(--font-pixel);font-size:8px;color:#fff;margin-top:8px}
+
+/* ---------- Tabs ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:-4px;position:relative;z-index:1}
+.tab{font-family:var(--font-pixel);font-size:10px;text-transform:uppercase;cursor:pointer;background:var(--panel-2);color:var(--ink);
+  border:var(--bw) solid var(--ink);border-bottom:0;padding:12px 14px}
+.tab:hover{background:var(--hi)}
+.tab[aria-selected="true"]{background:var(--panel);padding-bottom:16px;margin-bottom:-4px}
+.tabpanel{display:none} .tabpanel.on{display:block}
+
+/* ---------- Layout ---------- */
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.stack{display:grid;gap:22px;align-content:start}
+
+/* ---------- Tables ---------- */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:18px}
+th{font-family:var(--font-pixel);font-weight:400;font-size:9px;text-transform:uppercase;text-align:left;padding:10px 8px;background:var(--panel-2);border-bottom:var(--bw) solid var(--ink);position:sticky;top:0}
+td{padding:8px;border-bottom:2px dashed color-mix(in srgb,var(--ink) 30%,transparent);vertical-align:middle}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+td.pts{font-family:var(--font-pixel);font-size:12px}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--hi)}
+tbody tr.sel{background:var(--ink);color:var(--panel)}
+tbody tr.sel td{border-color:#ffffff44}
+.slot{font-family:var(--font-pixel);font-size:9px;display:inline-block;min-width:3.2em;text-align:center;padding:5px 4px;background:var(--accent-2);color:#fff;border:3px solid var(--ink)}
+.pl{display:flex;align-items:center;gap:10px}
+.rank{font-family:var(--font-pixel);font-size:11px}
+.up{color:var(--good)} .down{color:var(--bad)}
+tr.sel .up,tr.sel .down{color:var(--hi)}
+
+/* ---------- Ticker ---------- */
+.feed{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.feed li{display:flex;gap:10px;align-items:flex-start;padding-bottom:10px;border-bottom:2px dashed color-mix(in srgb,var(--ink) 30%,transparent)}
+.feed .t{font-family:var(--font-pixel);font-size:8px;color:var(--accent);min-width:46px;padding-top:4px}
+
+/* ---------- Draft clock ---------- */
+.draftclock{text-align:center;padding:24px 10px}
+.draftclock .digits{font-family:var(--font-pixel);font-size:56px;color:var(--accent);text-shadow:4px 4px 0 var(--ink)}
+.draftclock p{margin:14px 0 20px}
+
+/* ---------- Hub cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:26px}
+.lcard{padding:0;cursor:pointer;transition:none;position:relative;top:0;text-align:left;font:inherit;color:inherit}
+.lcard:hover{top:-4px;box-shadow:6px 10px 0 var(--ink)}
+.lcard:active{top:4px;box-shadow:2px 2px 0 var(--ink)}
+.lcard .top{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:var(--bw) solid var(--ink);font-family:var(--font-pixel);font-size:10px;color:#fff;text-transform:uppercase}
+.lcard .body{padding:14px}
+.lcard h3{margin-bottom:12px;font-size:13px}
+.lcard .row{display:flex;justify-content:space-between;gap:10px;margin-bottom:6px}
+.lcard .go{margin-top:14px;display:block}
+.hub-hero{margin-bottom:24px}
+.hub-hero h1{margin-bottom:10px}
+.hub-hero p{margin:0;max-width:60ch}
+
+.note{margin-top:30px;font-size:16px}
+.foot{margin-top:40px;text-align:center;font-family:var(--font-pixel);font-size:9px;color:var(--page-ink);text-shadow:2px 2px 0 #00000055}
+
+@media (max-width:900px){
+  .cols,.two{grid-template-columns:1fr}
+  .board-grid{grid-template-columns:1fr;justify-items:center;text-align:center}
+  .side.right{flex-direction:row;text-align:left}
+  h1{font-size:16px}
+  .score{font-size:28px;min-width:2.4em}
+  .mid{gap:6px}
+  .clock{font-size:8px}.clock .big{font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){.live{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Mockup-only theme switcher -->
+  <div class="themebar" role="group" aria-label="Preview theme">
+    <span class="lbl">PREVIEW:</span>
+    <button class="chip" data-theme-btn="hub" aria-pressed="true"><span data-sp="star"></span>Hub</button>
+    <button class="chip" data-theme-btn="hockey" aria-pressed="false"><span data-sp="puck"></span>Hockey</button>
+    <button class="chip" data-theme-btn="baseball" aria-pressed="false"><span data-sp="baseball"></span>Baseball</button>
+    <button class="chip" data-theme-btn="football" aria-pressed="false"><span data-sp="football"></span>Football</button>
+    <button class="chip" data-theme-btn="basketball" aria-pressed="false"><span data-sp="basketball"></span>Basketball</button>
+  </div>
+
+  <!-- Nav -->
+  <nav class="panel nav" aria-label="Main">
+    <a class="brand" href="#" data-theme-go="hub"><span data-sp="bolt"></span><span>FANTASY<b>MOTION</b></span></a>
+    <a class="link" href="#" data-theme-go="hub" id="nav-leagues">My Leagues</a>
+    <a class="link" href="#" data-nop>Create League</a>
+    <a class="link" href="#" data-nop>Commissioner</a>
+    <span class="spacer"></span>
+    <button class="btn small ghost" id="sound-btn" aria-pressed="true" title="Toggle sound effects">SOUND: ON</button>
+    <span class="tag blue">JOHN A.</span>
+  </nav>
+
+  <!-- ===================== HUB (dashboard) ===================== -->
+  <section id="view-hub">
+    <div class="panel hub-hero">
+      <div class="kicker" style="font-family:var(--font-pixel);font-size:9px;color:var(--accent);margin-bottom:10px">PLAYER 1 READY</div>
+      <h1>MY LEAGUES</h1>
+      <p style="margin-top:12px">Every league you commission or play in, across all sports. Each sport gets its own field, rink or court.</p>
+    </div>
+    <div class="cards" id="cards"></div>
+    <p class="note" style="color:var(--page-ink)">Tip: click a card to jump into that sport's look. Every button and tab clicks. Big actions blow the whistle.</p>
+  </section>
+
+  <!-- ===================== LEAGUE HOME ===================== -->
+  <section id="view-league" hidden>
+    <div class="panel banner">
+      <span id="b-sprite"></span>
+      <div>
+        <div class="kicker" id="b-kicker"></div>
+        <h1 id="b-title"></h1>
+      </div>
+      <div class="meta" id="b-meta"></div>
+    </div>
+
+    <div class="board" aria-label="Scoreboard">
+      <div class="board-grid">
+        <div class="side"><span id="s-badge-a"></span><div><div class="team-name" id="s-name-a"></div><div class="team-rec" id="s-rec-a"></div></div></div>
+        <div class="mid">
+          <div class="score" id="s-score-a"></div>
+          <div class="clock"><span class="live">&#9679; LIVE</span><span class="big" id="s-clock"></span><span id="s-week"></span></div>
+          <div class="score" id="s-score-b"></div>
+        </div>
+        <div class="side right"><span id="s-badge-b"></span><div><div class="team-name" id="s-name-b"></div><div class="team-rec" id="s-rec-b"></div></div></div>
+      </div>
+      <div class="winprob"><i id="wp-a"></i><i id="wp-b"></i></div>
+      <div class="winprob-lbl"><span>WIN PROBABILITY</span><span id="wp-lbl"></span></div>
+    </div>
+
+    <div class="cols">
+      <div>
+        <div class="tabs" role="tablist" id="tabs">
+          <button class="tab" role="tab" data-tab="matchup" aria-selected="true">Matchup</button>
+          <button class="tab" role="tab" data-tab="roster" aria-selected="false">Roster</button>
+          <button class="tab" role="tab" data-tab="standings" aria-selected="false">Standings</button>
+          <button class="tab" role="tab" data-tab="draft" aria-selected="false">Draft</button>
+          <button class="tab" role="tab" data-tab="fa" aria-selected="false">Free Agents</button>
+        </div>
+        <div class="panel" style="position:relative">
+          <div class="tabpanel on" id="tp-matchup">
+            <div class="two">
+              <div><div class="panel-title"><span id="m-title-a"></span><span id="m-sum-a"></span></div><div class="tbl-wrap"><table id="m-a"></table></div></div>
+              <div><div class="panel-title"><span id="m-title-b"></span><span id="m-sum-b"></span></div><div class="tbl-wrap"><table id="m-b"></table></div></div>
+            </div>
+            <div class="btn-row" style="margin-top:26px">
+              <button class="btn" data-snd="whistle">Lock Lineup</button>
+              <button class="btn alt">Auto-Fill</button>
+              <button class="btn ghost">Reset</button>
+            </div>
+          </div>
+          <div class="tabpanel" id="tp-roster">
+            <div class="panel-title"><span>My Roster</span><span id="r-count"></span></div>
+            <div class="tbl-wrap"><table id="roster-tbl"></table></div>
+          </div>
+          <div class="tabpanel" id="tp-standings">
+            <div class="panel-title"><span>League Standings</span><span id="st-sub"></span></div>
+            <div class="tbl-wrap"><table id="stand-tbl"></table></div>
+          </div>
+          <div class="tabpanel" id="tp-draft">
+            <div class="panel-title"><span>Draft Room</span><span class="tag red live">ON THE CLOCK</span></div>
+            <div class="draftclock">
+              <h3 style="margin-bottom:14px" id="d-round"></h3>
+              <div class="digits" id="d-digits">0:30</div>
+              <p>You are up. Pick a player before time runs out.</p>
+              <div class="btn-row" style="justify-content:center">
+                <button class="btn" data-snd="whistle">Draft Player</button>
+                <button class="btn ghost">Queue</button>
+              </div>
+            </div>
+          </div>
+          <div class="tabpanel" id="tp-fa">
+            <div class="panel-title"><span>Free Agents</span><span class="tag">FAAB $100</span></div>
+            <div class="tbl-wrap"><table id="fa-tbl"></table></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="stack">
+        <div class="panel">
+          <div class="panel-title"><span><span data-sp="whistle"></span>Play-by-play</span><span class="tag live">LIVE</span></div>
+          <ul class="feed" id="feed"></ul>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><span>Button kit</span></div>
+          <div class="btn-row">
+            <button class="btn small">Primary</button>
+            <button class="btn small alt">Secondary</button>
+            <button class="btn small ghost">Ghost</button>
+          </div>
+          <div class="btn-row" style="margin-top:20px">
+            <span class="tag">TAG</span><span class="tag acc">ACCENT</span><span class="tag blue">BLUE</span>
+            <span class="tag green">ACTIVE</span><span class="tag red">INJ</span>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="foot">DESIGN MOCKUP &middot; FAKE DATA &middot; <span id="foot-theme"></span></div>
+</div>
+
+<script>
+/* ============ Pixel sprites (drawn from text, so no image files) ============ */
+const PAL = {K:'#14102a', W:'#ffffff', R:'#e0202e', B:'#8b4513', O:'#ff7a1a', D:'#2b2b3b', L:'#7a7a90', Y:'#ffd23f', P:'#ff2e93', C:'#00e5ff', G:'#2fb457'};
+const SPR = {
+  puck:["..KKKKKK..",".KLLLLLLK.","KDDDDDDDDK",".KKKKKKKK."],
+  baseball:["..KKKK..",".KWWWWK.","KWRWWRWK","KWRWWRWK","KWRWWRWK","KWRWWRWK",".KWWWWK.","..KKKK.."],
+  football:["..KKKKKK..",".KBBBBBBK.","KBBBWWBBBK","KBBBBBBBBK",".KBBBBBBK.","..KKKKKK.."],
+  basketball:["..KKKK..",".KOOKOK.","KOOOKOOK","KKKKKKKK","KOOOKOOK","KOOOKOOK",".KOOKOK.","..KKKK.."],
+  star:["...YY...","...YY...","YYYYYYYY",".YYYYYY.","..YYYY..",".YYYYYY.",".YY..YY.","Y......Y"],
+  bolt:["....YY..","...YY...","..YY....",".YYYYYY.","....YY..","...YY...","..YY....",".Y......"],
+  whistle:["..KKKKKK.","KKLLLLLLK","KLLKKLLLK","KLLKKLLLK","KKLLLLLK.",".KKKKKK.."],
+  trophy:["YYYYYYYY","Y.YYYY.Y","Y.YYYY.Y",".YYYYYY.","..YYYY..","...YY...","..YYYY..","..YYYY.."]
+};
+function sprite(name, px=4){
+  const rows = SPR[name], w = rows[0].length, h = rows.length; let r = '';
+  rows.forEach((row,y)=>[...row].forEach((ch,x)=>{ if (PAL[ch]) r += `<rect x="${x}" y="${y}" width="1" height="1" fill="${PAL[ch]}"/>`; }));
+  return `<svg class="sprite" width="${w*px}" height="${h*px}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges" aria-hidden="true">${r}</svg>`;
+}
+/* Team badge: a seeded, mirrored 7x7 pixel crest, so every team gets a unique logo for free. */
+function rng(seed){ let s = 0; for (const c of seed) s = (s*31 + c.charCodeAt(0)) >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
+function badge(seed, px=5){
+  const r = rng(seed), hues = [350,25,48,140,190,220,280,320], h1 = hues[Math.floor(r()*hues.length)], h2 = hues[Math.floor(r()*hues.length)];
+  const c1 = `hsl(${h1} 85% 52%)`, c2 = `hsl(${h2} 85% ${h1===h2?85:68}%)`; let cells = '';
+  for (let y=0;y<7;y++) for (let x=0;x<4;x++){
+    const v = r(); if (v < .38) continue; const col = v < .72 ? c1 : c2;
+    cells += `<rect x="${x}" y="${y}" width="1" height="1" fill="${col}"/><rect x="${6-x}" y="${y}" width="1" height="1" fill="${col}"/>`;
+  }
+  return `<svg class="sprite" width="${(7+2)*px}" height="${(7+2)*px}" viewBox="-1 -1 9 9" shape-rendering="crispEdges" aria-hidden="true"><rect x="-1" y="-1" width="9" height="9" fill="#14102a"/><rect x="0" y="0" width="7" height="7" fill="#fff" fill-opacity=".92"/>${cells}</svg>`;
+}
+
+/* ============ Sound: tiny Web Audio synth, no audio files ============ */
+let audio = null, soundOn = true;
+try { soundOn = localStorage.getItem('fm-sound') !== 'off'; } catch(e) {}
+const ac = () => audio || (audio = new (window.AudioContext || window.webkitAudioContext)());
+function click(){
+  if (!soundOn) return; const c = ac(); const t = c.currentTime;
+  // 1) a dry, sharp "tick": 12ms of high-passed noise
+  const n = Math.floor(c.sampleRate * 0.012), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/n, 3);
+  const src = c.createBufferSource(); src.buffer = buf;
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2400;
+  const g1 = c.createGain(); g1.gain.value = 0.5; src.connect(hp).connect(g1).connect(c.destination); src.start(t);
+  // 2) a short square "blip" that drops in pitch, so it feels like a physical key
+  const o = c.createOscillator(), g2 = c.createGain(); o.type = 'square';
+  o.frequency.setValueAtTime(1900, t); o.frequency.exponentialRampToValueAtTime(700, t + 0.03);
+  g2.gain.setValueAtTime(0.07, t); g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+  o.connect(g2).connect(c.destination); o.start(t); o.stop(t + 0.05);
+}
+function blast(c, t, dur){
+  // pea-whistle: ~2.9kHz tone, wobbled by a fast LFO (the "pea" trill), plus a little breath noise
+  const o = c.createOscillator(), o2 = c.createOscillator(), lfo = c.createOscillator(), lfoG = c.createGain(), g = c.createGain();
+  o.type = 'sine'; o2.type = 'sine'; o.frequency.value = 2850; o2.frequency.value = 3010;
+  lfo.frequency.value = 32; lfoG.gain.value = 140; lfo.connect(lfoG); lfoG.connect(o.frequency); lfoG.connect(o2.frequency);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.015);
+  g.gain.setValueAtTime(0.16, t + dur - 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); o2.connect(g); g.connect(c.destination);
+  const n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<n;i++) d[i] = (Math.random()*2-1);
+  const ns = c.createBufferSource(); ns.buffer = buf;
+  const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 3;
+  const ng = c.createGain(); ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.05, t + 0.02); ng.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  ns.connect(bp).connect(ng).connect(c.destination);
+  [o,o2,lfo,ns].forEach(x => x.start(t)); [o,o2,lfo].forEach(x => x.stop(t + dur + 0.02));
+}
+function whistle(){ if (!soundOn) return; const c = ac(), t = c.currentTime; blast(c, t, 0.16); blast(c, t + 0.24, 0.5); }
+
+document.addEventListener('pointerdown', e => {
+  const el = e.target.closest('button, .tab, tbody tr, a.link, .brand, [data-snd]'); if (!el) return;
+  (el.dataset.snd === 'whistle') ? whistle() : click();
+  if (el.matches('.btn')) { el.classList.add('pressed'); setTimeout(()=>el.classList.remove('pressed'), 90); }
+});
+document.addEventListener('click', e => { if (e.target.closest('a[href="#"]')) e.preventDefault(); });
+const soundBtn = document.getElementById('sound-btn');
+function paintSound(){ soundBtn.textContent = 'SOUND: ' + (soundOn ? 'ON' : 'OFF'); soundBtn.setAttribute('aria-pressed', soundOn); }
+soundBtn.addEventListener('click', () => { soundOn = !soundOn; try { localStorage.setItem('fm-sound', soundOn ? 'on' : 'off'); } catch(e) {} paintSound(); if (soundOn) click(); });
+paintSound();
+
+/* ============ Fake data per sport ============ */
+const SPORTS = {
+  hockey:{ label:'Hockey', sprite:'puck', league:'Frozen Pond Invitational', kicker:'NHL FANTASY &middot; H2H POINTS', week:'WEEK 7',
+    clock:'PERIOD 2 &middot; 08:41', a:['Zamboni Boys','5-1'], b:['Blue Line Bandits','4-2'], score:[84.5, 71.0],
+    slots:['C','C','W','W','W','D','D','G'],
+    names:['A. Kovalenko','M. Sundqvist','J. Brannigan','T. Okafor','L. Virtanen','R. Dubois','S. Halvorsen','P. Ivanov','D. Mackenzie','C. Petrov','B. Lindgren','K. Tanaka'],
+    teams:['BOS','TOR','COL','EDM','MIN','DAL','NYR','VGK'], feed:[
+      ['2:14','GOAL! Kovalenko (C) snaps one top shelf. +6.0'],['5:02','Assist, Dubois. +3.0'],['7:48','Penalty: Mackenzie, 2 min for tripping.'],['9:30','Save! Ivanov stops 11 of 12. +4.4'],['12:05','Sundqvist blocks a shot. +1.0']],
+    stand:['Zamboni Boys','Blue Line Bandits','Slapshot Society','Icebreakers','Power Play Posse','Hat Trick Heroes','Crease Crashers','Penalty Box Pals'] },
+  baseball:{ label:'Baseball', sprite:'baseball', league:'Sandlot Showdown', kicker:'MLB FANTASY &middot; CATEGORY POINTS', week:'WEEK 12',
+    clock:'TOP 6TH &middot; 2 OUT', a:['Dirt Dogs','7-5'], b:['Bleacher Bums','8-4'], score:[112.0, 118.5],
+    slots:['C','1B','2B','SS','3B','OF','OF','OF','SP','RP'],
+    names:['R. Delgado','T. Whitfield','J. Okonkwo','M. Castellano','B. Yamamoto','D. Fitzgerald','C. Moreau','L. Santiago','A. Brewer','H. Nakamura','E. Rourke','V. Salazar'],
+    teams:['NYY','LAD','HOU','ATL','SEA','CHC','BAL','SD'], feed:[
+      ['T6','Delgado doubles down the line. +3.0'],['T6','Whitfield steals third. +2.0'],['B5','Brewer strikes out the side. +6.0'],['B5','Fitzgerald robs a homer! +2.5'],['T4','Moreau drives in two. +5.0']],
+    stand:['Bleacher Bums','Dirt Dogs','Foul Pole Fanatics','Pine Tar Pros','Bullpen Bandits','Seventh Inning Stretch','Rally Caps','Walk-Off Wonders'] },
+  football:{ label:'Football', sprite:'football', league:'Gridiron Grudge', kicker:'NFL FANTASY &middot; PPR', week:'WEEK 5',
+    clock:'Q3 &middot; 04:12', a:['Pigskin Pirates','4-0'], b:['Gridiron Ghosts','2-2'], score:[96.4, 88.8],
+    slots:['QB','RB','RB','WR','WR','TE','FLEX','K','DEF'],
+    names:['T. Hargrove','M. Delacroix','J. Whitaker','K. Osei','D. Brooks','R. Lindqvist','C. Mbeki','P. Ramirez','B. Thornton','S. Kapoor','L. Jennings','A. Volkov'],
+    teams:['KC','BUF','SF','DAL','PHI','CIN','MIA','BAL'], feed:[
+      ['Q3 4:12','Hargrove 28-yd TD pass to Osei. +10.0'],['Q3 6:40','Delacroix breaks a 31-yd run. +3.1'],['Q2 0:12','Ramirez hits a 52-yd field goal. +5.0'],['Q2 3:50','Defense sacks, forces fumble. +4.0'],['Q1 9:02','Whitaker 4-yd TD run. +6.4']],
+    stand:['Pigskin Pirates','Gridiron Ghosts','Blitz Brigade','End Zone Elite','Hail Mary Heroes','Fourth & Long','Pick Six Posse','Red Zone Rebels'] },
+  basketball:{ label:'Basketball', sprite:'basketball', league:'Hardwood Heroes League', kicker:'NBA FANTASY &middot; H2H CATEGORIES', week:'WEEK 3',
+    clock:'Q4 &middot; 02:30', a:['Hardwood Heroes','2-1'], b:['Fast Break Fiends','1-2'], score:[104.0, 99.5],
+    slots:['PG','SG','SF','PF','C','G','F','UTIL'],
+    names:['D. Washington','M. Alvarez','T. Jefferson','K. Nowak','J. Abara','R. Castellanos','L. Pierce','B. Odom','C. Tanaka','S. Whitmore','P. Lindgren','A. Mensah'],
+    teams:['LAL','BOS','DEN','MIL','PHX','GSW','NYK','MIA'], feed:[
+      ['2:30','Washington drains a deep three. +3.0'],['3:12','Abara swats it away. +2.0'],['4:45','Alvarez dunk, and-one! +3.5'],['6:01','Nowak grabs his 12th board. +1.2'],['7:20','Jefferson with the steal and layup. +3.0']],
+    stand:['Hardwood Heroes','Fast Break Fiends','Full Court Press','Alley-Oop Army','Buzzer Beaters','Triple Double Trouble','Pick & Roll Posse','Baseline Bandits'] }
+};
+const HUB_LEAGUES = [
+  {sport:'hockey', name:'Frozen Pond Invitational', state:'Draft complete', size:'12 teams', team:'Zamboni Boys', tag:'In season', hot:true},
+  {sport:'baseball', name:'Sandlot Showdown', state:'Week 12', size:'10 teams', team:'Dirt Dogs', tag:'In season'},
+  {sport:'football', name:'Gridiron Grudge', state:'Draft Sat 7:00 PM', size:'12 teams', team:'Pigskin Pirates', tag:'Draft soon', hot:true},
+  {sport:'basketball', name:'Hardwood Heroes League', state:'Auction in progress', size:'8 teams', team:'Hardwood Heroes', tag:'Live draft'}
+];
+const SPORT_COLORS = {hockey:'#1d4fd8', baseball:'#2f7d3a', football:'#14803a', basketball:'#ff6a13'};
+
+/* ============ Rendering ============ */
+const $ = id => document.getElementById(id);
+const pr = rng('pts');
+const fmt = n => n.toFixed(1);
+
+function lineupRows(S, off){
+  const r = rng(S.label + off); let sum = 0;
+  const rows = S.slots.map((slot,i) => { const p = +(r()*18 + 2).toFixed(1); sum += p;
+    const nm = S.names[(i + off*5) % S.names.length]; const tm = S.teams[(i*3 + off) % S.teams.length];
+    return `<tr><td><span class="slot">${slot}</span></td><td><div class="pl">${badge(nm,3)}<span>${nm} <small style="opacity:.6">${tm}</small></span></div></td><td class="num pts">${fmt(p)}</td></tr>`; });
+  return {html:`<thead><tr><th>Slot</th><th>Player</th><th class="num">Pts</th></tr></thead><tbody>${rows.join('')}</tbody>`, sum};
+}
+function rosterTable(S, count=14){
+  const r = rng(S.label + 'ros');
+  const rows = Array.from({length:count}, (_,i) => {
+    const nm = S.names[i % S.names.length] + (i >= S.names.length ? ' Jr.' : ''); const pos = S.slots[i % S.slots.length]; const tm = S.teams[i % S.teams.length];
+    const age = 20 + Math.floor(r()*17); const inj = r() < .15; const tr = r() < .5;
+    return `<tr><td><span class="slot">${pos}</span></td><td><div class="pl">${badge(nm+i,3)}<span>${nm}</span></div></td><td class="num">${age}</td><td>${tm}</td>
+      <td>${inj ? '<span class="tag red">INJ</span>' : '<span class="tag green">ACT</span>'}</td>
+      <td class="num pts ${tr?'up':'down'}">${tr?'&#9650;':'&#9660;'} ${fmt(r()*14+4)}</td></tr>`; });
+  return `<thead><tr><th>Pos</th><th>Player</th><th class="num">Age</th><th>Team</th><th>Status</th><th class="num">Proj</th></tr></thead><tbody>${rows.join('')}</tbody>`;
+}
+function standTable(S){
+  const r = rng(S.label + 'st'); let w = S.stand.length;
+  const rows = S.stand.map((n,i) => { const W = Math.max(0, 7 - i + Math.floor(r()*2)), L = 8 - W, pf = 900 + Math.floor(r()*300) - i*20, pa = 850 + Math.floor(r()*300);
+    const streak = r() < .5 ? 'W' + (1+Math.floor(r()*4)) : 'L' + (1+Math.floor(r()*3));
+    return `<tr><td class="rank">${i+1}</td><td><div class="pl">${badge(n,3)}<span>${n}</span></div></td><td class="num">${W}-${L}</td><td class="num">${pf}</td><td class="num">${pa}</td><td class="${streak[0]==='W'?'up':'down'} num">${streak}</td></tr>`; });
+  return `<thead><tr><th>#</th><th>Team</th><th class="num">W-L</th><th class="num">PF</th><th class="num">PA</th><th class="num">Strk</th></tr></thead><tbody>${rows.join('')}</tbody>`;
+}
+function faTable(S){
+  const r = rng(S.label + 'fa');
+  const rows = [8,9,10,11,0,1].map(i => { const nm = S.names[i % S.names.length]; const pos = S.slots[i % S.slots.length];
+    return `<tr><td><span class="slot">${pos}</span></td><td><div class="pl">${badge(nm+'fa',3)}<span>${nm}</span></div></td><td class="num">${20+Math.floor(r()*16)}</td><td class="num pts">${fmt(r()*10+3)}</td><td><button class="btn small">Add</button></td></tr>`; });
+  return `<thead><tr><th>Pos</th><th>Player</th><th class="num">Age</th><th class="num">Proj</th><th></th></tr></thead><tbody>${rows.join('')}</tbody>`;
+}
+
+function renderHub(){
+  $('cards').innerHTML = HUB_LEAGUES.map(l => { const S = SPORTS[l.sport];
+    return `<button class="panel lcard" data-theme-go="${l.sport}" data-snd="whistle">
+      <div class="top" style="background:${SPORT_COLORS[l.sport]}"><span>${sprite(S.sprite,3)} ${S.label}</span><span class="tag ${l.hot?'red':''}">${l.tag}</span></div>
+      <div class="body"><h3>${l.name}</h3>
+        <div class="row"><span>Your team</span><b>${l.team}</b></div>
+        <div class="row"><span>Size</span><b>${l.size}</b></div>
+        <div class="row"><span>Status</span><b>${l.state}</b></div>
+        <span class="btn small go" style="text-align:center">Enter</span></div></button>`; }).join('');
+}
+
+function renderLeague(key){
+  const S = SPORTS[key];
+  $('b-sprite').innerHTML = sprite(S.sprite, 6);
+  $('b-kicker').innerHTML = S.kicker; $('b-title').textContent = S.league.toUpperCase();
+  $('b-meta').innerHTML = `<span class="tag blue">${S.week}</span><span class="tag green">IN SEASON</span><span class="tag">12 TEAMS</span>`;
+  $('s-badge-a').innerHTML = badge(S.a[0], 7); $('s-badge-b').innerHTML = badge(S.b[0], 7);
+  $('s-name-a').textContent = S.a[0].toUpperCase(); $('s-name-b').textContent = S.b[0].toUpperCase();
+  $('s-rec-a').textContent = S.a[1]; $('s-rec-b').textContent = S.b[1];
+  $('s-score-a').textContent = fmt(S.score[0]); $('s-score-b').textContent = fmt(S.score[1]);
+  $('s-clock').innerHTML = S.clock; $('s-week').textContent = S.week;
+  const pa = Math.round(S.score[0] / (S.score[0] + S.score[1]) * 100);
+  $('wp-a').style.width = pa + '%'; $('wp-b').style.width = (100 - pa) + '%'; $('wp-lbl').textContent = `${pa}% - ${100-pa}%`;
+  const A = lineupRows(S, 0), B = lineupRows(S, 1);
+  $('m-a').innerHTML = A.html; $('m-b').innerHTML = B.html;
+  $('m-title-a').textContent = S.a[0]; $('m-title-b').textContent = S.b[0];
+  $('m-sum-a').textContent = fmt(A.sum) + ' PTS'; $('m-sum-b').textContent = fmt(B.sum) + ' PTS';
+  $('roster-tbl').innerHTML = rosterTable(S); $('r-count').textContent = '14 PLAYERS';
+  $('stand-tbl').innerHTML = standTable(S); $('st-sub').textContent = S.week;
+  $('fa-tbl').innerHTML = faTable(S);
+  $('d-round').textContent = 'ROUND 3 - PICK 5';
+  $('feed').innerHTML = S.feed.map(f => `<li><span class="t">${f[0]}</span><span>${f[1]}</span></li>`).join('');
+  selectTab('matchup');
+}
+
+function selectTab(name){
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === name));
+  document.querySelectorAll('.tabpanel').forEach(p => p.classList.toggle('on', p.id === 'tp-' + name));
+}
+
+function setTheme(key){
+  document.documentElement.dataset.theme = key;
+  const isHub = key === 'hub';
+  $('view-hub').hidden = !isHub; $('view-league').hidden = isHub;
+  document.querySelectorAll('[data-theme-btn]').forEach(b => b.setAttribute('aria-pressed', b.dataset.themeBtn === key));
+  $('foot-theme').textContent = 'THEME: ' + key.toUpperCase();
+  if (!isHub) renderLeague(key);
+  window.scrollTo(0, 0);
+}
+
+document.querySelectorAll('[data-sp]').forEach(el => el.innerHTML = sprite(el.dataset.sp, 3));
+document.querySelectorAll('.brand [data-sp]').forEach(el => el.innerHTML = sprite(el.dataset.sp, 4));
+renderHub();
+document.addEventListener('click', e => {
+  const go = e.target.closest('[data-theme-go]'); if (go) return setTheme(go.dataset.themeGo);
+  const tb = e.target.closest('[data-theme-btn]'); if (tb) return setTheme(tb.dataset.themeBtn);
+  const tab = e.target.closest('.tab'); if (tab) return selectTab(tab.dataset.tab);
+  const row = e.target.closest('tbody tr'); if (row) { row.classList.toggle('sel'); }
+});
+
+/* Draft clock demo: counts down from 0:30 */
+let dsec = 30; setInterval(() => { dsec = dsec <= 0 ? 30 : dsec - 1; const el = $('d-digits'); if (el) el.textContent = '0:' + String(dsec).padStart(2,'0'); }, 1000);
+
+const q = new URLSearchParams(location.search).get('theme'); if (q && (q === 'hub' || SPORTS[q])) setTheme(q);
+</script>
+</body>
+</html>
