@@ -33,6 +33,13 @@ const ScoringModal = (() => {
             <p style="margin:4px 0 0;color:var(--color-text)">Each week, you play a 3-game series against your matchup opponent. The team with the most total goals scored in each game wins!</p>
           </div>
 
+          <div class="card elev-sm" style="padding:10px 12px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-sm)">
+            <div style="font-weight:700;margin-bottom:4px;color:var(--color-text)">🪟 Scoring Windows</div>
+            <p style="margin:0;color:color-mix(in srgb, var(--color-text) 85%, transparent)">
+              Your week is a 3-game series, and each game is one scoring window. Game 1 runs Sunday to Tuesday, Game 2 Wednesday to Thursday, Game 3 Friday to Saturday. Every real game your players play inside a window feeds that one simulated game. There is no combined total across the week: win each game by scoring more goals in it, and win the series by taking 2 of 3. If a player has two real games in a window, his best matchup counts automatically, and you can move the other game to an open window from your roster page. If your league's draft finishes in the middle of a series, the early windows are skipped and play begins with the next window.
+            </p>
+          </div>
+
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
             <div class="card elev-sm" style="padding:10px 12px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-sm)">
               <div style="font-weight:700;margin-bottom:4px;color:var(--color-accent)">🥅 Scoring Chances</div>
@@ -53,7 +60,7 @@ const ScoringModal = (() => {
           <div class="card elev-sm" style="padding:10px 12px;background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-sm)">
             <div style="font-weight:700;margin-bottom:4px;color:var(--color-text)">⏱️ Live Cadence &amp; Transparency</div>
             <p style="margin:0 0 6px;color:color-mix(in srgb, var(--color-text) 85%, transparent)">
-              Games simulate live across 3 periods of 20:00 as real NHL games play out.
+              Games simulate live alongside the real NHL games in the window, updating every few seconds as plays happen. You never wait for the end of the real game, and you can leave and come back while it runs. A game is final when all 3 periods are complete, and the box score opens then. Live scores may show as ? until you watch the highlights or skip ahead, so the ending is never spoiled.
             </p>
             <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:color-mix(in srgb, var(--color-text) 70%, transparent)">
               <span>✓ <strong>Period Clock:</strong> Displays exact time elapsed and remaining</span>
