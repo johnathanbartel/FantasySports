@@ -24,6 +24,14 @@
   .row{display:flex;align-items:center;gap:var(--space-3);padding:7px 0;border-top:1px solid var(--color-divider);font-size:14px}
   .row:first-child{border-top:0}
   .pts{font-variant-numeric:tabular-nums;text-align:right;min-width:52px}
+  /* Transactions-tab player lists sit in half-width cards: the name column shrinks and truncates instead of running into the stats. */
+  .row.tight{gap:var(--space-2)}
+  .row.tight > .tag{width:40px;min-width:40px;flex:none}
+  .row.tight .pts{min-width:36px;flex:none}
+  .row.tight .btn{width:64px;min-width:64px;padding-left:0;padding-right:0;flex:none}
+  .row.tight .spc{width:64px;flex:none}
+  .pname{flex:1;min-width:0;overflow:hidden}
+  .pname > strong,.pname > .muted{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .muted{color:color-mix(in srgb, var(--color-text) 60%, transparent)}
   th.sort{cursor:pointer;user-select:none}
   th.sort:hover{color:var(--color-accent)}
@@ -116,7 +124,7 @@ const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 // Transactions-tab list header and age cell. Age comes from the NHL roster sync, so only hockey shows it.
 const ageCell = (v) => isHockey() ? `<span class="pts muted" title="Age">${v ?? '-'}</span>` : '';
-const txHeader = (price, action) => `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts" title="Age in years">Age</span>' : ''}<span class="pts" title="This season's fantasy points so far">This yr</span><span class="pts" title="${LAST} fantasy points, ESPN standard">Last yr</span><span class="pts" title="Points per game">PPG</span>${price ? '<span class="pts" title="Asking price (provisional)">Price</span>' : ''}<span style="width:64px"></span></div>`;
+const txHeader = (price, action) => `<div class="row tight muted" style="font-size:12px"><span style="width:40px;flex:none"></span><span class="pname">Player</span>${isHockey() ? '<span class="pts" title="Age in years">Age</span>' : ''}<span class="pts" title="This season's fantasy points so far">This yr</span><span class="pts" title="${LAST} fantasy points, ESPN standard">Last yr</span><span class="pts" title="Points per game">PPG</span>${price ? '<span class="pts" title="Asking price (provisional)">Price</span>' : ''}<span class="spc"></span></div>`;
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
@@ -233,8 +241,9 @@ function statCard(label, value, sub, href, goTab) {
 // ---- HOME ----------------------------------------------------------------------------------
 async function renderHome() {
   await refreshOverview();
-  const [log, standings] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`),
-    isHockey() ? api(`/leagues/${LEAGUE_ID}/series-standings`).then(r => r.standings) : api(`/leagues/${LEAGUE_ID}/standings`)]);
+  const [log, standings, wv] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`),
+    isHockey() ? api(`/leagues/${LEAGUE_ID}/series-standings`).then(r => r.standings) : api(`/leagues/${LEAGUE_ID}/standings`),
+    api(`/leagues/${LEAGUE_ID}/waivers`).catch(() => null)]);
   const played = standings.some(s => s.wins + s.losses + s.ties > 0);
   const mine = myTeam();
   const openSpots = ov.teams.reduce((n, t) => n + t.open_spots, 0);
@@ -272,6 +281,8 @@ async function renderHome() {
         ? statCard('Draft', isDraftSoonOrLive() ? `<span style="color:var(--color-accent)">${ov.draft_state === 'in_progress' ? 'In progress' : 'Starting soon'}</span>` : ({complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state), isDraftSoonOrLive() ? 'Open draft board →' : (ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`), draftBoardUrl())
         : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine(), draftBoardUrl())}
       ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'), null, 'transactions')}
+      ${wv ? statCard('Waivers', mine && wv.order.some(o => o.team_id === mine.id) ? `#${wv.order.findIndex(o => o.team_id === mine.id) + 1} of ${wv.order.length}` : 'Order',
+        `${wv.players.length} player${wv.players.length === 1 ? '' : 's'} on waivers · ${wv.basis === 'goal_diff' ? 'worst goal differential first' : 'reverse draft order'}`, null, 'transactions') : ''}
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`, null, 'schedule') : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you', null, 'schedule')}
     </div>
     ${fillNeeded && ov.is_college && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
@@ -322,16 +333,19 @@ async function runAiFill() {
 }
 
 // ---- transaction rows (Home + Transactions) ---------------------------------------------------
+const utcLocal = (iso) => new Date(iso + 'Z').toLocaleString([], {weekday: 'short', hour: 'numeric', minute: '2-digit'});
+const hoursLeft = (iso) => { const m = Math.max(0, Math.round((new Date(iso + 'Z') - Date.now()) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 function txnText(x) {
   const t = teamsById[x.team_id]?.name || 'Team ' + x.team_id;
   const who = `<strong>${esc(x.display_name)}</strong> <span class="muted">${POS_LABEL[x.position] || x.position || ''} · ${esc(x.real_team || '')}</span>`;
   if (x.kind === 'recruited') return `<strong>${esc(t)}</strong> recruited ${who} <span class="muted">(week ${x.week})</span>`;
+  if (x.kind === 'added' && x.reason === 'waiver') return `<strong>${esc(t)}</strong> claimed ${who} <span class="muted">off waivers${ov.is_college ? ' for ' + money(x.price) : ''}</span>`;
   if (x.kind === 'added') return `<strong>${esc(t)}</strong> signed free agent ${who} <span class="muted">for ${money(x.price)}</span>`;
   return `<strong>${esc(t)}</strong> dropped ${who}`;
 }
 function txnBadge(x) {
   if (x.kind === 'recruited') return '<span class="pill">Recruiting</span>';
-  return `<span class="pill">${x.kind === 'added' ? 'Signed' : 'Dropped'}</span>`;
+  return `<span class="pill">${x.kind === 'added' ? (x.reason === 'waiver' ? 'Claimed' : 'Signed') : 'Dropped'}</span>`;
 }
 function txnRow(x) { return `<div class="row"><span style="flex:1;font-size:13px">${txnText(x)}</span>${txnBadge(x)}</div>`; }
 
@@ -351,12 +365,12 @@ function ensureActiveTeam() {
 
 // Releases a player to free agency from the Roster tab. Free agency is open once the draft is over.
 async function dropPlayer(team, assetId, name) {
-  if (!confirm(`Drop ${name}? He goes back to the free-agent pool${ov.is_college ? ' and you are not refunded what he cost' : ''}.`)) return;
+  if (!confirm(`Drop ${name}? He goes on waivers for 24 hours, then to the free-agent pool${ov.is_college ? '. You are not refunded what he cost' : ''}.`)) return;
   showError(''); showResult('');
   try {
     await FSC.post(`/teams/${team.id}/free-agency/drop`, {draftable_asset_id: assetId});
     await go('roster');
-    showResult(`Dropped ${name}. He is now a free agent.`);
+    showResult(`Dropped ${name}. He is on waivers for 24 hours.`);
   } catch (e) { showError(e.message); }
 }
 const canDrop = (t) => canManage(t) && ov.free_agency_open;
@@ -1194,11 +1208,12 @@ async function renderRoster() {
 async function renderTransactions() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
-  const [fa, log, sum, roster] = await Promise.all([
+  const [fa, log, sum, roster, wv] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/free-agents`), api(`/leagues/${LEAGUE_ID}/transactions`),
     api(`/teams/${t.id}/free-agency/summary`), api(`/teams/${t.id}/roster`),
+    api(`/leagues/${LEAGUE_ID}/waivers?team_id=${t.id}`),
   ]);
-  cache.tx = {fa, log, sum, roster, team: t};
+  cache.tx = {fa, log, sum, roster, wv, team: t};
   $('content').innerHTML = `
     <div class="note" style="margin-bottom:var(--space-4)">
       ${ov.is_college ? `Teams may recruit fewer players than the roster size. <strong>Open roster spots are filled through free agency</strong>, which opens when recruiting ends.
@@ -1214,6 +1229,7 @@ async function renderTransactions() {
         ${isCommissioner && fa.open && ov.is_college && ov.ai_teams_with_open_spots > 0 ? '<button class="btn btn-secondary" id="run-fill">Run AI free agency now</button>' : ''}
       </div>
     </div>
+    ${waiversBox(wv, t)}
     ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
@@ -1235,6 +1251,10 @@ async function renderTransactions() {
     <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="log-list"></div>`;
   if ($('team-pick')) $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('transactions'); };
   if ($('run-fill')) $('run-fill').onclick = runAiFill;
+  const wbox = $('waiver-box');
+  if (wbox) wbox.ontoggle = () => { view.waiversOpen = wbox.open; };
+  wbox?.querySelectorAll('[data-wclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.wclaim)));
+  wbox?.querySelectorAll('[data-wcancel]').forEach(b => b.onclick = () => waiverAct('cancel', Number(b.dataset.wcancel)));
   $('log-kind').value = view.log.kind; $('log-team').value = view.log.team;
   $('log-kind').onchange = () => { view.log.kind = $('log-kind').value; drawLog(); };
   $('log-team').onchange = () => { view.log.team = $('log-team').value; drawLog(); };
@@ -1259,27 +1279,34 @@ function drawFa() {
     `<button class="chip${f.pos === v ? ' on' : ''}" data-pos="${v}">${l}<span class="n">${n}</span></button>`).join('');
   chips.querySelectorAll('.chip').forEach(b => b.onclick = () => { f.pos = b.dataset.pos; drawFa(); });
   const can = canManage(team) && sum.open_spots > 0;
-  $('fa-list').innerHTML = (rows.length ? txHeader(ov.is_college) : '') + rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
-      <span style="flex:1;min-width:0"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+  const claimed = new Set(cache.tx.wv.players.filter(x => x.claimed).map(x => x.draftable_asset_id));
+  $('fa-list').innerHTML = (rows.length ? txHeader(ov.is_college) : '') + rows.slice(0, 50).map(p => `<div class="row tight">${posTag(p.position)}
+      <span class="pname" title="${esc(p.display_name)}"><strong>${esc(p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
       ${ageCell(p.age)}<span class="pts" title="This season's points so far (${p.this_season_games ?? 0} games)">${pts(p.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
-      <button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button></div>`).join('')
+      ${p.waiver_until
+        ? (claimed.has(p.draftable_asset_id)
+          ? `<button class="btn btn-secondary" data-wcancel="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'} title="On waivers for ${hoursLeft(p.waiver_until)} more. Click to cancel your claim">Claimed</button>`
+          : `<button class="btn btn-primary" data-wclaim="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'} title="On waivers for ${hoursLeft(p.waiver_until)} more: claim him, and he goes to the first team in the waiver order">Claim</button>`)
+        : `<button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button>`}</div>`).join('')
     + (rows.length > 50 ? `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing 50 of ${rows.length} - search or pick a position to narrow.</p>` : '')
     || '<p class="muted" style="margin:var(--space-2) 0">No free agents match.</p>';
   $('fa-list').querySelectorAll('[data-add]').forEach(b => b.onclick = () => faAct('add', Number(b.dataset.add)));
+  $('fa-list').querySelectorAll('[data-wclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.wclaim)));
+  $('fa-list').querySelectorAll('[data-wcancel]').forEach(b => b.onclick = () => waiverAct('cancel', Number(b.dataset.wcancel)));
 }
 
 function drawTxRoster() {
   const {roster, team} = cache.tx;
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
   const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
-  $('tx-roster').innerHTML = sorted.length ? txHeader(false) + sorted.map(r => `<div class="row">${posTag(r.position)}
-    <span style="flex:1;min-width:0"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
+  $('tx-roster').innerHTML = sorted.length ? txHeader(false) + sorted.map(r => `<div class="row tight">${posTag(r.position)}
+    <span class="pname" title="${esc(r.display_name)}"><strong>${esc(r.display_name)}</strong><span class="muted">${esc(r.real_team || '')}</span></span>
     ${ageCell(r.age)}<span class="pts" title="This season's points so far (${r.this_season_games ?? 0} games)">${pts(r.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
     <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
     : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
   $('tx-roster').querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
     const r = roster.find(x => x.draftable_asset_id === Number(b.dataset.drop));
-    if (confirm(`Drop ${r.display_name}? He goes back to the free-agent pool and you are not refunded what he cost.`)) faAct('drop', r.draftable_asset_id);
+    if (confirm(`Drop ${r.display_name}? He goes on waivers for 24 hours, then to the free-agent pool${ov.is_college ? '. You are not refunded what he cost' : ''}.`)) faAct('drop', r.draftable_asset_id);
   });
 }
 
@@ -1290,13 +1317,42 @@ function drawLog() {
   if (rows.length > 120) $('log-list').insertAdjacentHTML('beforeend', `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing the 120 most recent of ${rows.length}.</p>`);
 }
 
+function waiversBox(wv, team) {
+  const mineIdx = wv.order.findIndex(o => o.team_id === team.id);
+  const order = wv.order.map(o => `<div class="row tight" style="${o.team_id === team.id ? 'font-weight:700' : ''}">
+      <span class="pts" style="min-width:28px;text-align:left">${o.position}</span><span class="pname"><strong>${tn(o.team_id, o.team_name)}</strong></span>
+      ${o.moved_back ? '<span class="pill" title="Won a claim since the reset">Moved back</span>' : ''}
+      ${wv.basis === 'goal_diff' ? `<span class="pts" title="Goal differential">${o.goal_diff > 0 ? '+' : ''}${o.goal_diff}</span>` : ''}</div>`).join('');
+  const players = wv.players.length ? wv.players.map(p => `<div class="row tight">${posTag(p.position)}
+      <span class="pname" title="${esc(p.display_name)}"><strong>${esc(p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
+      <span class="muted" style="font-size:12px;white-space:nowrap" title="Clears ${utcLocal(p.until)}">${hoursLeft(p.until)} left</span>
+      ${p.claimed ? `<button class="btn btn-secondary" data-wcancel="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claimed</button>`
+        : `<button class="btn btn-primary" data-wclaim="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claim</button>`}</div>`).join('')
+    : '<p class="muted" style="margin:var(--space-2) 0">Nobody is on waivers. A dropped player is held for 24 hours.</p>';
+  return `<details id="waiver-box" class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)" ${view.waiversOpen ? 'open' : ''}>
+    <summary style="cursor:pointer;font-weight:700">Waivers <span class="muted" style="font-weight:400">${mineIdx >= 0 ? `· your team is #${mineIdx + 1} of ${wv.order.length}` : ''}${wv.players.length ? ` · ${wv.players.length} on waivers` : ''}</span></summary>
+    <p class="muted" style="font-size:13px;margin:var(--space-2) 0">${esc(wv.basis_note)} Next reset: <strong>${utcLocal(wv.next_reset_at)}</strong> (your time).</p>
+    <div class="grid2" style="gap:var(--space-4)"><div><h4 style="margin:0 0 var(--space-1)">Waiver order</h4>${order}</div>
+      <div><h4 style="margin:0 0 var(--space-1)">On waivers</h4>${players}</div></div></details>`;
+}
+
+async function waiverAct(kind, assetId) {
+  showError(''); showResult('');
+  try {
+    await FSC.post(`/teams/${cache.tx.team.id}/waivers/${kind}`, {draftable_asset_id: assetId});
+    view.waiversOpen = true;
+    await go('transactions');
+    showResult(kind === 'claim' ? 'Claim placed. It is filled when his 24 hours end, if no team ahead of you in the waiver order claims him.' : 'Claim cancelled.');
+  } catch (e) { showError(e.message); }
+}
+
 async function faAct(kind, assetId) {
   showError(''); showResult('');
   const t = cache.tx.team;
   try {
     const r = await FSC.post(`/teams/${t.id}/free-agency/${kind}`, {draftable_asset_id: assetId});
     await go('transactions');
-    showResult(kind === 'add' ? `Signed ${r.display_name}${ov.is_college ? ' for ' + money(r.price) : ''}.` : `Dropped ${r.display_name}.`);
+    showResult(kind === 'add' ? `Signed ${r.display_name}${ov.is_college ? ' for ' + money(r.price) : ''}.` : `Dropped ${r.display_name}. He is on waivers for 24 hours.`);
   } catch (e) { showError(e.message); }
 }
 
