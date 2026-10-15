@@ -34,7 +34,7 @@
   .sb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:var(--space-4);margin-bottom:var(--space-6)}
   .sb-card{padding:0;overflow:hidden;display:flex;flex-direction:column}
   .sb-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 14px;background:color-mix(in srgb, var(--color-text) 5%, transparent);border-bottom:1px solid var(--color-divider)}
-  .sb-status{font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+  .sb-status{font-weight:700;font-size:16px;letter-spacing:.04em;text-transform:uppercase}
   .sb-body{padding:6px 14px}
   .sb-team{display:flex;align-items:center;gap:12px;padding:10px 0}
   .sb-team + .sb-team{border-top:1px solid var(--color-divider)}
@@ -45,7 +45,7 @@
   .sb-score{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;min-width:36px;text-align:right;line-height:1}
   .sb-team.lead .sb-score,.sb-team.lead .sb-name{color:var(--color-text)}
   .sb-team.trail .sb-score,.sb-team.trail .sb-name{opacity:.6}
-  .sb-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--color-divider);margin-top:auto}
+  .sb-foot{display:flex;flex-direction:column;gap:6px;padding:8px 14px;border-top:1px solid var(--color-divider);margin-top:auto}
   @media (max-width: 480px){ .sb-grid{grid-template-columns:minmax(0,1fr)} }
   @media (max-width: 860px){ .grid2{grid-template-columns:minmax(0,1fr)} }
 </style>
@@ -329,8 +329,7 @@ function txnText(x) {
 }
 function txnBadge(x) {
   if (x.kind === 'recruited') return '<span class="pill">Recruiting</span>';
-  const why = {user: 'Owner', commissioner: 'Commissioner'}[x.reason] || '';
-  return `<span class="pill">${x.kind === 'added' ? 'Signed' : 'Dropped'}${why ? ' · ' + why : ''}</span>`;
+  return `<span class="pill">${x.kind === 'added' ? 'Signed' : 'Dropped'}</span>`;
 }
 function txnRow(x) { return `<div class="row"><span style="flex:1;font-size:13px">${txnText(x)}</span>${txnBadge(x)}</div>`; }
 
@@ -924,7 +923,6 @@ async function renderHockeyScoreboard() {
           <div class="sb-status" style="color:var(--color-primary)">${periodHeader}</div>
           <div style="display:flex;gap:4px;align-items:center">
             ${isLive ? '<span class="pill" style="background:#ef4444;color:white;font-weight:700;font-size:10px">● LIVE</span>' : isFinal ? '<span class="pill good" style="font-size:10px">FINAL</span>' : ''}
-            <span class="pill" style="background:${heatColor};color:white;font-weight:700;font-size:10px" title="The Game Score">Game Score ${gs}</span>
           </div>
         </div>
         <div class="sb-body">
@@ -945,18 +943,21 @@ async function renderHockeyScoreboard() {
                 <div class="sb-score">${goals}</div>
               </div>`;
           }).join('')}
-          ${(isLive || isFinal) ? `<div class="muted" style="font-size:11px;text-align:center;padding:2px 0 8px">${clockSubheader}</div>` : ''}
           ${statusNote ? `<div class="muted" style="font-size:11px;text-align:center;padding:0 0 8px;${isVeiled && isOwner ? 'color:var(--color-primary);font-weight:600' : ''}">${statusNote}</div>` : ''}
         </div>
 
         <div class="sb-foot">
-          ${dgId ? `
-            <a href="/static/nhl-game.html?daily_game_id=${dgId}" class="btn btn-primary" style="font-size:11px;padding:4px 10px">Highlights</a>
-            ${isVeiled ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
-            <a href="/static/nhl-game.html?daily_game_id=${dgId}#boxscore" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
-          ` : ''}
-          <a href="#" data-go="roster" data-team="${roadTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(roadTeam.name)} Lines</a>
-          <a href="#" data-go="roster" data-team="${homeTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(homeTeam.name)} Lines</a>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+            ${dgId ? `
+              <a href="/static/nhl-game.html?daily_game_id=${dgId}" class="btn btn-primary" style="font-size:11px;padding:4px 10px">Highlights</a>
+              ${isVeiled ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
+              <a href="/static/nhl-game.html?daily_game_id=${dgId}#boxscore" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
+            ` : ''}
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+            <a href="#" data-go="roster" data-team="${roadTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(roadTeam.name)} Lines</a>
+            <a href="#" data-go="roster" data-team="${homeTeam.id}" class="btn btn-ghost" style="font-size:11px;padding:4px 8px">${esc(homeTeam.name)} Lines</a>
+          </div>
         </div>
       </div>
     `;
@@ -996,7 +997,6 @@ async function renderHockeyScoreboard() {
         </div>
         <div style="display:flex;align-items:center;gap:var(--space-2)">
           <span class="muted" style="font-size:12px">7-Day Series · Strict Monotonic Scoreboards</span>
-          ${isCommissioner ? `<button type="button" class="btn btn-secondary" id="btn-resched-nhl" style="font-size:11px;padding:3px 8px" title="Reschedule to next full window (Wed, Fri, or Sun)">Reschedule Season Start</button>` : ''}
         </div>
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
