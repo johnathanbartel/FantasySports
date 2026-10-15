@@ -127,7 +127,7 @@ def main() -> None:
             for i in range(4):
                 db.add(Team(league_id=league.id, name=f"T{i + 1}", is_ai_owned=True))
             db.flush()
-            series_schedule.generate_schedule(db, league, start)
+            series_schedule.generate_schedule(db, league, start, window_rows=False)
             db.commit()
             games = db.query(SeriesDailyGame).order_by(SeriesDailyGame.id).all()
             game_id, game2_id = games[0].id, games[5].id  # day 1 and day 1 of the next series

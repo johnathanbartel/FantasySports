@@ -96,7 +96,7 @@ def test_api_series_schedule_transparency():
 
         today = datetime.date.today()
         sunday = today - datetime.timedelta(days=(today.weekday() + 1 if today.weekday() != 6 else 0))
-        series_schedule.generate_schedule(db, league, sunday, 1, replace=True)
+        series_schedule.generate_schedule(db, league, sunday, 1, replace=True, window_rows=False)
         db.flush()
 
         # Seed real games for today to test slate summary

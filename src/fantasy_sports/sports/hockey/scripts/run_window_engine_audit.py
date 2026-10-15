@@ -142,6 +142,17 @@ def main() -> None:
                 db.commit()
                 return result
 
+        from fantasy_sports.platform import nhl_daily_sync as sync_module
+        sync_module._fetch_json = lambda *a, **k: None          # offline: the sync must work from what is stored
+
+        def run_sync(utc_now: datetime.datetime) -> None:
+            """The same path the scoreboard read takes: ingest (offline here) then the window engine."""
+            service.utcnow = lambda: utc_now
+            with SessionLocal() as db:
+                universe = db.query(Universe).filter_by(code="nhl").one()
+                today_et = (utc_now - datetime.timedelta(hours=4)).date()
+                sync_module._sync_window_rows(db, db.query(League).first().id, universe, today_et)
+
         def set_game(key, status=None, event_period=None):
             with SessionLocal() as db:
                 if status:
@@ -189,9 +200,11 @@ def main() -> None:
         tick(at(SUN, 20, 5))
         check(sim_state()[0] == 0, "Period 1 waits for the feed: the real periods end at 20:00 but the stored game has no later period yet")
         set_game("B", event_period=2)
+        run_sync(at(SUN, 20, 5))                                  # through the sync path, as a scoreboard read does
         r = tick(at(SUN, 20, 5))
         pp, status, digest1, events1, prov = sim_state()
-        check(r.status == "published" and pp == 1 and status == "LIVE", "Period 1 is published as soon as its real periods have ended and the feed shows them complete")
+        check(pp == 1 and status == "LIVE", "Period 1 is published as soon as its real periods have ended and the feed shows them complete (via the sync)")
+        check(r.status == "idle", "...and a second tick right after has nothing left to do")
         check(events1[: len(events0)] == events0 and events1[-1][1:3] == ("period_start", 2), "the published events continue the opening event and end with Period 2 beginning")
         check(all(1 <= e[3] <= 1199 for e in events1 if e[1] not in ("period_start", "period_end")) and all(e[2] == 1 for e in events1[:-1]),
               "every Period 1 event sits strictly inside Period 1")

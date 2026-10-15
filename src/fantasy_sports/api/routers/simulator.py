@@ -136,6 +136,8 @@ def start_game(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     """Commissioner only. Begins the real-time window of a published game. Idempotent."""
     game = _game(db, daily_game_id)
     assert_commissioner(db, user, game.series.league_id)
+    if game.window_index is not None:
+        raise HTTPException(409, {"code": "WINDOW_GAME", "message": "A window game opens by itself at the window's first kickoff"})
     sim = service.get_sim(db, daily_game_id)
     if sim is None:
         from fantasy_sports.sports.hockey.simulator import loader
@@ -183,7 +185,18 @@ def simulate_league_date(
     count = 0
     now_utc = service.utcnow()
     errors: list[str] = []
+    from fantasy_sports.sports.hockey.simulator import window_engine
+
     for dg in daily_games:
+        if dg.window_index is not None:      # window games are driven by the clock, not forced
+            try:
+                result = window_engine.tick(db, dg, now_utc)
+                count += 1 if service.get_sim(db, dg.id) is not None else 0
+                if finish:
+                    errors.append(f"game {dg.id}: a window game cannot be finished early ({result.status})")
+            except Exception as e:
+                errors.append(str(e))
+            continue
         sim = service.get_sim(db, dg.id)
         if sim is None:
             try:

@@ -496,6 +496,7 @@ class SeriesScheduleCreateRequest(BaseModel):
     cycles: int = 1
     replace: bool = False
     force: bool = False
+    window_rows: bool = True      # False keeps the legacy shape: one game per calendar day instead of one per window
 
 
 class SeriesDailyGameOut(ORMModel):

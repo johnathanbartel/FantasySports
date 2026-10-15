@@ -418,7 +418,7 @@ def audit_end_to_end() -> None:
             for c in result.credits:
                 db.add(ShotCredit(shot_id=c.shot_id, draftable_asset_id=c.asset_id, role=c.role, credit_points=c.points))
             db.flush()
-            series_schedule.generate_schedule(db, league, date)
+            series_schedule.generate_schedule(db, league, date, window_rows=False)
             game = (db.query(SeriesDailyGame).filter(SeriesDailyGame.home_team_id == teams[0].id,
                                                      SeriesDailyGame.away_team_id == teams[1].id)
                     .order_by(SeriesDailyGame.calendar_date).first())

@@ -190,7 +190,7 @@ def main() -> None:
             for name in ("Harbor Hawks", "Lake Lynx", "Ridge Rams", "Delta Dogs"):
                 db.add(Team(league_id=league.id, name=name, is_ai_owned=True))
             db.flush()
-            series_schedule.generate_schedule(db, league, start)
+            series_schedule.generate_schedule(db, league, start, window_rows=False)
             db.commit()
             games = db.query(SeriesDailyGame).order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all()
             ids = [g.id for g in games[:7]]

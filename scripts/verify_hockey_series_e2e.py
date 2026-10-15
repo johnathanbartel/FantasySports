@@ -263,7 +263,7 @@ def main() -> None:
 
         # ---- schedule ---------------------------------------------------------------------------------------------------------------
         start = dt.date(2026, 10, 14)
-        r = client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat(), "replace": True}, headers=auth["human"])
+        r = client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat(), "replace": True, "window_rows": False}, headers=auth["human"])
         check(r.status_code == 200 and len(r.json()["series"]) == 66, "the series schedule has 66 series (11 rounds x 6)")
         check(client.post(f"/leagues/{league_id}/series-schedule", json={"start_date": start.isoformat()}, headers=auth["human"]).status_code == 400,
               "regenerating without replace is refused (idempotency)")

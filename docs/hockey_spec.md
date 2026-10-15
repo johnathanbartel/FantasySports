@@ -136,7 +136,7 @@ A matchup is one window (Sun–Tue, Wed–Thu or Fri–Sat). Each side has 6 sta
 - OT events sit at the end of their fantasy period, in their relative order.
 - Events with no real clock (inverted opponent errors, unattributed team goals, the tie-break goal) are drawn inside the fantasy periods from the seeded stream. The monotonic scoreboard validator (FS-025) still applies.
 
-The division, with every real period's player, fantasy team, game, real period, nominal start, OT flag and points, is stored in the script provenance (`provenance.division`) and returned by `GET /simulator/games/{id}/final`, behind the same spoiler veil as the rest of the box score (section 9). **Live pacing**: a script built from real kickoffs carries `provenance.wall_clock` (the division's nominal starts, Eastern time) and the live service paces it by that clock (`platform/simulator/wallclock.py`, the same arithmetic that placed the events): events are revealed as the clock reaches them, the clock reads `Period k — MM:SS left`, and the game is final when the last real period ends (or earlier, once every real game is final). Scripts without kickoff data keep the compressed playback over `window_seconds`.
+The division, with every real period's player, fantasy team, game, real period, nominal start, OT flag and points, is stored in the script provenance (`provenance.division`) and returned by `GET /simulator/games/{id}/final`, behind the same spoiler veil as the rest of the box score (section 9). **Live pacing**: a script built from real kickoffs carries `provenance.wall_clock` (the division's nominal starts, Eastern time) and the live service paces it by that clock (`platform/simulator/wallclock.py`, the same arithmetic that placed the events): events are revealed as the clock reaches them and the clock reads `Period k — MM:SS left`. A whole script is final when the last real period ends (or earlier, once every real game is final); a window game published period by period (6.5) is final when its last period is published. Scripts without kickoff data keep the compressed playback over `window_seconds`.
 
 Simulated games do not execute as a single instantaneous batch calculation. Instead, games **progress in real time** throughout the game window:
 - **Anytime Status Checking**: When a manager opens the app, the interface displays:
@@ -159,6 +159,17 @@ To reflect real hockey reality—where an underdog can occasionally steal a game
 ### 6.4 Strict Monotonicity & Inversion
 - In-simulation scoreboards strictly climb upward ($Score_{t+1} \ge Score_t$).
 - Negative player outputs (goals allowed by goalies under GSAx, penalties taken) are inverted ($|-x|$) and credited to the opposing team as Power-Play Goals or Odd-Man Rushes.
+
+
+### 6.5 Period-by-Period Publishing (window games)
+A window game is one `series_daily_games` row per window (`window_index` 1-3, `calendar_date` .. `calendar_date_end`; spec 10.1), and it is published **one fantasy period at a time**, as soon as that period's real periods have ended. `sports/hockey/simulator/window_engine.py` (`tick`) does whatever is due and is safe to call on every read:
+
+1. **Lock** (the window's first real kickoff): the lineup is frozen. Starters come from the pecking order; because there is no start evidence before the games, every scheduled goalie counts as confirmed, so the highest-ranked scheduled goalie starts. Nothing changes after the lock.
+2. **Select** (each starter's own lock, the kickoff of his earliest game in the window): his counting game is chosen by Best Matchup (5.2) from the stored standings snapshot, recorded in `provenance.window_state.selections` with the lock time and the points used, and never redone. If no snapshot was ever stored the decision falls back to the earlier kickoff and is recorded as `no_standings`.
+3. **Divide**: the chronological division (6.1) is built from the counting games. A starter who has not reached his lock is projected on his earliest game; this can only affect periods that cannot be published yet.
+4. **Publish**: fantasy period k is published when (a) its members are certain (at least k x n real periods, n = the number of counting games, have already begun), (b) every real period in it has nominally ended, and (c) the stored feed shows each of them complete (the real game is final, or later-period play exists; real period 3 needs a final game because overtime belongs to it). The period's events are **appended**; published events and the digest chain never change (`service.append_period`, `simulator_games.published_periods`).
+
+**Scoreboard: cumulative normalization with a ratchet** (`simulator/progressive.py`). After period k (f = k/3) the credit earned so far is normalized exactly as a whole game is (6.2), with every scale taken at f: expected total goals 6.0 x f, the regression prior x f, the error term's sigma and cap x f (one seeded draw, only scaled). The goals shown are max(goals already published, normalized goals), so a side never loses a goal. After the last period f = 1: the result is the whole-game normalization of all the credit unless an early overshoot forced a ratchet. Two guards then keep 6.2: a level final still gets one deciding goal for the side with the larger margin, and a raw leader whose expected margin is outside the upset window is never left trailing. Each period's events are built from that period's credit only (goals it adds, unattributed goals and inverted errors drawn inside the period). Moves of surplus games (5.2.3) are not persisted server-side yet, so live window games use Best Matchup only.
 
 ---
 
@@ -261,6 +272,8 @@ The frontend Schedule and Lineup interface is structured into three dedicated fu
 ---
 
 ## 10. Database Schema Extensions
+
+> Implemented shape: `series_daily_games` has one row per fantasy **window** (`window_index`, `calendar_date` = first day, `calendar_date_end` = last day; both nullable on legacy one-row-per-day games). Series standings and Game Scores count one game per window row. `scripts/convert_to_window_rows.py` moves an existing schedule over (played days are never touched).
 
 ### 10.1 Series & Daily Matchups (`league_series`, `series_daily_games`)
 ```sql

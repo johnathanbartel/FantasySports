@@ -145,7 +145,8 @@ def create_series_schedule(league_id: int, payload: SeriesScheduleCreateRequest,
     """Commissioner only. Replace-only: 400 if a schedule exists unless replace=true, and never once play has begun (unless force=true)."""
     league = assert_commissioner(db, user, league_id)
     try:
-        series_schedule.generate_schedule(db, league, payload.start_date, payload.cycles, payload.replace, payload.force)
+        series_schedule.generate_schedule(db, league, payload.start_date, payload.cycles, payload.replace, payload.force,
+                                        window_rows=payload.window_rows)
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e))

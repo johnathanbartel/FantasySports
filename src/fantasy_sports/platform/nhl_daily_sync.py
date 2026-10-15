@@ -655,6 +655,43 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
     return activated_count
 
 
+def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: datetime.date) -> None:
+    """Window games (docs/hockey_spec.md 6.5): ingest every day of each open window up to today, then let the window
+    engine do whatever is due - open the game at the first kickoff, select counting games, publish the periods that
+    have ended. Each window is isolated: a failure in one never stops the others or the legacy daily games."""
+    import logging
+
+    from fantasy_sports.sports.hockey.simulator import window_engine
+
+    rows = (
+        db.query(SeriesDailyGame)
+        .join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+        .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.window_index.isnot(None),
+                SeriesDailyGame.status != "FINAL", SeriesDailyGame.calendar_date <= today_et)
+        .order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all()
+    )
+    now_utc = service.utcnow()
+    ingested: set[datetime.date] = set()
+    for dg in rows:
+        last_day = min(dg.calendar_date_end or dg.calendar_date, today_et)
+        day = dg.calendar_date
+        while day <= last_day:
+            if day not in ingested:
+                ingested.add(day)
+                try:
+                    ingest_daily_slate_if_needed(db, nhl, day)
+                    db.flush()
+                except Exception:
+                    logging.getLogger(__name__).exception("slate ingest failed for %s", day)
+            day += datetime.timedelta(days=1)
+        try:
+            with db.begin_nested():
+                window_engine.tick(db, dg, now_utc)
+        except Exception:
+            logging.getLogger(__name__).exception("window tick failed for game %s", dg.id)
+    db.commit()
+
+
 def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     """Safe, idempotent auto-sync called on read for an NHL league. Ensures schedule alignment, slate ingestion, and simulation."""
     league = db.get(League, league_id)
@@ -683,7 +720,11 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
     except Exception:
         db.rollback()
 
-    # 2. Check unfinalized fantasy daily games up to max_active_date
+    # Window rows are driven by the window engine; legacy one-row-per-day games (scripts/convert_to_window_rows.py moves
+    # unplayed ones to window rows) keep the daily flow below.
+    _sync_window_rows(db, league_id, nhl, today_et)
+
+    # 2. Check unfinalized legacy (one row per day) fantasy games up to max_active_date
     unfinalized_dates = [
         d[0] for d in (
             db.query(SeriesDailyGame.calendar_date)
@@ -693,6 +734,7 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                 SeriesDailyGame.calendar_date <= max_active_date,
                 SeriesDailyGame.status != "FINAL",
                 SeriesDailyGame.is_matchup_day.is_(True),
+                SeriesDailyGame.window_index.is_(None),
             )
             .distinct()
             .order_by(SeriesDailyGame.calendar_date)
@@ -739,6 +781,7 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
                 LeagueSeries.league_id == league_id,
                 SeriesDailyGame.calendar_date == sync_date,
                 SeriesDailyGame.is_matchup_day.is_(True),
+                SeriesDailyGame.window_index.is_(None),
             )
             .all()
         )
