@@ -76,9 +76,6 @@
       </div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
         <a id="hdr-draft-btn" href="#" class="btn btn-primary" style="display:none;font-size:13px;font-weight:700;align-items:center;gap:6px;box-shadow:0 0 10px rgba(34,197,94,0.35)"><span style="width:8px;height:8px;border-radius:50%;background:#ef4444;display:inline-block"></span> Open Draft Board</a>
-        <button type="button" class="btn btn-secondary" id="btn-how-scoring-works" style="font-size:13px;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><span style="font-size:14px">ℹ️</span> How Scoring Works</button>
-        <button type="button" class="btn btn-secondary" id="invite-btn" style="font-size:13px">Copy Invite Link</button>
-        <span id="invite-copied-msg" class="text-muted" style="font-size:12px;display:none">Copied!</span>
       </div>
     </div>
 
@@ -970,8 +967,6 @@ async function renderHockeyScoreboard() {
         <h2 style="margin:2px 0 0">Matchup Scoreboard</h2>
       </div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
-        <button type="button" class="btn btn-secondary" id="btn-scoring-info-sb" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px"><span style="font-size:14px">ℹ️</span> How Scoring Works</button>
-        <button type="button" class="btn btn-secondary" id="btn-refresh-score" style="cursor:pointer">⟳ Refresh Scores</button>
         <span class="muted" style="font-size:12px">Auto-refreshes live every 10s</span>
       </div>
     </div>
@@ -1037,12 +1032,6 @@ async function renderHockeyScoreboard() {
         alert('Failed to reschedule: ' + (err.message || err));
       }
     };
-  }
-  if ($('btn-refresh-score')) {
-    $('btn-refresh-score').onclick = () => renderHockeyScoreboard();
-  }
-  if ($('btn-scoring-info-sb')) {
-    $('btn-scoring-info-sb').onclick = () => ScoringModal.open({ sport: 'nhl' });
   }
   if ($('btn-scoring-info-banner')) {
     $('btn-scoring-info-banner').onclick = () => ScoringModal.open({ sport: 'nhl' });
@@ -2087,25 +2076,6 @@ async function start() {
   const session = await FSC.current();
   FSC.renderNav('nav-auth');
 
-  const inviteBtn = $('invite-btn');
-  if (inviteBtn) {
-    const inviteUrl = `${location.origin}/static/join-league.html?league_id=${LEAGUE_ID}`;
-    inviteBtn.onclick = () => {
-      navigator.clipboard.writeText(inviteUrl).then(() => {
-        const msg = $('invite-copied-msg');
-        if (msg) { msg.style.display = 'inline'; setTimeout(() => msg.style.display = 'none', 3000); }
-      }).catch(() => {
-        prompt('Copy invite link:', inviteUrl);
-      });
-    };
-  }
-
-  const scoringBtn = $('btn-how-scoring-works');
-  if (scoringBtn) {
-    scoringBtn.onclick = () => {
-      ScoringModal.open({ sport: isHockey() ? 'nhl' : 'football' });
-    };
-  }
 
   if (!session) {
     $('signin-box').style.display = 'flex';
