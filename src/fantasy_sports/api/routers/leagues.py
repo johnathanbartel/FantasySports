@@ -7,11 +7,13 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_commissioner, current_user, require_commissioner_mode
+from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, require_commissioner_mode
+from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
     LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
+    KeeperPlayerOut, KeepersOut, KeepersRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
@@ -20,7 +22,7 @@ from fantasy_sports.api.schemas import (
 from fantasy_sports.platform import calendar, lineups, scoring, season_rollover
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    AuctionDraft, Conference, Division, Draft, League, LeagueSeason, LeagueUniverse, LineupEntry,
+    AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
     RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition,
     Team, Universe, User, Week, WeeklyMatchup,
 )
@@ -301,6 +303,8 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    if season_rollover.process_keeper_deadline(db, league):
+        db.commit()
     if not is_college(db, league.id):
         spots = roster_spots(db, league.id)
         if spots and league.draft_rounds != spots:
@@ -331,7 +335,17 @@ def update_league_settings(
 ):
     """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}."""
     league = assert_commissioner(db, user, league_id)
-    league.league_format = payload.league_format
+    sent = payload.model_fields_set
+    if payload.league_format is not None:
+        league.league_format = payload.league_format
+    if payload.keeper_draft_style is not None:
+        league.keeper_draft_style = payload.keeper_draft_style
+    if "keeper_limit" in sent:
+        league.keeper_limit = payload.keeper_limit
+    if "keeper_deadline" in sent:
+        if league.offseason and league.league_format == "keeper" and not league.keepers_finalized and payload.keeper_deadline is None:
+            raise HTTPException(409, "Keeper selection is open, so it needs a deadline")
+        league.keeper_deadline = payload.keeper_deadline
     db.commit()
     db.refresh(league)
     return league
@@ -344,10 +358,67 @@ def roll_over_season(
     """Commissioner action: archives the finished season and opens the offseason (see platform/season_rollover.py)."""
     league = assert_commissioner(db, user, league_id)
     try:
-        season_rollover.roll_over(db, league, payload.offseason_draft_rounds)
+        season_rollover.roll_over(db, league, payload.offseason_draft_rounds, payload.refill_rounds, payload.keeper_deadline)
     except season_rollover.RolloverError as e:
         db.rollback()
         raise HTTPException(409, str(e))
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+def _keepers_out(db: Session, league: League, team: Team) -> KeepersOut:
+    cands = (db.query(KeeperCandidate).filter_by(team_id=team.id, season_number=league.season_number)
+             .order_by(KeeperCandidate.roster_order).all())
+    assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_([c.draftable_asset_id for c in cands] or [0]))}
+    submitted = db.query(KeeperSubmission).filter_by(team_id=team.id, season_number=league.season_number).first() is not None
+    return KeepersOut(
+        team_id=team.id, season_number=league.season_number, finalized=league.keepers_finalized,
+        deadline=league.keeper_deadline, cap=season_rollover.keeper_cap(db, league), submitted=submitted,
+        players=[KeeperPlayerOut(draftable_asset_id=c.draftable_asset_id,
+                                 display_name=draftable_asset_display_name(assets[c.draftable_asset_id]),
+                                 position=draftable_asset_position(assets[c.draftable_asset_id]),
+                                 games_played=c.games_played, kept=c.kept) for c in cands])
+
+
+@router.get("/{league_id}/teams/{team_id}/keepers", response_model=KeepersOut)
+def get_keepers(league_id: int, team_id: int, db: Session = Depends(get_db)):
+    """A Keeper team's candidates, games played last season, and which ones it keeps. Closes keepers if the deadline passed."""
+    league = db.get(League, league_id)
+    team = db.get(Team, team_id)
+    if league is None or team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    if season_rollover.process_keeper_deadline(db, league):
+        db.commit()
+    return _keepers_out(db, league, team)
+
+
+@router.put("/{league_id}/teams/{team_id}/keepers", response_model=KeepersOut)
+def set_keepers(
+    league_id: int, team_id: int, payload: KeepersRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """The team's owner picks which players to keep; the rest are released when keepers close."""
+    league = db.get(League, league_id)
+    team = db.get(Team, team_id)
+    if league is None or team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    assert_owns_team(db, user, team_id)
+    try:
+        season_rollover.submit_keepers(db, league, team, payload.draftable_asset_ids)
+    except season_rollover.RolloverError as e:
+        db.rollback()
+        raise HTTPException(409, str(e))
+    db.commit()
+    return _keepers_out(db, league, team)
+
+
+@router.post("/{league_id}/keepers/finalize", response_model=LeagueOut)
+def finalize_keepers(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner action: closes keeper selection now. Teams that haven't picked are trimmed automatically."""
+    league = assert_commissioner(db, user, league_id)
+    if not league.offseason or league.keepers_finalized:
+        raise HTTPException(409, "There is no open keeper selection to close")
+    season_rollover.finalize_keepers(db, league)
     db.commit()
     db.refresh(league)
     return league

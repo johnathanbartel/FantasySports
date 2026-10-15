@@ -37,7 +37,8 @@ def draft_state(db: Session, league_id: int) -> str:
                         d.completed_at = datetime.datetime.utcnow()
                     draft_clock.clear(d)
                     if league:
-                        league.offseason = False
+                        from fantasy_sports.platform import season_rollover
+                        season_rollover.after_draft_complete(db, league)
                         auto_schedule.ensure_schedule(db, league)
                     try:
                         db.commit()
@@ -56,7 +57,10 @@ def draft_state(db: Session, league_id: int) -> str:
         statuses = [d.status for d in drafts]
         if not statuses:
             return "not_started"
-        return "complete" if all(s in ("complete", "closed") for s in statuses) else "in_progress"
+        if all(s in ("complete", "closed") for s in statuses):
+            # Between the drafts of an offseason (keepers still to pick, or a refill draft after the rookie draft).
+            return "not_started" if league and league.offseason else "complete"
+        return "in_progress"
     else:
         statuses = [d.status for d in db.query(AuctionDraft).filter(AuctionDraft.league_id == league_id)]
         statuses += [d.status for d in db.query(RecruitingDraft).filter(RecruitingDraft.league_id == league_id)]

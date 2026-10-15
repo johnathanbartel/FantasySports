@@ -94,6 +94,9 @@ class League(Base):
         ),
         CheckConstraint("league_mode IN ('standard', 'weekly_redraft')", name="ck_league_mode"),
         CheckConstraint(
+            "keeper_draft_style IN ('rookie_resign', 'combined', 'separate')", name="ck_league_keeper_draft_style"
+        ),
+        CheckConstraint(
             "league_format IN ('traditional_redraft', 'future_pick_redraft', 'keeper', 'dynasty')",
             name="ck_league_format",
         ),
@@ -141,6 +144,14 @@ class League(Base):
     offseason: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Rounds of the next draft for Keeper / Dynasty (rookie drafts); the commissioner sets it when rolling over.
     offseason_draft_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Keeper leagues (platform/season_rollover.py). Style, for owners who keep less than their whole roster:
+    #   rookie_resign = a rookie draft only, and keepers are limited to the room left after the rookie rounds;
+    #   combined      = one draft of rookies and refills together;   separate = a rookie draft, then a refill draft.
+    keeper_draft_style: Mapped[str] = mapped_column(String(16), default="rookie_resign", server_default="rookie_resign")
+    keeper_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)       # NULL = a team may keep its whole roster
+    keeper_deadline: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)   # naive UTC
+    keepers_finalized: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    offseason_refill_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
@@ -161,6 +172,37 @@ class LeagueSeason(Base):
     league_format: Mapped[str] = mapped_column(String(24))
     archived_at: Mapped[datetime.datetime] = mapped_column(DateTime)
     data: Mapped[dict] = mapped_column(JSON)
+
+
+class KeeperCandidate(Base):
+    """A player on a Keeper / Dynasty team's roster at rollover, with last season's games played (the auto-trim order) and
+    whether the owner keeps him. Written at rollover and settled when the keeper deadline passes."""
+
+    __tablename__ = "keeper_candidates"
+    __table_args__ = (UniqueConstraint("team_id", "draftable_asset_id", "season_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    season_number: Mapped[int] = mapped_column(Integer)          # the offseason (the new season's number)
+    games_played: Mapped[int] = mapped_column(Integer, default=0)
+    kept: Mapped[bool] = mapped_column(Boolean, default=False)
+    roster_order: Mapped[int] = mapped_column(Integer, default=0)   # tiebreak: earlier roster entries are kept first
+
+
+class KeeperSubmission(Base):
+    """A team's keeper picks are in (auto = the deadline passed or the commissioner closed keepers and the system chose)."""
+
+    __tablename__ = "keeper_submissions"
+    __table_args__ = (UniqueConstraint("team_id", "season_number"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    season_number: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    auto: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class LeagueUniverse(Base):
@@ -312,6 +354,8 @@ class Player(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Date of birth (hockey: from the NHL roster sync); NULL = unknown. Age is derived, see platform/player_age.py.
     birth_date: Mapped[datetime.date | None] = mapped_column(Date, nullable=True)
+    # Eligible for rookie drafts (Keeper / Dynasty offseason). Nothing sets it yet: the rookie pool is populated later.
+    is_rookie: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Real-world injury report (hockey): NULL = healthy; else DTD / OUT / IR / LTIR (platform/injuries.py).
     injury_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
     injury_note: Mapped[str | None] = mapped_column(String(200), nullable=True)   # e.g. "Lower body"
@@ -404,6 +448,8 @@ class Draft(Base):
     season_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     # False for Keeper / Dynasty offseason drafts: the same order every round instead of reversing.
     is_snake: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # standard = the usual full draft; rookie / refill / combined = the offseason drafts of a Keeper or Dynasty league.
+    kind: Mapped[str] = mapped_column(String(10), default="standard", server_default="standard")
     started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     # Pick clock (platform/draft_clock.py). pick_seconds NULL = untimed (the original behaviour). All instants are
