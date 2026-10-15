@@ -1428,7 +1428,7 @@ async function renderTrades() {
       <input type="checkbox" name="${name}" value="${k.season}|${k.round}|${k.original_team_id}">
       <span class="pill" style="font-size:10px">PICK</span>
       <span style="flex:1"><strong>Round ${k.round}</strong> <span class="muted">season ${k.season} draft - ${esc(k.original_team_name)}</span></span>
-      <span class="pts muted">${k.projected_overall ? '#' + k.projected_overall + ' now' : ''} ${k.value ? '(' + pts(k.value) + ' pts)' : ''}</span>
+      <span class="pts muted">${k.projected_overall ? '#' + k.projected_overall + ' now' : ''}</span>
     </label>`;
   const picksBlock = (name, picks, who) => !picksTrade ? '' : `
     <div style="margin-top:var(--space-3)"><h5 style="margin:0 0 4px">Draft picks</h5>
