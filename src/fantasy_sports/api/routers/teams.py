@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user
-from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
+from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCreateRequest, TeamOut
 from fantasy_sports.platform import lineups
 from fantasy_sports.platform.ai import ai_roster
@@ -128,6 +128,7 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             display_name=draftable_asset_display_name(a),
             position=draftable_asset_position(a),
             real_team=school.get(a.player.real_team_id if a.player else (a.defense_group.real_team_id if a.defense_group else None)),
+            age=draftable_asset_age(a),
             last_season_points=points.get(a.id),
             acquired_via=e.acquired_via,
             games=rates.get(a.id, {}).get("games"), points_per_game=rates.get(a.id, {}).get("points_per_game"),
