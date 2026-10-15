@@ -149,6 +149,37 @@ def check_injured_list(db, headers, skater, goalie):
     print("Injured list checks passed: status on the card, IL eligibility, off the lines, roster spot freed, activation.")
 
 
+def check_injury_sync(db, healed):
+    """ESPN report parsing and application, offline, from a saved sample of the real response."""
+    import json
+    from fantasy_sports.platform import injury_sync
+    from fantasy_sports.platform.db.models.core import Player, RealTeam, Universe
+
+    nhl = db.query(Universe).filter_by(code="nhl").one()
+    ana = RealTeam(universe_id=nhl.id, name="Anaheim Ducks", external_ref="ANA")
+    db.add(ana)
+    db.flush()
+    granlund = Player(universe_id=nhl.id, real_team_id=ana.id, full_name="Mikael Granlund", position="C")
+    db.add(granlund)
+    db.flush()
+    db.commit()
+    assert healed.player.injury_status == "IR"   # left injured by check_injured_list; not in the sample report
+
+    sample = json.loads((Path(__file__).parent / "fixtures" / "espn_injuries_sample.json").read_text(encoding="utf-8"))
+    entries = injury_sync.parse_report(sample)
+    assert len(entries) == 128 and {e.status for e in entries} == {"DTD", "OUT", "IR"}
+    assert injury_sync.apply_report(db, entries[:5]) == [], "a short report is ignored"
+    assert healed.player.injury_status == "IR"
+
+    changes = {c.name: c for c in injury_sync.apply_report(db, entries)}
+    db.commit()
+    assert (granlund.injury_status, granlund.injury_note) == ("DTD", "Upper Body"), (granlund.injury_status, granlund.injury_note)
+    assert (changes["Mikael Granlund"].old_status, changes["Mikael Granlund"].new_status) == (None, "DTD")
+    assert healed.player.injury_status is None and changes[healed.player.full_name].new_status is None
+    assert injury_sync.apply_report(db, entries) == [], "re-applying the same report changes nothing"
+    print("Injury sync checks passed: parsed ESPN sample, matched by name, short report ignored, healed players cleared.")
+
+
 def main():
     db = SessionLocal()
     ref = seed_reference_data(db)
@@ -211,6 +242,7 @@ def main():
           f"{[(p['round'], p['pick_number'], p['display_name']) for p in picks]}")
 
     check_injured_list(db, headers, matthews, swayman)
+    check_injury_sync(db, matthews)
 
     resp = client.get("/health")
     assert resp.status_code == 200, resp.text

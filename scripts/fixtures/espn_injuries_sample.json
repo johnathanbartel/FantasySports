@@ -1,0 +1,1813 @@
+{
+ "injuries": [
+  {
+   "displayName": "Anaheim Ducks",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "Granlund (upper body) did not practice Thursday and is considered day-to-day.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Mikael Granlund",
+      "team": {
+       "abbreviation": "ANA"
+      }
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Cutter Gauthier",
+      "team": {
+       "abbreviation": "ANA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Poehling (knee) is expected to miss 6-8 weeks with an MCL sprain.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Ryan Poehling",
+      "team": {
+       "abbreviation": "ANA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Terry (hip) was moved from the non-roster list to long-term injured reserve Wednesday, Zach Cavanagh of The Sporting Tribune reports.",
+     "details": {
+      "type": "Hip"
+     },
+     "athlete": {
+      "displayName": "Troy Terry",
+      "team": {
+       "abbreviation": "ANA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Ian Moore",
+      "team": {
+       "abbreviation": "ANA"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Buffalo Sabres",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Lyon (upper body) had a setback in his recovery and is without a timeline to return, the team announced Thursday.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Alex Lyon",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Rasmus Dahlin",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Grzelcyk (lower body) suffered a \"flare-up\" and could be out for at least \"a few days,\" head coach Lindy Ruff told Rachel Lenzi of The Buffalo News on Tuesday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Matt Grzelcyk",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Zucker (abdomen) participated in Tuesday's morning skate but is still a few weeks away from returning to game action, Matthew Fairburn of The Athletic reports.",
+     "details": {
+      "type": "Abdomen"
+     },
+     "athlete": {
+      "displayName": "Jason Zucker",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Timmins (lower body) doesn't have a timeline for his return yet, according to Heather Engel of NHL.com on Tuesday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Conor Timmins",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Leinonen (lower body) was placed on the injured non-roster list Monday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Topias Leinonen",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Jack Rathbone",
+      "team": {
+       "abbreviation": "BUF"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Calgary Flames",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "The Flames announced Monday that Honzek is considered week-to-week due to a lower-body injury.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Samuel Honzek",
+      "team": {
+       "abbreviation": "CGY"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Huberdeau (hip) was placed on injured reserve Monday, per Pat Steinberg of QR Calgary 770 AM.",
+     "details": {
+      "type": "Hip"
+     },
+     "athlete": {
+      "displayName": "Jonathan Huberdeau",
+      "team": {
+       "abbreviation": "CGY"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Carolina Hurricanes",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Nikishin (contract dispute) is on the Hurricanes' injured, non-roster list, per the NHL media site Wednesday.",
+     "details": {
+      "type": "Contract Dispute"
+     },
+     "athlete": {
+      "displayName": "Alexander Nikishin",
+      "team": {
+       "abbreviation": "CAR"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Taylor Hall",
+      "team": {
+       "abbreviation": "CAR"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Calf"
+     },
+     "athlete": {
+      "displayName": "Jordan Staal",
+      "team": {
+       "abbreviation": "CAR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Jarvis (shoulder) was placed on the injured non-roster list Sunday.",
+     "details": {
+      "type": "Shoulder"
+     },
+     "athlete": {
+      "displayName": "Seth Jarvis",
+      "team": {
+       "abbreviation": "CAR"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Chicago Blackhawks",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Bowen Byram",
+      "team": {
+       "abbreviation": "CHI"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Andrew Mangiapane",
+      "team": {
+       "abbreviation": "CHI"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Colorado Avalanche",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Nicolas Roy",
+      "team": {
+       "abbreviation": "COL"
+      }
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Zachary L'Heureux",
+      "team": {
+       "abbreviation": "COL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "O'Connor (lower body/personal) was transferred to long-term injured reserve Wednesday, per PuckPedia.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Logan O'Connor",
+      "team": {
+       "abbreviation": "COL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Merkulov (undisclosed) was put on non-roster injured reserve Monday.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Georgii Merkulov",
+      "team": {
+       "abbreviation": "COL"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Dallas Stars",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Illness"
+     },
+     "athlete": {
+      "displayName": "Wyatt Johnston",
+      "team": {
+       "abbreviation": "DAL"
+      }
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Oskar Back",
+      "team": {
+       "abbreviation": "DAL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Duchene will be out for approximately three months after undergoing surgery to repair a core injury, the team announced Monday.",
+     "details": {
+      "type": "Abdomen"
+     },
+     "athlete": {
+      "displayName": "Matt Duchene",
+      "team": {
+       "abbreviation": "DAL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Luke Krys",
+      "team": {
+       "abbreviation": "DAL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Cameron Hughes",
+      "team": {
+       "abbreviation": "DAL"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Detroit Red Wings",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Edvinsson (contract dispute) is on the Red Wings' injured, non-roster list, per the NHL media site Wednesday.",
+     "details": {
+      "type": "Contract Dispute"
+     },
+     "athlete": {
+      "displayName": "Simon Edvinsson",
+      "team": {
+       "abbreviation": "DET"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Compher (undisclosed) will not be available versus the Devils on Tuesday, Ansar Khan of MLive.com reports.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "J.T. Compher",
+      "team": {
+       "abbreviation": "DET"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Mason Appleton",
+      "team": {
+       "abbreviation": "DET"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Kasper (upper body) has been given a week-to-week timetable for return.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Marco Kasper",
+      "team": {
+       "abbreviation": "DET"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Edmonton Oilers",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Jason Dickinson",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Zach Hyman",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Jake Walman",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Nugent-Hopkins (lower body) will be sidelined against Utah on Thursday, Mark Spector of Sportsnet reports.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Ryan Nugent-Hopkins",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Colton Dach",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Regula (undisclosed) was designated for long-term injured reserve Thursday.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Alec Regula",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Savoie (lower body) was shifted to long-term injured reserve Thursday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Matt Savoie",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Andersen (knee) isn't expected back until \"maybe\" December, head coach Mike Babcock told NHL.com on Tuesday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Frederik Andersen",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Janmark (undisclosed) does not have a timetable for his return from injury.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Mattias Janmark",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "James Stefan",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Atro Leppanen",
+      "team": {
+       "abbreviation": "EDM"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Florida Panthers",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "Markstrom (undisclosed) won't be available for Thursday's home game against the Canucks, Jameson Olive of the Panthers' official site reports.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Jacob Markstrom",
+      "team": {
+       "abbreviation": "FLA"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Radko Gudas",
+      "team": {
+       "abbreviation": "FLA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Leg"
+     },
+     "athlete": {
+      "displayName": "Brad Marchand",
+      "team": {
+       "abbreviation": "FLA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Barkov (lower body) will be out for approximately 6-8 weeks, Jameson Olive of the Panthers' official site reports Tuesday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Aleksander Barkov",
+      "team": {
+       "abbreviation": "FLA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Gadjovich (upper body) is out indefinitely, the team announced Thursday.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Jonah Gadjovich",
+      "team": {
+       "abbreviation": "FLA"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Los Angeles Kings",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Alex Turcotte",
+      "team": {
+       "abbreviation": "LA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Mats Zuccarello",
+      "team": {
+       "abbreviation": "LA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Jakub Dvorak",
+      "team": {
+       "abbreviation": "LA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Jenik (undisclosed) was placed on non-roster injured reserve by Los Angeles on Thursday, per Zach Dooley of LA Kings Insider.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Jan Jenik",
+      "team": {
+       "abbreviation": "LA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Fiala (lower leg fracture) is at least three weeks away from being ready to play, Zach Dooley of the Kings' official site reports Thursday.",
+     "details": {
+      "type": "Lower Leg"
+     },
+     "athlete": {
+      "displayName": "Kevin Fiala",
+      "team": {
+       "abbreviation": "LA"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Minnesota Wild",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Jared Spurgeon",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "Maatta (upper body) will not play in Thursday's home game against the Blues, per Dylan Loucks of The Hockey News.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Olli Maatta",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Sturm (upper body) was placed on injured reserve Tuesday.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Nico Sturm",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Marcus Foligno",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Gustavsson (hip) was placed on long-term injured reserve Friday.",
+     "details": {
+      "type": "Hip"
+     },
+     "athlete": {
+      "displayName": "Filip Gustavsson",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Nick Foligno",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Faber underwent a procedure to repair his fractured skull and is without a timetable to return, per Michael Russo of The Athletic.",
+     "details": {
+      "type": "Skull"
+     },
+     "athlete": {
+      "displayName": "Brock Faber",
+      "team": {
+       "abbreviation": "MIN"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Montreal Canadiens",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Florian Xhekaj",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Mike Matheson",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Sam Montembeault",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Oliver Kapanen",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Demidov (lower body) was placed on injured reserve by the Canadiens on Tuesday, per the NHL media site.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Ivan Demidov",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Bryce Pickford",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Lucas Condotta",
+      "team": {
+       "abbreviation": "MTL"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "New Jersey Devils",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Illness"
+     },
+     "athlete": {
+      "displayName": "Luke Evangelista",
+      "team": {
+       "abbreviation": "NJ"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Connor Brown",
+      "team": {
+       "abbreviation": "NJ"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Bjugstad (pectoral) was transferred to long-term injured reserve Friday, per PuckPedia.",
+     "details": {
+      "type": "Pectoral"
+     },
+     "athlete": {
+      "displayName": "Nick Bjugstad",
+      "team": {
+       "abbreviation": "NJ"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Casey will be out of action for 6-8 weeks after undergoing a knee procedure, Kristy Flannery of The Hockey News reports Friday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Seamus Casey",
+      "team": {
+       "abbreviation": "NJ"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "New York Islanders",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Barzal (knee) will not join the Islanders for their two-game road trip, Andrew Gross of Newsday reports Thursday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Mathew Barzal",
+      "team": {
+       "abbreviation": "NYI"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Alexander Romanov",
+      "team": {
+       "abbreviation": "NYI"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "New York Rangers",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Shesterkin will require surgery and a lengthy rehab process to address his season-ending right knee injury, Vince Z. Mercogliano of The Athletic reports Sunday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Igor Shesterkin",
+      "team": {
+       "abbreviation": "NYR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Veleno (lower body) was placed on long-term injured reserve Saturday, Vince Z. Mercogliano of The Athletic reports.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Joe Veleno",
+      "team": {
+       "abbreviation": "NYR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Korpisalo (lower body) will miss at least four more weeks, per Elliotte Friedman of Sportsnet on Saturday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Joonas Korpisalo",
+      "team": {
+       "abbreviation": "NYR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Aidan Thompson",
+      "team": {
+       "abbreviation": "NYR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Adam Sykora",
+      "team": {
+       "abbreviation": "NYR"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Ottawa Senators",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Eklund had surgery to repair a torn ankle tendon and will be out 10-12 weeks, Bruce Garrioch of Postmedia reports Thursday.",
+     "details": {
+      "type": "Ankle"
+     },
+     "athlete": {
+      "displayName": "William Eklund",
+      "team": {
+       "abbreviation": "OTT"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Jake Sanderson",
+      "team": {
+       "abbreviation": "OTT"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "Matinpalo (upper body) won't play against St. Louis on Tuesday, and there is no timeline for his return, Bruce Garrioch of Postmedia reports.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Nikolas Matinpalo",
+      "team": {
+       "abbreviation": "OTT"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "MacDermid (upper body) was moved to the injured non-roster list Monday.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Kurtis MacDermid",
+      "team": {
+       "abbreviation": "OTT"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Philadelphia Flyers",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Cam York",
+      "team": {
+       "abbreviation": "PHI"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Ristolainen (upper body) won't travel with the Flyers ahead of Thursday's game against the Red Wings but is closing in on a return, Charlie O'Connor of PHLY Sports reports.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Rasmus Ristolainen",
+      "team": {
+       "abbreviation": "PHI"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Konecny (lower body) was placed on injured reserve Sunday, according to the NHL media site.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Travis Konecny",
+      "team": {
+       "abbreviation": "PHI"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Grebenkin (back) underwent successful surgery and is expected to miss at least four months.",
+     "details": {
+      "type": "Back"
+     },
+     "athlete": {
+      "displayName": "Nikita Grebenkin",
+      "team": {
+       "abbreviation": "PHI"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Pittsburgh Penguins",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Trevor van Riemsdyk",
+      "team": {
+       "abbreviation": "PIT"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Brazeau (lower body) was placed on injured reserve by the Penguins on Sunday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Justin Brazeau",
+      "team": {
+       "abbreviation": "PIT"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Graves (lower body) is out indefinitely and was placed on injured reserve Sunday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Ryan Graves",
+      "team": {
+       "abbreviation": "PIT"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "San Jose Sharks",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "Nurse was unable to finish Tuesday's game versus the Bruins after getting injured in a fight, and there was no update on his status after the contest, Max Miller of NHL.com reports.",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Darnell Nurse",
+      "team": {
+       "abbreviation": "SJ"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Musty (upper body) was put on non-roster injured reserve Monday, according to Curtis Pashelka of The San Jose Mercury News.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Quentin Musty",
+      "team": {
+       "abbreviation": "SJ"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Keyser (upper body) was placed on non-roster injured reserve by the Sharks on Monday, Curtis Pashelka of The San Jose Mercury News reports.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Kyle Keyser",
+      "team": {
+       "abbreviation": "SJ"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Seattle Kraken",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Melanson's upper-body injury was diagnosed Saturday as an anterior mediastinum hematoma with vascular pseudo aneurysm. He will continue to be evaluated and is out indefinitely.",
+     "details": {
+      "type": "Chest"
+     },
+     "athlete": {
+      "displayName": "Jacob Melanson",
+      "team": {
+       "abbreviation": "SEA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Lindgren (upper body) was placed on injured reserve by the Kraken on Thursday and is expected to miss four to six weeks.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Ryan Lindgren",
+      "team": {
+       "abbreviation": "SEA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "O'Brien (lower body) was placed on non-roster injured reserve Wednesday.",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Jake O'Brien",
+      "team": {
+       "abbreviation": "SEA"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "St. Louis Blues",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Personal"
+     },
+     "athlete": {
+      "displayName": "Pavel Buchnevich",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Krug (ankle) was placed on long-term injured reserve by the Blues on Monday, per PuckPedia.",
+     "details": {
+      "type": "Ankle"
+     },
+     "athlete": {
+      "displayName": "Torey Krug",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Neck"
+     },
+     "athlete": {
+      "displayName": "Dillon Dube",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Alexey Toropchenko",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Tucker had arthroscopic knee surgery and will be re-assessed in six weeks, the team announced Wednesday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Tyler Tucker",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Felix Trudeau",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Hand"
+     },
+     "athlete": {
+      "displayName": "Logan Mailloux",
+      "team": {
+       "abbreviation": "STL"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Tampa Bay Lightning",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Gourde (hip) was placed on the injured non-roster list Monday.",
+     "details": {
+      "type": "Hip"
+     },
+     "athlete": {
+      "displayName": "Yanni Gourde",
+      "team": {
+       "abbreviation": "TB"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Toronto Maple Leafs",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "The Maple Leafs announced Thursday that Tanev (lower body) is considered week-to-week, Mark Masters of TSN reports.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Chris Tanev",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Joshua (abdomen) has been moved from the non-roster list to long-term injured reserve, PuckPedia reports Wednesday.",
+     "details": {
+      "type": "Abdomen"
+     },
+     "athlete": {
+      "displayName": "Dakota Joshua",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Domi (back) was transferred from the non-roster list to long-term injured reserve Wednesday, per PuckPedia.",
+     "details": {
+      "type": "Back"
+     },
+     "athlete": {
+      "displayName": "Max Domi",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Elbow"
+     },
+     "athlete": {
+      "displayName": "Cade Webber",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Merzlikins is expected to miss 4-6 months to begin the 2026-27 regular season while recovering from a shoulder injury, per Luke Fox of Sportsnet.",
+     "details": {
+      "type": "Shoulder"
+     },
+     "athlete": {
+      "displayName": "Elvis Merzlikins",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "William Villeneuve",
+      "team": {
+       "abbreviation": "TOR"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Utah Mammoth",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "Carcone is week-to-week due to his upper-body injury, the team announced Saturday.",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Michael Carcone",
+      "team": {
+       "abbreviation": "UTA"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Shoulder"
+     },
+     "athlete": {
+      "displayName": "Maveric Lamoureux",
+      "team": {
+       "abbreviation": "UTA"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Vancouver Canucks",
+   "injuries": [
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Jack Thompson",
+      "team": {
+       "abbreviation": "VAN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Akil Thomas",
+      "team": {
+       "abbreviation": "VAN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Mackenzie MacEachern",
+      "team": {
+       "abbreviation": "VAN"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Co-president of hockey operations Henrik Sedin said Monday that he hopes Demko (hip) will be ready to return before Christmas, Kevin Woodley of NHL.com reports.",
+     "details": {
+      "type": "Hip"
+     },
+     "athlete": {
+      "displayName": "Thatcher Demko",
+      "team": {
+       "abbreviation": "VAN"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Vegas Golden Knights",
+   "injuries": [
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Parker Wotherspoon",
+      "team": {
+       "abbreviation": "VGK"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Lukas Cormier",
+      "team": {
+       "abbreviation": "VGK"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Washington Capitals",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Illness"
+     },
+     "athlete": {
+      "displayName": "Pierre-Luc Dubois",
+      "team": {
+       "abbreviation": "WSH"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Sandin (knee) was placed on long-term injured reserve Monday.",
+     "details": {
+      "type": "Knee"
+     },
+     "athlete": {
+      "displayName": "Rasmus Sandin",
+      "team": {
+       "abbreviation": "WSH"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Matt Roy",
+      "team": {
+       "abbreviation": "WSH"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Upper Body"
+     },
+     "athlete": {
+      "displayName": "Patrick Thomas",
+      "team": {
+       "abbreviation": "WSH"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "displayName": "Winnipeg Jets",
+   "injuries": [
+    {
+     "status": "Day-To-Day",
+     "shortComment": "day-to-day",
+     "details": {
+      "type": "Undisclosed"
+     },
+     "athlete": {
+      "displayName": "Vladislav Namestnikov",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    },
+    {
+     "status": "Out",
+     "shortComment": "out",
+     "details": {
+      "type": "Wrist"
+     },
+     "athlete": {
+      "displayName": "Josh Morrissey",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "Salomonsson (shoulder) won't play in Thursday's game against the Blackhawks, Mike McIntyre of the Winnipeg Free Press reports.",
+     "details": {
+      "type": "Shoulder"
+     },
+     "athlete": {
+      "displayName": "Elias Salomonsson",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Suspension"
+     },
+     "athlete": {
+      "displayName": "Connor Hellebuyck",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Garrett Brown",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    },
+    {
+     "status": "Injured Reserve",
+     "shortComment": "ir-nr",
+     "details": {
+      "type": "Lower Body"
+     },
+     "athlete": {
+      "displayName": "Walker Duehr",
+      "team": {
+       "abbreviation": "WPG"
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
