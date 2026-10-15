@@ -158,6 +158,7 @@ class LeagueOut(ORMModel):
 class RolloverRequest(BaseModel):
     offseason_draft_rounds: int | None = Field(default=None, ge=1, le=60)   # rookie rounds: Keeper / Dynasty only
     refill_rounds: int | None = Field(default=None, ge=1, le=60)            # Keeper with a combined or separate draft style
+    champion_team_id: int | None = None                                     # the season's champion: picks last in the next draft
 
 
 class KeeperPlayerOut(BaseModel):
@@ -178,6 +179,18 @@ class KeepersOut(BaseModel):
     players: list[KeeperPlayerOut]
 
 
+class FuturePickOut(BaseModel):
+    round: int
+    pick_in_round: int | None
+    overall: int | None
+
+
+class FuturePicksOut(BaseModel):
+    season_number: int
+    order_set: bool
+    picks: list[FuturePickOut]
+
+
 class KeepersRequest(BaseModel):
     draftable_asset_ids: list[int]
 
@@ -186,6 +199,7 @@ class LeagueSeasonSummary(BaseModel):
     season_number: int
     league_format: str
     archived_at: datetime.datetime
+    champion_team_id: int | None = None
     standings: list[dict]
 
 

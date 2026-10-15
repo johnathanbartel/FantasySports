@@ -13,7 +13,7 @@ from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
     LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
-    KeeperPlayerOut, KeepersOut, KeepersRequest,
+    FuturePicksOut, KeeperPlayerOut, KeepersOut, KeepersRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
@@ -358,7 +358,8 @@ def roll_over_season(
     """Commissioner action: archives the finished season and opens the offseason (see platform/season_rollover.py)."""
     league = assert_commissioner(db, user, league_id)
     try:
-        season_rollover.roll_over(db, league, payload.offseason_draft_rounds, payload.refill_rounds)
+        season_rollover.roll_over(db, league, payload.offseason_draft_rounds, payload.refill_rounds,
+                                  champion_team_id=payload.champion_team_id)
     except season_rollover.RolloverError as e:
         db.rollback()
         raise HTTPException(409, str(e))
@@ -412,6 +413,18 @@ def set_keepers(
     return _keepers_out(db, league, team)
 
 
+@router.get("/{league_id}/teams/{team_id}/future-picks", response_model=FuturePicksOut)
+def get_future_picks(league_id: int, team_id: int, db: Session = Depends(get_db)):
+    """A Future Draft Pick Redraft team's picks in the next draft (shown on its roster page below the injured list)."""
+    league = db.get(League, league_id)
+    team = db.get(Team, team_id)
+    if league is None or team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    if league.league_format != "future_pick_redraft":
+        raise HTTPException(400, "Draft picks are part of Future Draft Pick Redraft leagues")
+    return season_rollover.future_picks(db, league, team_id)
+
+
 @router.post("/{league_id}/keepers/finalize", response_model=LeagueOut)
 def finalize_keepers(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Commissioner action: closes keeper selection now. Teams that haven't picked are trimmed automatically."""
@@ -429,7 +442,7 @@ def list_seasons(league_id: int, db: Session = Depends(get_db)):
     """League history: every archived season, newest first, with its final standings."""
     rows = db.query(LeagueSeason).filter_by(league_id=league_id).order_by(LeagueSeason.season_number.desc()).all()
     return [LeagueSeasonSummary(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
-                                standings=r.data.get("standings", [])) for r in rows]
+                                champion_team_id=r.champion_team_id, standings=r.data.get("standings", [])) for r in rows]
 
 
 @router.get("/{league_id}/seasons/{season_number}", response_model=LeagueSeasonOut)
@@ -438,7 +451,7 @@ def get_season(league_id: int, season_number: int, db: Session = Depends(get_db)
     if r is None:
         raise HTTPException(404, "That season isn't in the league's history")
     return LeagueSeasonOut(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
-                           standings=r.data.get("standings", []), data=r.data)
+                           champion_team_id=r.champion_team_id, standings=r.data.get("standings", []), data=r.data)
 
 
 @router.delete("/{league_id}")

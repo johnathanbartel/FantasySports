@@ -394,6 +394,7 @@ function matchupRating(game) {
 // ---- NHL roster: positions down the left, Lines 1-3 across; click two players of one position to swap them ----
 let gridGroups = [], gridSel = null;
 let injuryAlerts = [];
+let futurePicks = null;   // Future Draft Pick Redraft: the team's picks in the next draft (GET /leagues/{id}/teams/{id}/future-picks)
 let ilPlayers = [], ilCapacity = 0;   // the team's injured list (GET /teams/{id}/pecking-order)
 let activeHockeyWindow = 1;
 let hockeySchedule = null;
@@ -569,6 +570,7 @@ async function renderHockeyRoster() {
   gridGroups = po.groups; gridSel = null;
   ilPlayers = po.injured_list || []; ilCapacity = po.injured_list_capacity || 0;
   injuryAlerts = canManage(t) ? await api(`/teams/${t.id}/injury-alerts`).catch(() => []) : [];
+  futurePicks = ov.league_format === 'future_pick_redraft' ? await api(`/leagues/${LEAGUE_ID}/teams/${t.id}/future-picks`).catch(() => null) : null;
   poRealSchedules = po.real_schedules || {};
   hockeySchedule = sch;
   paintHockeyRoster();
@@ -736,6 +738,7 @@ function paintHockeyRoster() {
           ${can ? `<button type="button" class="btn btn-secondary btn-il-off" data-il-off="${p.draftable_asset_id}" style="font-size:12px;padding:3px 10px">Activate</button>` : ''}
         </div>`).join('') : '<p class="muted" style="margin:0;font-size:13px">No one on the injured list. Injured players (OUT, IR or LTIR) can be moved here from the lines.</p>'}
     </div>
+    ${futurePicksCard()}
     ${reserveGroups.length ? `<div class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)"><h4 style="margin:0 0 var(--space-2)">Not on a line</h4>
       ${reserveGroups.map(g => `<div style="margin-bottom:var(--space-2)"><span class="tag tag-neutral" style="margin-right:var(--space-2)">${g}</span>${grid.reserves[g].map(p => reserveBtn(g, p)).join(' ')}</div>`).join('')}</div>` : ''}`;
 
@@ -1162,6 +1165,20 @@ async function pickGrid(sel) {
   } catch (e) { showError(e.message); }
   gridSel = null;
   paintHockeyRoster();
+}
+
+// Future Draft Pick Redraft: a team's picks in the next draft, below its injured list. One pick per round; the positions
+// are set by the final standings (worst record first, the champion last, snaking), so they appear once the season is archived.
+function futurePicksCard() {
+  if (!futurePicks) return '';
+  const known = futurePicks.order_set;
+  return `<div class="card elev-sm" id="future-picks" style="padding:var(--space-3) var(--space-4);margin-top:var(--space-4)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-2)">
+      <h4 style="margin:0">Draft picks <span class="muted" style="font-size:13px;font-weight:normal">Season ${futurePicks.season_number} draft</span></h4>
+      <span class="muted" style="font-size:12px">${known ? 'Reverse order of the standings, snaking. The champion picks last.' : 'Pick positions are set by the final standings when the season ends.'}</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">${futurePicks.picks.map(p => `<span class="pill" title="${p.overall ? 'Pick ' + p.overall + ' overall' : ''}">Round ${p.round}${p.pick_in_round ? ` &middot; pick ${p.pick_in_round}` : ''}</span>`).join('')}</div>
+  </div>`;
 }
 
 // The keeper deadline, on the roster pages (set in League Settings). Shown while keepers are open or a deadline is set ahead.
@@ -1928,11 +1945,12 @@ async function renderLeagueSettings() {
       + (keepsRosters ? `<p><label>Rookie draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"></label>
            ${needsRefill ? `<label> Refill rounds <input id="rollover-refill" type="number" min="1" max="60" value="${lg.offseason_refill_rounds || 3}" style="width:4em"></label>` : ''}
          </p>${isKeeper && !lg.keeper_deadline ? '<p class="muted">Set the keeper deadline in Keeper Settings above before rolling over.</p>' : ''}` : '')
+      + `<p><label>Champion (picks last in the next draft) <select id="rollover-champion"><option value="">None - standings only</option>${ov.teams.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label></p>`
       + `<button id="rollover-btn">Roll over to season ${lg.season_number + 1}</button>`;
   }
   html += `</div><div id="keeper-pick-card"></div>`;
 
-  html += `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>Season ${s.season_number} - ${esc(fmtName(s.league_format))}${s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : ''}</summary>
+  html += `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>Season ${s.season_number} - ${esc(fmtName(s.league_format))}${s.champion_team_id && teamsById[s.champion_team_id] ? ' - champion: ' + esc(teamsById[s.champion_team_id].name) : (s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : '')}</summary>
       <table><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th></tr>${s.standings.map(r => `<tr><td>${r.rank}</td><td>${esc(r.team_name)}</td><td>${r.wins ?? ''}</td><td>${r.losses ?? ''}</td><td>${r.ties ?? ''}</td></tr>`).join('')}</table></details>`).join('')
     : `<p class="muted">No archived seasons yet.</p>`) + `</div>`;
   $('content').innerHTML = html;
@@ -1951,7 +1969,8 @@ async function renderLeagueSettings() {
   on('rollover-btn', () => {
     if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
     const num = (id) => $(id) ? parseInt($(id).value, 10) : null;
-    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill')})),
+    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill'),
+      champion_team_id: $('rollover-champion') && $('rollover-champion').value ? parseInt($('rollover-champion').value, 10) : null})),
       `Season ${lg.season_number} archived. The league is in the offseason.`);
   });
 

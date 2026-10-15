@@ -65,7 +65,13 @@ def draft_order(db: Session, league: League) -> list[int] | None:
     archive = db.query(LeagueSeason).filter_by(league_id=league.id, season_number=league.season_number - 1).one_or_none()
     if archive is None:
         raise RolloverError("The last season isn't archived, so there is no standings order to draft in")
-    return [r["team_id"] for r in reversed(archive.data["standings"])]
+    # Worst record first. Ties on wins and losses are already broken by goal differential (series_standings.RANK_KEYS).
+    # Playoff results only matter for the champion, who picks last.
+    order = [r["team_id"] for r in reversed(archive.data["standings"])]
+    if archive.champion_team_id in order:
+        order.remove(archive.champion_team_id)
+        order.append(archive.champion_team_id)
+    return order
 
 
 def _snapshot(db: Session, league: League, standings: list[dict]) -> dict:
@@ -278,7 +284,7 @@ def process_keeper_deadline(db: Session, league: League, now: datetime.datetime 
 
 
 def roll_over(db: Session, league: League, offseason_rounds: int | None = None, refill_rounds: int | None = None,
-              today: datetime.date | None = None) -> LeagueSeason:
+              today: datetime.date | None = None, champion_team_id: int | None = None) -> LeagueSeason:
     """Archives the current season and opens the offseason. Flushes, does not commit."""
     if league.draft_type != "snake":
         raise RolloverError("Season rollover is only available for snake-draft leagues for now")
@@ -300,8 +306,11 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
     standings = final_standings(db, league)
     teams = db.query(Team).filter_by(league_id=league.id).order_by(Team.id).all()
     team_ids = [t.id for t in teams]
+    if champion_team_id is not None and champion_team_id not in team_ids:
+        raise RolloverError("The champion has to be a team in this league")
     archive = LeagueSeason(league_id=league.id, season_number=league.season_number, league_format=fmt,
-                           archived_at=datetime.datetime.utcnow(), data=_snapshot(db, league, standings))
+                           archived_at=datetime.datetime.utcnow(), champion_team_id=champion_team_id,
+                           data=_snapshot(db, league, standings))
     db.add(archive)
     stats, ages = {}, {}
     if fmt == "keeper":
@@ -356,6 +365,31 @@ def offseason_draft_plan(db: Session, league: League, kind: str, order: list[int
         this_round = order if (r % 2 == 1 or not snake) else order[::-1]
         slots += [(t, r) for t in this_round if r <= rounds_for[t]]
     return slots
+
+
+def future_picks(db: Session, league: League, team_id: int) -> dict:
+    """A Future Draft Pick Redraft team's picks in the next draft, for its roster page: one per round. The pick positions
+    are known once the season is archived (reverse standings, champion last, snake) or the draft has started."""
+    rounds = roster_limit(db, league)
+    n = db.query(Team).filter_by(league_id=league.id).count()
+    order = None
+    if league.offseason:
+        try:
+            order = draft_order(db, league)
+        except RolloverError:
+            order = None
+    draft = (db.query(Draft).filter_by(league_id=league.id, season_number=league.season_number).order_by(Draft.id.desc()).first()
+             if league.offseason else None)   # outside the offseason that draft is this season's, not the next one
+    actual = {p.round: p.pick_number for p in db.query(DraftPick).filter_by(draft_id=draft.id, team_id=team_id)} if draft else {}
+    picks = []
+    for r in range(1, rounds + 1):
+        overall = actual.get(r)
+        if overall is None and order and team_id in order:
+            i = order.index(team_id)
+            overall = (r - 1) * n + (i if r % 2 == 1 else n - 1 - i) + 1
+        picks.append({"round": r, "pick_in_round": ((overall - 1) % n + 1) if overall else None, "overall": overall})
+    return {"season_number": league.season_number if league.offseason else league.season_number + 1,
+            "order_set": order is not None or bool(actual), "picks": picks}
 
 
 def pool_for_kind(assets: list[DraftableAsset], kind: str) -> list[DraftableAsset]:

@@ -274,8 +274,6 @@ combined = run_draft(lid, headers=H)
 assert len(combined) == 4 * 2 and order_of(combined, 1) == best_first[::-1] and order_of(combined, 2) == best_first[::-1]
 assert client.get(f"/leagues/{lid}").json()["offseason"] is False
 
-print("Rollover smoke test passed: permissions, all four formats, keeper picks / deadline / auto-trim, roster freeze, "
-      "draft kinds, order and pools, archive.")
 
 # ---- AI teams keep by a composite of age, points per game and games played ---------------------------------------
 lid, tids, first, best_first = finish_season("KeepAI", "keeper", keeper_draft_style="rookie_resign", keeper_limit=10)
@@ -305,8 +303,55 @@ from fantasy_sports.platform.draft_stats import last_completed_season_year
 assert last_completed_season_year(datetime.date(2026, 10, 15)) == 2025, "after the new season's dates begin: last season"
 assert last_completed_season_year(datetime.date(2026, 7, 1)) == 2025, "before they begin: the season that just ended"
 
+# ---- draft order: goal differential breaks ties, the champion picks last, Future Draft Pick Redraft shows its picks -----
+lid, tids = make_league("Tie", "future_pick_redraft")
+run_draft(lid)
+
+
+def final_game(lid, winner, loser, w_goals, l_goals, day):
+    series = LeagueSeries(league_id=lid, team_a_id=winner, team_b_id=loser, start_date=day, end_date=day, total_days=5, status="FINAL")
+    db.add(series)
+    db.flush()
+    db.add(SeriesDailyGame(series_id=series.id, calendar_date=day, home_team_id=winner, away_team_id=loser,
+                           home_score=w_goals, away_score=l_goals, status="FINAL"))
+
+
+d0 = datetime.date(2026, 2, 1)
+# A cycle: t0 beat t1 1-0, t1 beat t2 1-0, t2 beat t0 5-0. All three finish 1-1; goal differential is t2 +4, t1 0, t0 -4. t3 played nobody.
+final_game(lid, tids[0], tids[1], 1, 0, d0)
+final_game(lid, tids[1], tids[2], 1, 0, d0 + datetime.timedelta(days=1))
+final_game(lid, tids[2], tids[0], 5, 0, d0 + datetime.timedelta(days=2))
+db.commit()
+picks_before = client.get(f"/leagues/{lid}/teams/{tids[1]}/future-picks").json()
+assert picks_before["order_set"] is False and len(picks_before["picks"]) == full and picks_before["picks"][0]["overall"] is None
+assert client.get(f"/leagues/{lid}/teams/{tids[1]}/future-picks").status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={"champion_team_id": 999999}, headers=H).status_code == 409, "champion must be in the league"
+assert client.post(f"/leagues/{lid}/rollover", json={"champion_team_id": tids[1]}, headers=H).status_code == 200
+season1 = client.get(f"/leagues/{lid}/seasons/1").json()
+assert season1["champion_team_id"] == tids[1] and [r["team_id"] for r in season1["standings"]] == [tids[2], tids[1], tids[0], tids[3]] \
+    or [r["team_id"] for r in season1["standings"]][:3] == [tids[2], tids[1], tids[0]], season1["standings"]
+# Reverse standings is t3, t0, t1, t2 - but the champion (t1) picks last: t3, t0, t2, t1. Snake: round 2 reverses.
+picks_after = {t: client.get(f"/leagues/{lid}/teams/{t}/future-picks").json() for t in tids}
+assert picks_after[tids[1]]["order_set"] is True
+assert [picks_after[t]["picks"][0]["pick_in_round"] for t in (tids[3], tids[0], tids[2], tids[1])] == [1, 2, 3, 4]
+assert [picks_after[t]["picks"][1]["pick_in_round"] for t in (tids[3], tids[0], tids[2], tids[1])] == [4, 3, 2, 1]
+tiebreak = run_draft(lid, headers=H)
+assert order_of(tiebreak, 1) == [tids[3], tids[0], tids[2], tids[1]], order_of(tiebreak, 1)
+assert order_of(tiebreak, 2) == [tids[1], tids[2], tids[0], tids[3]]
+assert client.get(f"/leagues/{lid}/teams/{tids[1]}/future-picks").json()["order_set"] is False, "once drafted, the picks shown are for the season after"
+lid_other, _ = make_league("NotFuture", "traditional_redraft")
+assert client.get(f"/leagues/{lid_other}/teams/{_[0]}/future-picks").status_code == 400
+
+# Deleting a league clears its keeper rows and season archive (they point at its teams).
+assert client.delete(f"/leagues/{lid}", headers=H).status_code == 200
+db.expire_all()
+assert db.query(KeeperCandidate).filter_by(league_id=lid).count() == 0
+
 # ---- a Keeper league left open in its keeper-selection phase (for looking at the page by hand) -----------------
 lid, tids, first, best_first = finish_season("KeepOpen", "keeper", keeper_draft_style="separate", keeper_limit=14)
 assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future(72)}, headers=H).status_code == 200
 assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 2}, headers=H).status_code == 200
 print(f"League {lid} (KeepOpen) is left in keeper selection.")
+
+print("Rollover smoke test passed: permissions, all four formats, keeper picks / deadline / auto-trim, roster freeze, "
+      "draft kinds, order and pools, archive, tiebreak, champion, future picks.")
