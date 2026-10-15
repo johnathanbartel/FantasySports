@@ -83,7 +83,7 @@ def rate_league(team_ids: list[int], series: list[SeriesRecord], games: list[Gam
     total = len(round_starts)
     cache: dict[datetime.date, tuple[dict, dict]] = {}
     out: dict[tuple[int, datetime.date], GameScore] = {}
-    unit = max((s.total_days for s in series), default=1)
+    unit = max((s.expected_games for s in series), default=1)
     for g in (targets if targets is not None else games):
         s = series_by_id[g.series_id]
         as_of = as_of_override or g.calendar_date - datetime.timedelta(days=PUBLISH_LEAD_DAYS)

@@ -502,6 +502,8 @@ class SeriesDailyGameOut(ORMModel):
     id: int
     series_id: int
     calendar_date: datetime.date
+    calendar_date_end: datetime.date | None = None
+    window_index: int | None = None
     is_matchup_day: bool
     home_team_id: int
     away_team_id: int
@@ -542,6 +544,8 @@ class SeriesScheduleOut(BaseModel):
 class TeamSeriesGameOut(BaseModel):
     daily_game_id: int
     calendar_date: datetime.date
+    calendar_date_end: datetime.date | None = None
+    window_index: int | None = None
     is_matchup_day: bool
     home_away: str
     status: str

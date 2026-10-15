@@ -84,7 +84,7 @@ def main() -> None:
             assets = {n: player(t1, n) for n in ("McDavid", "Draisaitl", "Nurse", "Bouchard", "Skinner")}
             foreign = player(t2, "Other Owner Player")
             fb_asset = player(fb_team, "Football Guy", cfb)
-            series_schedule.generate_schedule(db, league, D0, cycles=2)   # 2 cycles: plenty of games in the window
+            series_schedule.generate_schedule(db, league, D0, cycles=2, window_rows=False)   # 2 cycles: plenty of games in the window
             db.commit()
             ids = dict(t1=t1.id, t2=t2.id, t3=t3.id, t4=t4.id, league=league.id, fb_team=fb_team.id, fb_league=fb_league.id)
             tok = {n: create_session(db, u.id).token for n, u in dict(commissioner=commissioner, owner1=owner1, owner2=owner2).items()}

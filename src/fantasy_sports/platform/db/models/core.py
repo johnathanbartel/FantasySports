@@ -626,6 +626,7 @@ class SeriesDailyGame(Base):
             name="uq_series_daily_game_teams_date",
         ),
         CheckConstraint("home_team_id <> away_team_id", name="ck_series_daily_game_distinct_teams"),
+        CheckConstraint("window_index IS NULL OR window_index IN (1, 2, 3)", name="ck_series_daily_game_window_index"),
         CheckConstraint(
             "game_score_rating BETWEEN 0 AND 100",
             name="ck_series_daily_game_score_rating",
@@ -652,6 +653,10 @@ class SeriesDailyGame(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     series_id: Mapped[int] = mapped_column(ForeignKey("league_series.id"))
     calendar_date: Mapped[datetime.date] = mapped_column()
+    # NHL window rows (docs/hockey_spec.md 5 and 10.1): one row per fantasy window - 1 Sun-Tue, 2 Wed-Thu, 3 Fri-Sat -
+    # running from calendar_date to calendar_date_end. Both are NULL on legacy one-row-per-day games.
+    calendar_date_end: Mapped[datetime.date | None] = mapped_column(nullable=True)
+    window_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_matchup_day: Mapped[bool] = mapped_column(Boolean, default=True)
     game_score_rating: Mapped[int] = mapped_column(Integer, default=50)
     home_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))

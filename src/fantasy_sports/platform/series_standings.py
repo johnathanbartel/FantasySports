@@ -21,6 +21,7 @@ Rules:
 import datetime
 from dataclasses import dataclass, field
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform.db.models.core import LeagueSeries, SeriesDailyGame, Team
@@ -46,6 +47,11 @@ class SeriesRecord:
     team_b_id: int
     start_date: datetime.date
     total_days: int
+    games: int = 0          # scheduled game rows in the series (a window row each); 0 = total_days (legacy daily rows)
+
+    @property
+    def expected_games(self) -> int:
+        return self.games or self.total_days
 
 
 @dataclass
@@ -89,8 +95,10 @@ class PairRecord:
 def load_league(db: Session, league_id: int) -> tuple[list[int], list[SeriesRecord], list[GameRecord]]:
     """(team ids, series, games) as plain records so every calculation below is pure and re-runnable."""
     team_ids = sorted(t.id for t in db.query(Team.id).filter_by(league_id=league_id))
-    series = [SeriesRecord(s.id, s.team_a_id, s.team_b_id, s.start_date, s.total_days)
-              for s in db.query(LeagueSeries).filter_by(league_id=league_id).order_by(LeagueSeries.start_date, LeagueSeries.id)]
+    series_rows = list(db.query(LeagueSeries).filter_by(league_id=league_id).order_by(LeagueSeries.start_date, LeagueSeries.id))
+    counts = dict(db.query(SeriesDailyGame.series_id, func.count(SeriesDailyGame.id)).filter(
+        SeriesDailyGame.series_id.in_([s.id for s in series_rows] or [0])).group_by(SeriesDailyGame.series_id))
+    series = [SeriesRecord(s.id, s.team_a_id, s.team_b_id, s.start_date, s.total_days, counts.get(s.id, 0)) for s in series_rows]
     ids = [s.series_id for s in series]
     games = []
     if ids:
@@ -115,7 +123,7 @@ def decided_series(series: list[SeriesRecord], games: list[GameRecord], as_of: d
     out = {}
     for s in series:
         gs = by_series.get(s.series_id, [])
-        if len(gs) != s.total_days:
+        if len(gs) != s.expected_games:
             continue
         a = sum(1 for g in gs if _winner(g) == s.team_a_id)
         b = sum(1 for g in gs if _winner(g) == s.team_b_id)

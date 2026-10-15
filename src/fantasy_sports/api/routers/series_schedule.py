@@ -204,7 +204,8 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db)):
         if team_id not in (s.team_a_id, s.team_b_id):
             continue
         opp = s.team_b_id if s.team_a_id == team_id else s.team_a_id
-        games = [TeamSeriesGameOut(daily_game_id=g.id, calendar_date=g.calendar_date, is_matchup_day=g.is_matchup_day,
+        games = [TeamSeriesGameOut(daily_game_id=g.id, calendar_date=g.calendar_date, calendar_date_end=g.calendar_date_end,
+                                   window_index=g.window_index, is_matchup_day=g.is_matchup_day,
                                    home_away="home" if g.home_team_id == team_id else "away", status=g.status)
                  for g in sorted(s.daily_games, key=lambda g: g.calendar_date)]
         out.append(TeamSeriesOut(series_id=s.id, opponent_id=opp, opponent_name=names.get(opp, "Opponent"), start_date=s.start_date,

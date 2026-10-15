@@ -304,8 +304,8 @@ def main() -> None:
                    bexp[r["team_id"]]["gf"] - bexp[r["team_id"]]["ga"]) for r in bst),
               "12-team standings tie out to the brute-force tally")
         bsc = client.get(f"/leagues/{lid['big']}/game-scores").json()["games"]
-        check(len(bsc) == 11 * 2 * 6 * 7 and all(0 <= g["score"] <= 100 and isinstance(g["score"], int) for g in bsc),
-              "all 924 twelve-team Game Scores are integers within 0-100")
+        check(len(bsc) == len(all_rows) and all(0 <= g["score"] <= 100 and isinstance(g["score"], int) for g in bsc),
+              f"all {len(all_rows)} twelve-team Game Scores (one per window game) are integers within 0-100")
         check(max(g["score"] for g in bsc) > 30 and min(g["score"] for g in bsc) < 15, "scores span a useful range")
         engine.dispose()  # release the SQLite file so the temp directory can be removed
 
