@@ -8,7 +8,7 @@ from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCrea
 from fantasy_sports.platform import lineups
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.conferences import service as conferences
-from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.draft_stats import current_season_stats, stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.roster_fill import fill_slots
 from fantasy_sports.platform.db.models.core import (
@@ -117,6 +117,7 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
     ids = [e.draftable_asset_id for e in entries]
     stats = stats_by_asset(db, ids)       # season points: football's stored points, or hockey's stored xG credit
     rates = rates_by_asset(db, ids)
+    current = current_season_stats(db, ids)
     points = {i: stats[i]["points"] for i in ids}
     school = {t.id: t.name for t in db.query(RealTeam)}
     out = []
@@ -132,6 +133,7 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             last_season_points=points.get(a.id),
             acquired_via=e.acquired_via,
             games=rates.get(a.id, {}).get("games"), points_per_game=rates.get(a.id, {}).get("points_per_game"),
+            this_season_points=current.get(a.id, {}).get("points"), this_season_games=current.get(a.id, {}).get("games"),
         ))
     return out
 

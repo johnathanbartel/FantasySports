@@ -17,7 +17,7 @@ from fantasy_sports.platform import calendar, entitlements, free_agency, ranking
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
-from fantasy_sports.platform.draft_stats import stats_by_asset
+from fantasy_sports.platform.draft_stats import current_season_stats, stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import (
     Conference,
@@ -185,6 +185,8 @@ class FreeAgentOut(BaseModel):
     age: int | None = None
     last_season_points: float | None
     points_per_game: float | None = None
+    this_season_points: float | None = None
+    this_season_games: int | None = None
     asking_price: int   # PROVISIONAL rule - see platform/free_agency.py
 
 
@@ -223,12 +225,15 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
     free_ids = [a for a in prices if a not in taken]
     stats = stats_by_asset(db, free_ids)
     rates = rates_by_asset(db, free_ids)
+    current = current_season_stats(db, free_ids)
     assets = db.query(DraftableAsset).options(*_EAGER).filter(DraftableAsset.id.in_(free_ids or [0])).all()
     return FreeAgentsOut(open=True, price_note=note, players=[
         FreeAgentOut(
             draftable_asset_id=a.id, display_name=draftable_asset_display_name(a), position=draftable_asset_position(a),
             real_team=_school(a, schools), age=draftable_asset_age(a), last_season_points=stats.get(a.id, {}).get("points"),
-            points_per_game=rates.get(a.id, {}).get("points_per_game"), asking_price=prices[a.id])
+            points_per_game=rates.get(a.id, {}).get("points_per_game"),
+            this_season_points=current.get(a.id, {}).get("points"), this_season_games=current.get(a.id, {}).get("games"),
+            asking_price=prices[a.id])
         for a in assets
     ])
 

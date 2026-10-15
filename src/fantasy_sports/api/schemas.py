@@ -233,6 +233,8 @@ class RosterEntryOut(BaseModel):
     acquired_via: str | None = None
     games: int | None = None                  # games with stored credit (None = no stored games)
     points_per_game: float | None = None
+    this_season_points: float | None = None   # this season's stored points (None = none scored yet)
+    this_season_games: int | None = None
 
 
 class RosterSlotOut(BaseModel):

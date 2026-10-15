@@ -119,7 +119,7 @@ const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 // Transactions-tab list header and age cell. Age comes from the NHL roster sync, so only hockey shows it.
 const ageCell = (v) => isHockey() ? `<span class="pts muted" title="Age">${v ?? '-'}</span>` : '';
-const txHeader = (price, action) => `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts" title="Age in years">Age</span>' : ''}<span class="pts" title="${LAST} fantasy points, ESPN standard">Points</span><span class="pts" title="Points per game">PPG</span>${price ? '<span class="pts" title="Asking price (provisional)">Price</span>' : ''}<span style="width:64px"></span></div>`;
+const txHeader = (price, action) => `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts" title="Age in years">Age</span>' : ''}<span class="pts" title="This season's fantasy points so far">This yr</span><span class="pts" title="${LAST} fantasy points, ESPN standard">Last yr</span><span class="pts" title="Points per game">PPG</span>${price ? '<span class="pts" title="Asking price (provisional)">Price</span>' : ''}<span style="width:64px"></span></div>`;
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
@@ -1224,7 +1224,7 @@ async function renderTransactions() {
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
         <div style="display:flex;gap:var(--space-2);margin-bottom:var(--space-2)"><input id="fa-q" class="inp" placeholder="${isHockey() ? 'Search players or NHL teams...' : 'Search players or schools...'}" style="flex:1" value="${esc(view.fa.q)}">
-          <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option>${ov.is_college ? '<option value="price">Sort: asking price (low)</option>' : ''}<option value="name">Sort: name</option></select></div>
+          <select id="fa-sort" class="inp"><option value="points">Sort: ${LAST} points</option><option value="current">Sort: this season points</option>${ov.is_college ? '<option value="price">Sort: asking price (low)</option>' : ''}<option value="name">Sort: name</option></select></div>
         <div id="fa-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-2)"></div>
         <div class="card elev-sm" style="padding:var(--space-2) var(--space-4)" id="fa-list"></div>
       </div>
@@ -1257,7 +1257,8 @@ function drawFa() {
   const {fa, sum, team} = cache.tx;
   const f = view.fa, q = f.q.trim().toLowerCase();
   const rows = fa.players.filter(p => (!f.pos || p.position === f.pos) && (!q || p.display_name.toLowerCase().includes(q) || (p.real_team || '').toLowerCase().includes(q)));
-  rows.sort((a, b) => f.sort === 'price' ? a.asking_price - b.asking_price || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)
+  rows.sort((a, b) => f.sort === 'current' ? (b.this_season_points ?? -1) - (a.this_season_points ?? -1) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)
+    : f.sort === 'price' ? a.asking_price - b.asking_price || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)
     : f.sort === 'name' ? a.display_name.localeCompare(b.display_name) : (b.last_season_points ?? -1) - (a.last_season_points ?? -1) || a.display_name.localeCompare(b.display_name));
   const chips = $('fa-chips');
   chips.innerHTML = [['', 'All', fa.players.length]].concat(POSITIONS.map(p => [p, POS_LABEL[p] || p, fa.players.filter(x => x.position === p).length])).map(([v, l, n]) =>
@@ -1266,7 +1267,7 @@ function drawFa() {
   const can = canManage(team) && sum.open_spots > 0;
   $('fa-list').innerHTML = (rows.length ? txHeader(ov.is_college) : '') + rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
       <span style="flex:1;min-width:0"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
-      ${ageCell(p.age)}<span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
+      ${ageCell(p.age)}<span class="pts" title="This season's points so far (${p.this_season_games ?? 0} games)">${pts(p.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
       <button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button></div>`).join('')
     + (rows.length > 50 ? `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing 50 of ${rows.length} - search or pick a position to narrow.</p>` : '')
     || '<p class="muted" style="margin:var(--space-2) 0">No free agents match.</p>';
@@ -1279,7 +1280,7 @@ function drawTxRoster() {
   const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   $('tx-roster').innerHTML = sorted.length ? txHeader(false) + sorted.map(r => `<div class="row">${posTag(r.position)}
     <span style="flex:1;min-width:0"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
-    ${ageCell(r.age)}<span class="pts muted" title="${LAST} points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
+    ${ageCell(r.age)}<span class="pts" title="This season's points so far (${r.this_season_games ?? 0} games)">${pts(r.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
     <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
     : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
   $('tx-roster').querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {
