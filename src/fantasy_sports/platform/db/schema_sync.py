@@ -36,7 +36,7 @@ def ensure_latest_schema(engine):
         if "players" in tables:
             cols = {c["name"] for c in insp.get_columns("players")}
             for name, ddl in (("injury_status", "VARCHAR(10)"), ("injury_note", "VARCHAR(200)"),
-                              ("injury_updated_at", "DATETIME")):
+                              ("injury_updated_at", "DATETIME"), ("birth_date", "DATE")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE players ADD COLUMN {name} {ddl}"))
 

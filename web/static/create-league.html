@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Create a League - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
 <style>
   body{margin:0}
   .field{display:flex;flex-direction:column;gap:6px;margin-bottom:var(--space-4)}
@@ -352,6 +353,10 @@ document.getElementById('defense-mode').onchange = updateRosterRounds;
 const requestedUniverse = new URLSearchParams(location.search).get('universe');
 if (['nfl', 'nhl'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
 updateUniverse();
+// Preview the chosen sport's look (rink, field...) while configuring the league.
+const previewTheme = () => Retro.setTheme(Retro.THEME_BY_UNIVERSE[document.getElementById('universe').value] || 'hub');
+document.getElementById('universe').addEventListener('change', previewTheme);
+previewTheme();
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
