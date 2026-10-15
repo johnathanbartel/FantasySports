@@ -10,6 +10,8 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from typing import Sequence
 
+from fantasy_sports.platform.simulator.wallclock import WallClock
+
 SCHEDULED, LIVE, FINAL = "SCHEDULED", "LIVE", "FINAL"
 WATCHING, SKIPPED = "WATCHING", "SKIPPED"
 
@@ -19,6 +21,8 @@ class GameShape:
     periods: int
     period_seconds: int
     window_seconds: int
+    # When set, the game follows real (nominal) times instead of a compressed playback window (see wallclock.py).
+    wall_clock: "WallClock | None" = None
 
     @property
     def total_seconds(self) -> int:
@@ -39,6 +43,8 @@ def public_elapsed(shape: GameShape, status: str, started_at: datetime.datetime 
         return 0
     if status == FINAL:
         return shape.total_seconds
+    if shape.wall_clock is not None:
+        return min(shape.total_seconds, shape.wall_clock.elapsed(now, shape.period_seconds))
     real = (now - started_at).total_seconds()
     if real <= 0:
         return 0
@@ -46,10 +52,14 @@ def public_elapsed(shape: GameShape, status: str, started_at: datetime.datetime 
 
 
 def is_due(shape: GameShape, started_at: datetime.datetime, now: datetime.datetime) -> bool:
+    if shape.wall_clock is not None:
+        return shape.wall_clock.is_finished(now)
     return (now - started_at).total_seconds() >= shape.window_seconds
 
 
 def finished_at(shape: GameShape, started_at: datetime.datetime) -> datetime.datetime:
+    if shape.wall_clock is not None:
+        return shape.wall_clock.end_utc()
     return started_at + datetime.timedelta(seconds=shape.window_seconds)
 
 

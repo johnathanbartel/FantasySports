@@ -26,6 +26,7 @@ from fantasy_sports.platform.db.models.core import (
     LeagueSeries, SeriesDailyGame, SimulatorEvent, SimulatorGame, SimulatorReveal,
 )
 from fantasy_sports.platform.simulator import state as st
+from fantasy_sports.platform.simulator import wallclock
 from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, ContractError, SimScript, validate_script
 
 MAX_EVENT_PAGE = 500
@@ -48,7 +49,7 @@ def get_sim(db: Session, daily_game_id: int) -> SimulatorGame | None:
 
 
 def shape_of(sim: SimulatorGame) -> st.GameShape:
-    return st.GameShape(sim.periods, sim.period_seconds, sim.window_seconds)
+    return st.GameShape(sim.periods, sim.period_seconds, sim.window_seconds, wallclock.from_provenance(sim.provenance))
 
 
 def publish_script(db: Session, daily_game: SeriesDailyGame, script: SimScript) -> SimulatorGame:
@@ -107,17 +108,7 @@ def sync(db: Session, sim: SimulatorGame, now: datetime.datetime, events: list[S
     events = events if events is not None else _events(db, sim)
     dg = sim.daily_game
     if st.is_due(shape, sim.started_at, now):
-        sim.status = st.FINAL
-        sim.finalized_at = st.finished_at(shape, sim.started_at)
-        last = events[-1]
-        dg.status = "FINAL"
-        dg.home_score, dg.away_score = max(dg.home_score, last.home_score), max(dg.away_score, last.away_score)
-        dg.current_period, dg.seconds_remaining = shape.periods, 0
-        series = db.get(LeagueSeries, dg.series_id)
-        db.flush()
-        siblings = db.query(SeriesDailyGame).filter_by(series_id=series.id).all()
-        series.status = "FINAL" if all(g.status == "FINAL" for g in siblings) else "IN_PROGRESS"
-        db.flush()
+        _finalize(db, sim, events, st.finished_at(shape, sim.started_at))
         return
     elapsed = st.public_elapsed(shape, sim.status, sim.started_at, now)
     seq = st.count_through([e.game_second for e in events], elapsed)
@@ -127,6 +118,28 @@ def sync(db: Session, sim: SimulatorGame, now: datetime.datetime, events: list[S
     if (dg.home_score, dg.away_score, dg.current_period, dg.seconds_remaining) != new:
         dg.home_score, dg.away_score, dg.current_period, dg.seconds_remaining = new
         db.flush()
+
+
+def _finalize(db: Session, sim: SimulatorGame, events: list[SimulatorEvent], at: datetime.datetime) -> None:
+    shape = shape_of(sim)
+    dg = sim.daily_game
+    sim.status = st.FINAL
+    sim.finalized_at = at
+    last = events[-1]
+    dg.status = "FINAL"
+    dg.home_score, dg.away_score = max(dg.home_score, last.home_score), max(dg.away_score, last.away_score)
+    dg.current_period, dg.seconds_remaining = shape.periods, 0
+    series = db.get(LeagueSeries, dg.series_id)
+    db.flush()
+    siblings = db.query(SeriesDailyGame).filter_by(series_id=series.id).all()
+    series.status = "FINAL" if all(g.status == "FINAL" for g in siblings) else "IN_PROGRESS"
+    db.flush()
+
+
+def finalize_now(db: Session, sim: SimulatorGame, now: datetime.datetime) -> None:
+    """Close a live game ahead of its schedule (e.g. every real game is already final). Idempotent."""
+    if sim.status == st.LIVE:
+        _finalize(db, sim, _events(db, sim), now)
 
 
 def get_reveal(db: Session, sim: SimulatorGame, user_id: int) -> SimulatorReveal | None:
@@ -327,5 +340,5 @@ def final_view(db: Session, sim: SimulatorGame, user_id: int, now: datetime.date
 
 __all__ = [
     "ContractError", "SimulatorError", "publish_script", "start_game", "sync", "view_state", "view_events",
-    "watch", "progress", "skip", "final_view", "get_sim", "unpublished_state", "utcnow",
+    "watch", "progress", "skip", "final_view", "get_sim", "unpublished_state", "utcnow", "finalize_now",
 ]

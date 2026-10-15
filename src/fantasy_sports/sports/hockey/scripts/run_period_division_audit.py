@@ -10,6 +10,8 @@ Offline audit of the chronological period division (docs/hockey_spec.md sections
      clock are drawn inside the fantasy periods; the FS-025 monotonic scoreboard validator passes; the division table
      in the provenance ties out to the box score; seeded replays are byte-identical for shuffled inputs.
   D. Best Matchup lock: a standings change after the lock cannot change the selection.
+  E. The live clock: a published script that carries real kickoffs is paced by them (not by a compressed playback
+     window); events are revealed when the clock reaches them; the game ends when the last real period ends.
 
 Pure and offline: no database, no network. Exits 0 only if every check passes. From the repository root:
 
@@ -319,6 +321,54 @@ def audit_lock() -> None:
         check("before the lock" in str(e), "a move submitted at the lock is refused")
 
 
+def audit_live_clock() -> None:
+    from fantasy_sports.platform.simulator import state as st
+    from fantasy_sports.platform.simulator import wallclock
+    from fantasy_sports.platform.simulator.contract import SimScript
+    from fantasy_sports.sports.hockey.simulator.division import Division
+
+    early = [cg(a, at(16), "home") for a in range(1, 7)]
+    late = [cg(a, at(19), "away") for a in range(7, 13)]
+    games = early + late
+    home_lines = [line(a, a, 2500 + 10 * a) for a in range(1, 7)]
+    away_lines = [line(a, a, 300 + 10 * a) for a in range(7, 13)]
+    _, script = build(home_lines, away_lines, games)
+    clock = wallclock.from_provenance(script.provenance)
+    check(clock is not None and clock.timezone == "America/New_York" and clock.segment_seconds == 3600,
+          "a script with real kickoffs asks to be paced by its wall clock (America/New_York)")
+    check(wallclock.from_provenance(build(home_lines, away_lines, [], starters=False)[1].provenance) is None,
+          "a script without kickoff data keeps compressed playback")
+    div = Division.build(games)
+    check(clock.to_dict() == div.wall_clock().to_dict(), "the stored wall clock is the division's own (one implementation)")
+
+    shape = st.GameShape(3, 1200, 10800, clock)
+    started = datetime.datetime(2026, 10, 11, 12, 0)        # when the sim row went live (UTC); irrelevant to the clock
+
+    def utc(hour, minute=0):                                  # an Eastern wall time on the game day, as naive UTC (EDT = UTC-4)
+        return datetime.datetime.combine(DAY, datetime.time(hour, minute)) + datetime.timedelta(hours=4)
+
+    el = lambda t: st.public_elapsed(shape, st.LIVE, started, t)
+    check(el(utc(15, 59)) == 0 and st.clock_at(shape, el(utc(15, 59))) == (1, 1200), "before the first kickoff the clock reads Period 1 20:00")
+    check(el(utc(16, 30)) == 300 and st.clock_at(shape, 300) == (1, 900), "at 4:30 the clock reads Period 1 15:00 left (mean progress 0.25)")
+    check(el(utc(18)) == 1200, "at 6:00 every 4:00 real P1 and P2 is over: fantasy P1 is complete")
+    check(el(utc(19, 30)) > 1200 and st.clock_at(shape, el(utc(19, 30)))[0] == 2, "at 7:30 the clock is in Period 2")
+    check(el(utc(23)) == 3600 and not st.is_due(shape, started, utc(21, 59)) and st.is_due(shape, started, utc(22)),
+          "the game is due when the last real period ends (7:00 kickoff + 3 hours = 10:00 PM)")
+    check(st.finished_at(shape, started) == utc(22), "finished_at is the last real period's end")
+    check(el(utc(16, 30)) == div.game_second_at(datetime.datetime.combine(DAY, datetime.time(16, 30))),
+          "the service's clock and the division's clock agree")
+    seconds = [e.game_second for e in script.events]
+    revealed = [st.count_through(seconds, el(utc(h, m))) for h, m in ((15, 0), (17, 0), (19, 0), (20, 30), (23, 0))]
+    check(revealed == sorted(revealed) and revealed[0] == 1 and revealed[-1] == len(script.events),
+          "events are revealed as the clock reaches them, none early, all by the end")
+    # An event is revealed no earlier than the wall time it happened: a 4:00 player's real-P3 event (18:00-19:00 wall).
+    e_p3 = next(e for e in script.events if e.detail.get("credits") and e.detail["credits"][0]["asset_id"] == 1)
+    check(el(utc(17, 59)) < e_p3.game_second <= el(utc(18, 6)),
+          "a 4:00 player's real-P3 event (about 18:05 on the wall) is not revealed before 18:00 and is revealed by 18:06")
+    # Forced finalization (every real game already final) does not need back-dating the start.
+    check(st.public_elapsed(shape, st.FINAL, started, utc(15)) == 3600, "a FINAL game shows the whole game whatever the time")
+
+
 def main() -> None:
     print("A. the division")
     audit_division()
@@ -328,6 +378,8 @@ def main() -> None:
     audit_adapter()
     print("D. Best Matchup lock")
     audit_lock()
+    print("E. the live clock")
+    audit_live_clock()
     print("\nAll period division audits passed.")
 
 

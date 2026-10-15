@@ -324,8 +324,12 @@ def main() -> None:
         with SessionLocal() as db:
             again = [loader.publish_game(db, db.get(SeriesDailyGame, gid)).script_digest for gid in first_ids]
         check(again == digests and len(set(digests)) == 7, "all 7 games published; republishing replays identical scripts (idempotent)")
-        window = loader.DEFAULT_WINDOW_SECONDS
+        window = 3 * 3600      # the real games all kick off at 19:00 Eastern, so a game runs 19:00-22:00 on the wall clock
         g1 = first_ids[0]
+        with SessionLocal() as db:
+            days = {gid: db.get(SeriesDailyGame, gid).calendar_date for gid in first_ids}
+        # Live games follow the real (nominal) clock, not a compressed playback: 19:00 Eastern is 23:00 UTC (EDT).
+        kick = lambda gid: dt.datetime.combine(days[gid], dt.time(19, 0)) + dt.timedelta(hours=4)
         st = client.get(f"/simulator/games/{g1}/state", headers=auth["human"]).json()
         check(st["published"] and st["status"] == "SCHEDULED" and st["veiled"] and st["home_score"] is None, "before start: published, scheduled, veiled")
         for gid in first_ids:
@@ -333,12 +337,12 @@ def main() -> None:
             assert client.post(f"/simulator/games/{gid}/start", headers=auth["human"]).status_code == 200
         check(client.post(f"/simulator/games/{g1}/start", headers=auth["human"]).status_code == 200, "starting a started game is idempotent")
         check(client.post(f"/simulator/games/{g1}/start", headers=auth["intruder"]).status_code == 403, "only the commissioner starts games")
-        clock["now"] = T0 + dt.timedelta(seconds=window * 0.5)
+        clock["now"] = kick(g1) + dt.timedelta(seconds=window * 0.5)
         r = client.post(f"/simulator/games/{g1}/watch", headers=auth["human"]).json()
         live_events = client.get(f"/simulator/games/{g1}/events?limit=500", headers=auth["human"]).json()
         check(r["status"] == "LIVE" and 0 < len(live_events["events"]) < 600 and not r["is_complete"], f"live game: {len(live_events['events'])} events revealed at the halfway point")
         check(client.get(f"/simulator/games/{g1}/state", headers=auth["intruder"]).json()["veiled"], "another viewer is still behind the veil")
-        clock["now"] = T0 + dt.timedelta(seconds=window + 1)
+        clock["now"] = max(kick(g) for g in first_ids) + dt.timedelta(seconds=window + 1)
         finals = {}
         for gid in first_ids:
             client.post(f"/simulator/games/{gid}/skip", headers=auth["human"])

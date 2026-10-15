@@ -468,7 +468,7 @@ def audit_end_to_end() -> None:
         client = TestClient(app)
         url = f"/simulator/games/{game_id}"
         check(client.post(f"{url}/start", headers=auth["commissioner"]).json()["status"] == "LIVE", "the published game starts")
-        clock["now"] = t0 + datetime.timedelta(seconds=loader.DEFAULT_WINDOW_SECONDS + 1)
+        clock["now"] = t0 + datetime.timedelta(hours=12)   # past the last real period: the game follows the real (nominal) clock
         client.post(f"{url}/watch", headers=auth["viewer"])
         state = client.post(f"{url}/skip", headers=auth["viewer"]).json()
         final = client.get(f"{url}/final", headers=auth["viewer"]).json()

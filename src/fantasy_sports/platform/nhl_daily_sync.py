@@ -799,13 +799,16 @@ def auto_sync_league_scoreboard(db: Session, league_id: int) -> None:
 
             if should_finalize and dg.status != "FINAL":
                 try:
-                    sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds + 120)
+                    if shape.wall_clock is not None:      # paced by real times: close it directly, nothing to back-date
+                        service.finalize_now(db, sim, now_utc)
+                    else:
+                        sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds + 120)
                     service.sync(db, sim, now_utc)
                 except Exception:
                     pass
             elif matchup_started and not matchup_all_final:
                 try:
-                    if sim.status == "LIVE":
+                    if sim.status == "LIVE" and shape.wall_clock is None:
                         elapsed = (now_utc - sim.started_at).total_seconds() if sim.started_at else 0
                         if elapsed >= shape.window_seconds:
                             sim.started_at = now_utc - datetime.timedelta(seconds=shape.window_seconds - 60)

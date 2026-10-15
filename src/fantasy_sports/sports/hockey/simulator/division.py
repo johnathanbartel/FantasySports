@@ -28,10 +28,12 @@ import datetime
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from fantasy_sports.platform.simulator.wallclock import WallClock
 from fantasy_sports.sports.hockey.simulator.model import (
     PERIOD_SECONDS, PERIODS, CountingGame, CreditLine, InputError, ShotAttempt,
 )
 
+CLOCK_TIMEZONE = "America/New_York"             # kickoffs are stored as naive Eastern time
 REAL_PERIOD = datetime.timedelta(minutes=60)    # nominal wall length of one real period (intermission included)
 REAL_PERIOD_SECONDS = 1200                      # game seconds in one real period
 REGULATION_SECONDS = PERIODS * REAL_PERIOD_SECONDS
@@ -111,20 +113,20 @@ class Division:
     def real_progress(slot: RealPeriodSlot, t: datetime.datetime) -> float:
         return _clamp01((t - slot.start) / REAL_PERIOD)
 
+    def wall_clock(self, timezone: str = CLOCK_TIMEZONE) -> WallClock:
+        """The generic wall clock of this division (platform/simulator/wallclock.py): the one implementation of progress,
+        clock and event placement, shared with the live service so they cannot disagree."""
+        return WallClock(timezone, int(REAL_PERIOD.total_seconds()),
+                         tuple(tuple(s.start for s in chunk) for chunk in self.chunks))
+
     def progress(self, k: int, t: datetime.datetime) -> float:
         """Fantasy period k's progress at wall time t: the mean progress of its real periods."""
-        chunk = self.chunks[k - 1]
-        if not chunk:
-            return 0.0
-        return sum(self.real_progress(s, t) for s in chunk) / len(chunk)
+        return self.wall_clock().progress(k, t)
 
     def clock(self, t: datetime.datetime) -> tuple[int, int]:
         """(fantasy period, seconds left in it) at wall time t: the first period that is not finished yet, else the
         last one at 0:00. Each matchup has its own division, hence its own clock."""
-        for k in range(1, PERIODS + 1):
-            if self.progress(k, t) < 1.0:
-                return k, int(round(PERIOD_SECONDS * (1.0 - self.progress(k, t))))
-        return PERIODS, 0
+        return self.wall_clock().clock(t, PERIOD_SECONDS)
 
     def clock_label(self, t: datetime.datetime) -> str:
         period, left = self.clock(t)
@@ -151,8 +153,7 @@ class Division:
             return base + PERIOD_SECONDS - 1
         offset = max(int(real_second), 0) - (slot.period - 1) * REAL_PERIOD_SECONDS
         when = slot.start + (offset / REAL_PERIOD_SECONDS) * REAL_PERIOD
-        inside = int(round(PERIOD_SECONDS * self.progress(k, when)))
-        return base + min(max(inside, 1), PERIOD_SECONDS - 1)
+        return self.wall_clock().event_second(k, when, PERIOD_SECONDS)
 
     def draw(self, rng) -> int:
         """A seeded fantasy game second for an event with no real clock (inverted, unattributed, tie-break): the

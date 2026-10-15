@@ -121,6 +121,8 @@ class HockeySimulatorAdapter:
                 [a for s in ("home", "away") for a in inputs.side(s).attempts],
                 {"home": inputs.home.name, "away": inputs.away.name}),
         }
+        if inputs.counting_games:      # real kickoffs: the live game is paced by them (without them, compressed playback)
+            provenance["wall_clock"] = division.wall_clock().to_dict()
         if extra_provenance:
             provenance.update(extra_provenance)
         script = SimScript(

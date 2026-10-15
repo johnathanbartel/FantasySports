@@ -53,15 +53,15 @@ def main() -> None:
     league_html = (static_dir / "league.html").read_text(encoding="utf-8")
     check('data-go="roster">Roster &amp; lines (3-game series)' in league_html,
           "league.html quick link points to roster tab for NHL")
-    check('data-go="roster">View 3-Game Windows &amp; Lines on Roster' in league_html,
+    check('data-go="roster" class="btn btn-secondary">View 3-Game Windows &amp; Lines on Roster' in league_html,
           "league.html pro schedule directs users to roster 3-game windows")
 
     # 3. 3-Game Window Tabs on Roster
-    check('data-window="1"' in league_html and "Game 1" in league_html and "Sun – Tue" in league_html,
+    check('data-window="${w.num}"' in league_html and "Game ${w.num}" in league_html and "{ num: 1, label: 'Sun – Tue'" in league_html,
           "Game 1 (Sun - Tue) tab present in league.html")
-    check('data-window="2"' in league_html and "Game 2" in league_html and "Wed – Thu" in league_html,
+    check('data-window="${w.num}"' in league_html and "Game ${w.num}" in league_html and "{ num: 2, label: 'Wed – Thu'" in league_html,
           "Game 2 (Wed - Thu) tab present in league.html")
-    check('data-window="3"' in league_html and "Game 3" in league_html and "Fri – Sat" in league_html,
+    check('data-window="${w.num}"' in league_html and "Game ${w.num}" in league_html and "{ num: 3, label: 'Fri – Sat'" in league_html,
           "Game 3 (Fri - Sat) tab present in league.html")
 
     # 4. Multi-matchup resolution & flex elements
@@ -89,8 +89,8 @@ def main() -> None:
     check("data-swindow=" in league_html, "scoreboard game window selectors present")
     check("/static/nhl-game.html?daily_game_id=" in league_html, "scoreboard links to live simulator viewer")
     check("scoreboardAutoRefreshTimer" in league_html, "live scoreboard auto-refresh timer present")
-    check("Period 1 in progress" in league_html, "Period in progress status label present")
-    check("0 - 0 in progress" in league_html, "0 - 0 in progress status for underway period 1 present")
+    check("'1st Period'" in league_html and "'2nd Period'" in league_html,
+          "scoreboard shows the current period (the period clock replaced the 'in progress' labels in 9442cc4)")
     check("Highlights" in league_html, "highlights button present on scoreboard")
     check("Box score" in league_html, "box score button present on scoreboard")
     check("#boxscore" in league_html, "box score button targets #boxscore hash")

@@ -35,6 +35,30 @@ target_metadata = Base.metadata
 # ... etc.
 
 
+def _assume_fresh_database_offline() -> None:
+    """`alembic upgrade head --sql` has no database to inspect, but several migrations ask sa.inspect(bind) which
+    tables and columns already exist. Offline rendering describes a fresh database, so answer "nothing yet"."""
+    import sqlalchemy as sa
+    from sqlalchemy.engine.mock import MockConnection
+
+    class _Fresh:
+        def get_table_names(self, *args, **kwargs):
+            return []
+
+        def get_columns(self, *args, **kwargs):
+            return []
+
+        def get_indexes(self, *args, **kwargs):
+            return []
+
+    real_inspect = sa.inspect
+
+    def inspect(subject, *args, **kwargs):
+        return _Fresh() if isinstance(subject, MockConnection) else real_inspect(subject, *args, **kwargs)
+
+    sa.inspect = inspect
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -47,6 +71,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
+    _assume_fresh_database_offline()
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
