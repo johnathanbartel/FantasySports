@@ -28,6 +28,11 @@ def ensure_latest_schema(engine):
             if "league_mode" not in cols:
                 conn.execute(text("ALTER TABLE leagues ADD COLUMN league_mode VARCHAR(20) DEFAULT 'standard' NOT NULL"))
 
+        if "simulator_games" in tables:
+            cols = {c["name"] for c in insp.get_columns("simulator_games")}
+            if "published_periods" not in cols:
+                conn.execute(text("ALTER TABLE simulator_games ADD COLUMN published_periods INTEGER"))
+
         if "series_daily_games" in tables:
             cols = {c["name"] for c in insp.get_columns("series_daily_games")}
             if "calendar_date_end" not in cols:

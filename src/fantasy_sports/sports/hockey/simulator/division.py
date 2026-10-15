@@ -155,9 +155,12 @@ class Division:
         when = slot.start + (offset / REAL_PERIOD_SECONDS) * REAL_PERIOD
         return self.wall_clock().event_second(k, when, PERIOD_SECONDS)
 
-    def draw(self, rng) -> int:
+    def draw(self, rng, period: int | None = None) -> int:
         """A seeded fantasy game second for an event with no real clock (inverted, unattributed, tie-break): the
-        period is drawn uniformly among the three fantasy periods, then a second strictly inside it. One rng call."""
+        period is drawn uniformly among the three fantasy periods (or fixed with `period`, when one period is being
+        published on its own), then a second strictly inside it. One rng call."""
+        if period is not None:
+            return (period - 1) * PERIOD_SECONDS + rng.randint(1, PERIOD_SECONDS - 1)
         x = rng.randint(0, PERIODS * (PERIOD_SECONDS - 1) - 1)
         return (x // (PERIOD_SECONDS - 1)) * PERIOD_SECONDS + x % (PERIOD_SECONDS - 1) + 1
 

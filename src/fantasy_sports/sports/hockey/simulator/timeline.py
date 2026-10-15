@@ -93,10 +93,28 @@ def _earned_goal(side_name: str, item: Contribution, rng: random.Random) -> tupl
 
 def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng: random.Random,
                  division: Division) -> list[SimEventInput]:
+    raw = collect_raw(inputs, ledger, {"home": norm.home_goals, "away": norm.away_goals}, norm.tiebreak_side, rng, division)
+    return _assemble(inputs, raw, norm)
+
+
+def build_period_events(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int], tiebreak_side: str | None,
+                        rng: random.Random, division: Division, period: int, start_totals: dict[str, int]) -> list[SimEventInput]:
+    """The events of ONE fantasy period for a game published period by period: `inputs`/`ledger` hold only the credit of
+    that period's real periods, `goals` the goals to ADD in it, `start_totals` the running totals before it. The result
+    runs from the period's first event to its period_end and then, for the last period, game_end (otherwise the next
+    period_start). seq numbers start at 1 and are renumbered by the service when appended."""
+    raw = collect_raw(inputs, ledger, goals, tiebreak_side, rng, division, period=period)
+    return _assemble_period(inputs, raw, period, start_totals, tiebreak_side)
+
+
+def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int], tiebreak_side: str | None,
+                rng: random.Random, division: Division, period: int | None = None) -> list[_Raw]:
+    """Every event of the ledger, placed on the fantasy clock and sorted. `goals` are the goals to show for each side;
+    `period` (when given) confines the random draws to that fantasy period."""
     counter = itertools.count()
     raw: list[_Raw] = []
     names = {"home": inputs.home.name, "away": inputs.away.name}
-    goals = {"home": norm.home_goals, "away": norm.away_goals}
+    draw = lambda: division.draw(rng, period)
     goal_times: dict[str, list[int]] = {"home": [], "away": []}
 
     def add(second, kind, side, headline, detail, d_score=0, d_shot=0, tie=0):
@@ -112,7 +130,7 @@ def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng
     for side in ("home", "away"):
         other = "away" if side == "home" else "home"
         items = ledger.items[side]
-        base_goals = goals[side] - (1 if norm.tiebreak_side == side else 0)
+        base_goals = goals[side] - (1 if tiebreak_side == side else 0)
         goal_items = [i for i in items if i.kind in ("goal_credit", "inverted")]
         chosen = weighted_draw(goal_items, base_goals, rng)
         chosen_ids = {c.item_id for c in chosen}
@@ -130,14 +148,14 @@ def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng
                 text += f" after {src.player_name} could not stop the chance"
                 detail = {"origin": "inverted", "style": kind, "value": round(item.value, 6),
                           "caused_by": _credit_dict(src)}
-                second, tie = division.draw(rng), 0
+                second, tie = draw(), 0
             detail["goal_for"] = side
             goal_times[side].append(place(second))
             add(second, "score", side, text, detail, d_score=1, d_shot=1, tie=tie)
 
         base_missing = base_goals - len(chosen)
         for _ in range(base_missing):
-            second = division.draw(rng)
+            second = draw()
             goal_times[side].append(place(second))
             add(second, "score", side, f"GOAL! {names[side]} score",
                 {"origin": "team", "credits": [], "goal_for": side}, d_score=1, d_shot=1)
@@ -153,7 +171,7 @@ def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng
                     {"origin": "earned", "credits": [_credit_dict(l) for l in item.lines],
                      "value": round(item.value, 6)}, d_shot=1, tie=tie)
             else:
-                add(division.draw(rng), "narrative", side,
+                add(draw(), "narrative", side,
                     f"{names[side]} break in on a rush after {item.source.player_name} is beaten",
                     {"origin": "inverted", "value": round(item.value, 6), "caused_by": _credit_dict(item.source)})
 
@@ -175,15 +193,43 @@ def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng
             add(second, "shot", side, f"{a.player_name} shoots for {names[side]}",
                 {"origin": "attempt", "xg": round(a.xg, 6), "asset_id": a.asset_id}, d_shot=1, tie=tie)
 
-    if norm.tiebreak_side:
-        side = norm.tiebreak_side
+    if tiebreak_side:
+        side = tiebreak_side
         latest = max([t for s in goal_times.values() for t in s], default=0)
         second = min(GAME_SECONDS - 1, max(rng.randint(*TIEBREAK_WINDOW), latest + 1))
         add(second, "score", side, f"GOAL! {names[side]} score the deciding goal",
             {"origin": "team", "credits": [], "goal_for": side, "tiebreak": True}, d_score=1, d_shot=1, tie=TIEBREAK_LAST)
 
     raw.sort(key=lambda r: (r.second, r.tie, r.order))
-    return _assemble(inputs, raw, norm)
+    return raw
+
+
+def _assemble_period(inputs: HockeyGameInputs, raw: list[_Raw], period: int, start_totals: dict[str, int],
+                     tiebreak_side: str | None) -> list[SimEventInput]:
+    events: list[SimEventInput] = []
+    totals = dict(start_totals)
+
+    def emit(kind, per, second, side, headline, detail):
+        events.append(SimEventInput(
+            seq=len(events) + 1, kind=kind, period=per, game_second=second, team_side=side,
+            home_score=totals["home_score"], away_score=totals["away_score"],
+            home_shots=totals["home_shots"], away_shots=totals["away_shots"], headline=headline, detail=detail))
+
+    limit = period * PERIOD_SECONDS
+    for r in raw:
+        assert (period - 1) * PERIOD_SECONDS < r.second < limit, "a period's event must sit inside that period"
+        if r.d_score:
+            totals[f"{r.side}_score"] += r.d_score
+        if r.d_shot:
+            totals[f"{r.side}_shots"] += r.d_shot
+        emit(r.kind, period, r.second, r.side, r.headline, r.detail)
+    emit("period_end", period, limit, None, f"End of period {period}", {})
+    if period == PERIODS:
+        final = f"Final: {inputs.home.name} {totals['home_score']}, {inputs.away.name} {totals['away_score']}"
+        emit("game_end", PERIODS, GAME_SECONDS, None, final, {"tiebreak_side": tiebreak_side})
+    else:
+        emit("period_start", period + 1, limit, None, f"Period {period + 1} begins", {})
+    return events
 
 
 def _assemble(inputs: HockeyGameInputs, raw: list[_Raw], norm: Normalized) -> list[SimEventInput]:

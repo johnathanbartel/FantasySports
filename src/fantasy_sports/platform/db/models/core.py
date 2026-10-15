@@ -1018,6 +1018,9 @@ class SimulatorGame(Base):
     event_count: Mapped[int] = mapped_column(Integer)
     script_digest: Mapped[str] = mapped_column(String(64))
     provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Period-by-period publishing (NHL window games): how many periods have been published so far. NULL means the
+    # whole script was published at once. Published events are never changed; later periods are only appended.
+    published_periods: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="SCHEDULED")
     started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     finalized_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)

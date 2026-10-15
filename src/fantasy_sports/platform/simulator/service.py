@@ -18,6 +18,8 @@ protects the live/replay experience, not the league table.
 from __future__ import annotations
 
 import datetime
+import hashlib
+import json
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -27,7 +29,9 @@ from fantasy_sports.platform.db.models.core import (
 )
 from fantasy_sports.platform.simulator import state as st
 from fantasy_sports.platform.simulator import wallclock
-from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, ContractError, SimScript, validate_script
+from fantasy_sports.platform.simulator.contract import (
+    CONTRACT_VERSION, ContractError, SimEventInput, SimScript, validate_script,
+)
 
 MAX_EVENT_PAGE = 500
 
@@ -52,11 +56,11 @@ def shape_of(sim: SimulatorGame) -> st.GameShape:
     return st.GameShape(sim.periods, sim.period_seconds, sim.window_seconds, wallclock.from_provenance(sim.provenance))
 
 
-def publish_script(db: Session, daily_game: SeriesDailyGame, script: SimScript) -> SimulatorGame:
+def publish_script(db: Session, daily_game: SeriesDailyGame, script: SimScript, partial: bool = False) -> SimulatorGame:
     """Store a validated script for a game that has not started. Flushes, does not commit. Publishing the
     identical script again returns the existing record; a different script for the same game is refused,
     because events are immutable. Raises ContractError or SimulatorError."""
-    validate_script(script)
+    validate_script(script, partial=partial)
     existing = get_sim(db, daily_game.id)
     if existing is not None:
         if existing.script_digest == script.digest():
@@ -68,7 +72,7 @@ def publish_script(db: Session, daily_game: SeriesDailyGame, script: SimScript) 
         daily_game_id=daily_game.id, contract_version=script.contract_version, sport=script.sport,
         periods=script.periods, period_seconds=script.period_seconds, window_seconds=script.window_seconds,
         event_count=len(script.events), script_digest=script.digest(), provenance=dict(script.provenance),
-        status=st.SCHEDULED,
+        published_periods=0 if partial else None, status=st.SCHEDULED,
     )
     db.add(sim)
     db.flush()
@@ -80,6 +84,48 @@ def publish_script(db: Session, daily_game: SeriesDailyGame, script: SimScript) 
         ))
     db.flush()
     return sim
+
+
+def append_period(db: Session, sim: SimulatorGame, period: int, events: list, provenance: dict) -> SimulatorGame:
+    """Append the events of the next period to a game that is published period by period. Published events are never
+    changed: the new events must continue the old ones (same validation as a whole script, as a prefix until the last
+    period, whole after it), `period` must be exactly the next one, and the digest chains the old digest to the new
+    events so a different history can never share one. Flushes, does not commit. Raises ContractError or SimulatorError."""
+    if sim.published_periods is None:
+        raise SimulatorError("This game was published whole; periods cannot be appended", "NOT_PROGRESSIVE")
+    if period != sim.published_periods + 1 or period > sim.periods:
+        raise SimulatorError(f"Period {period} is not the next one to publish (published: {sim.published_periods})", "BAD_PERIOD")
+    old = _events(db, sim)
+    new = [SimEventInput(seq=len(old) + i + 1, kind=e.kind, period=e.period, game_second=e.game_second, team_side=e.team_side,
+                         home_score=e.home_score, away_score=e.away_score, home_shots=e.home_shots, away_shots=e.away_shots,
+                         headline=e.headline, detail=dict(e.detail)) for i, e in enumerate(events)]
+    last = period == sim.periods
+    prefix = SimScript(
+        contract_version=sim.contract_version, sport=sim.sport, periods=sim.periods, period_seconds=sim.period_seconds,
+        window_seconds=sim.window_seconds,
+        events=tuple(SimEventInput(e.seq, e.kind, e.period, e.game_second, e.team_side, e.home_score, e.away_score,
+                                   e.home_shots, e.away_shots, e.headline, dict(e.detail or {})) for e in old) + tuple(new),
+        provenance=provenance)
+    validate_script(prefix, partial=not last)
+    for e in new:
+        db.add(SimulatorEvent(
+            simulator_game_id=sim.id, seq=e.seq, kind=e.kind, period=e.period, game_second=e.game_second,
+            team_side=e.team_side, home_score=e.home_score, away_score=e.away_score, home_shots=e.home_shots,
+            away_shots=e.away_shots, headline=e.headline, detail=dict(e.detail)))
+    sim.event_count = len(old) + len(new)
+    sim.published_periods = period
+    sim.provenance = dict(provenance)
+    chain = json.dumps([sim.script_digest, [e.to_dict() for e in new]], sort_keys=True, separators=(",", ":"))
+    sim.script_digest = hashlib.sha256(chain.encode("utf-8")).hexdigest()
+    db.flush()
+    return sim
+
+
+def update_provenance(db: Session, sim: SimulatorGame, provenance: dict) -> None:
+    """Replace the provenance of a game that is published period by period (state that is not an event, such as the
+    frozen lineup and the projected clock). Never touches events."""
+    sim.provenance = dict(provenance)
+    db.flush()
 
 
 def _events(db: Session, sim: SimulatorGame) -> list[SimulatorEvent]:
@@ -107,7 +153,11 @@ def sync(db: Session, sim: SimulatorGame, now: datetime.datetime, events: list[S
     shape = shape_of(sim)
     events = events if events is not None else _events(db, sim)
     dg = sim.daily_game
-    if st.is_due(shape, sim.started_at, now):
+    if sim.published_periods is not None:       # published period by period: final when the last period is out, not by time
+        if sim.published_periods >= sim.periods:
+            _finalize(db, sim, events, now)
+            return
+    elif st.is_due(shape, sim.started_at, now):
         _finalize(db, sim, events, st.finished_at(shape, sim.started_at))
         return
     elapsed = st.public_elapsed(shape, sim.status, sim.started_at, now)
@@ -341,4 +391,5 @@ def final_view(db: Session, sim: SimulatorGame, user_id: int, now: datetime.date
 __all__ = [
     "ContractError", "SimulatorError", "publish_script", "start_game", "sync", "view_state", "view_events",
     "watch", "progress", "skip", "final_view", "get_sim", "unpublished_state", "utcnow", "finalize_now",
+    "append_period", "update_provenance",
 ]

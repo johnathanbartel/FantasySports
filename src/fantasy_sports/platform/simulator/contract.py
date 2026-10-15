@@ -150,8 +150,10 @@ class _Totals:
     away_shots: int = 0
 
 
-def validate_script(script: SimScript) -> None:
-    """Raises ContractError describing the first violation."""
+def validate_script(script: SimScript, partial: bool = False) -> None:
+    """Raises ContractError describing the first violation. With partial=True the events are a PREFIX of a game that
+    is still being published period by period: every event rule still applies, but no game_end is required (and none
+    may exist yet)."""
     if not version_supported(script.contract_version):
         raise ContractError(
             f"Unsupported contract version {script.contract_version!r} (this server speaks {CONTRACT_VERSION})")
@@ -215,6 +217,10 @@ def validate_script(script: SimScript) -> None:
                 raise ContractError(f"{where}: shots may only change for the event's own team_side")
         before = e
 
+    if partial:
+        if any(e.kind == "game_end" for e in events):
+            raise ContractError("A game that is still being published cannot hold a game_end event")
+        return
     if sum(1 for e in events if e.kind == "game_end") != 1 or events[-1].kind != "game_end":
         raise ContractError("Exactly one game_end event is required, and it must be last")
     end = events[-1]
