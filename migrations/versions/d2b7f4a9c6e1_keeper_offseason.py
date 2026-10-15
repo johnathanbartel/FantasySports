@@ -41,6 +41,8 @@ def upgrade() -> None:
         sa.Column("draftable_asset_id", sa.Integer(), sa.ForeignKey("draftable_assets.id"), nullable=False),
         sa.Column("season_number", sa.Integer(), nullable=False),
         sa.Column("games_played", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("points_per_game", sa.Float(), nullable=False, server_default="0"),
+        sa.Column("age", sa.Integer(), nullable=True),
         sa.Column("kept", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("roster_order", sa.Integer(), nullable=False, server_default="0"),
         sa.UniqueConstraint("team_id", "draftable_asset_id", "season_number"),

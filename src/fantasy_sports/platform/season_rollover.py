@@ -19,6 +19,7 @@ Only snake-draft leagues roll over for now. Nothing here touches scoring or attr
 """
 
 import datetime
+import statistics
 
 from sqlalchemy.orm import Session
 
@@ -218,6 +219,26 @@ def _release(db: Session, team: Team, asset_id: int) -> None:
     pecking_order.unrank_player(db, team, asset_id)
 
 
+def _z_scores(values: list[float | None]) -> list[float]:
+    """Standard deviations from the mean for each value; a missing value, or a pool with no spread, scores 0 (average)."""
+    known = [v for v in values if v is not None]
+    if len(known) < 2:
+        return [0.0] * len(values)
+    mean, sd = statistics.fmean(known), statistics.pstdev(known)
+    return [0.0 if v is None or sd == 0 else (v - mean) / sd for v in values]
+
+
+def ai_keeper_scores(db: Session, league: League) -> dict[int, float]:
+    """KeeperCandidate id -> the AI's keeper score: standard deviations of age BELOW the mean (younger is better), plus
+    standard deviations of points per game ABOVE the mean, plus standard deviations of games played ABOVE the mean, all
+    measured across every player on a roster in the league. The three count equally."""
+    cands = db.query(KeeperCandidate).filter_by(league_id=league.id, season_number=league.season_number).all()
+    age_z = _z_scores([c.age for c in cands])
+    ppg_z = _z_scores([c.points_per_game for c in cands])
+    gp_z = _z_scores([float(c.games_played) for c in cands])
+    return {c.id: -a + p + g for c, a, p, g in zip(cands, age_z, ppg_z, gp_z)}
+
+
 def finalize_keepers(db: Session, league: League, now: datetime.datetime | None = None) -> None:
     """Closes keeper selection. A team that hasn't submitted keeps its most-played players up to the keeper limit (the ones
     with the fewest games played last season are trimmed); every player not kept is released. Flushes, does not commit."""
@@ -226,10 +247,14 @@ def finalize_keepers(db: Session, league: League, now: datetime.datetime | None 
         return
     cap = keeper_cap(db, league)
     submitted = {s.team_id for s in db.query(KeeperSubmission).filter_by(league_id=league.id, season_number=league.season_number)}
+    scores = ai_keeper_scores(db, league)
     for team in db.query(Team).filter_by(league_id=league.id).order_by(Team.id):
         cands = _candidates(db, league, team.id)
         if team.id not in submitted:
-            ranked = sorted(cands, key=lambda c: (-c.games_played, c.roster_order))
+            if team.is_ai_owned:
+                ranked = sorted(cands, key=lambda c: (-scores[c.id], c.roster_order))
+            else:
+                ranked = sorted(cands, key=lambda c: (-c.games_played, c.roster_order))
             keep = {c.id for c in ranked[:cap]}
             for c in cands:
                 c.kept = c.id in keep
@@ -253,7 +278,7 @@ def process_keeper_deadline(db: Session, league: League, now: datetime.datetime 
 
 
 def roll_over(db: Session, league: League, offseason_rounds: int | None = None, refill_rounds: int | None = None,
-              keeper_deadline: datetime.datetime | None = None) -> LeagueSeason:
+              today: datetime.date | None = None) -> LeagueSeason:
     """Archives the current season and opens the offseason. Flushes, does not commit."""
     if league.draft_type != "snake":
         raise RolloverError("Season rollover is only available for snake-draft leagues for now")
@@ -268,8 +293,9 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
     needs_refill = fmt == "keeper" and league.keeper_draft_style in ("combined", "separate")
     if needs_refill and (refill_rounds is None or refill_rounds < 1):
         raise RolloverError("Set how many refill rounds the next draft has (at least 1) - this league's keeper draft style uses them")
-    if fmt == "keeper" and keeper_deadline is None:
-        raise RolloverError("Set the keeper deadline")
+    today = today or datetime.date.today()
+    if fmt == "keeper" and (league.keeper_deadline is None or league.keeper_deadline <= datetime.datetime.utcnow()):
+        raise RolloverError("Set the keeper deadline in League Settings first - it has to be a date in the future")
 
     standings = final_standings(db, league)
     teams = db.query(Team).filter_by(league_id=league.id).order_by(Team.id).all()
@@ -277,11 +303,16 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
     archive = LeagueSeason(league_id=league.id, season_number=league.season_number, league_format=fmt,
                            archived_at=datetime.datetime.utcnow(), data=_snapshot(db, league, standings))
     db.add(archive)
-    games = {}
+    stats, ages = {}, {}
     if fmt == "keeper":
-        from fantasy_sports.platform.draft_stats import current_season_stats
+        from fantasy_sports.platform.draft_stats import current_season_stats, last_completed_season_year
+        from fantasy_sports.platform.player_age import age_on
         asset_ids = [r[0] for r in db.query(RosterEntry.draftable_asset_id).filter(RosterEntry.team_id.in_(team_ids or [0]))]
-        games = {a: s["games"] for a, s in current_season_stats(db, asset_ids).items()}
+        # Always the season that just finished: if the new season's dates have begun, last season's games, not the new one's.
+        stats = current_season_stats(db, asset_ids, season=last_completed_season_year(today))
+        for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(asset_ids or [0])):
+            if a.asset_type == "player":
+                ages[a.id] = age_on(a.player.birth_date, today)
     _clear_season(db, league.id, team_ids)
     if not keeps and team_ids:
         db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
@@ -289,14 +320,17 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
     league.offseason = True
     league.offseason_draft_rounds = offseason_rounds if keeps else None
     league.offseason_refill_rounds = refill_rounds if needs_refill else None
-    league.keeper_deadline = keeper_deadline if fmt == "keeper" else None
+    if fmt != "keeper":
+        league.keeper_deadline = None
     league.keepers_finalized = fmt != "keeper"
     if fmt == "keeper":
         for t in teams:
             for i, e in enumerate(db.query(RosterEntry).filter_by(team_id=t.id).order_by(RosterEntry.id)):
+                s = stats.get(e.draftable_asset_id) or {"games": 0, "points": 0.0}
                 db.add(KeeperCandidate(league_id=league.id, team_id=t.id, draftable_asset_id=e.draftable_asset_id,
-                                       season_number=league.season_number, games_played=games.get(e.draftable_asset_id, 0),
-                                       kept=False, roster_order=i))
+                                       season_number=league.season_number, games_played=s["games"],
+                                       points_per_game=round(s["points"] / s["games"], 3) if s["games"] else 0.0,
+                                       age=ages.get(e.draftable_asset_id), kept=False, roster_order=i))
     db.flush()
     return archive
 

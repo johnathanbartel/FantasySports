@@ -358,7 +358,7 @@ def roll_over_season(
     """Commissioner action: archives the finished season and opens the offseason (see platform/season_rollover.py)."""
     league = assert_commissioner(db, user, league_id)
     try:
-        season_rollover.roll_over(db, league, payload.offseason_draft_rounds, payload.refill_rounds, payload.keeper_deadline)
+        season_rollover.roll_over(db, league, payload.offseason_draft_rounds, payload.refill_rounds)
     except season_rollover.RolloverError as e:
         db.rollback()
         raise HTTPException(409, str(e))

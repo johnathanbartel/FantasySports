@@ -680,7 +680,7 @@ function paintHockeyRoster() {
     activeHockeyWindow = 2;
   }
 
-  $('content').innerHTML = `
+  $('content').innerHTML = keeperBanner() + `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">NHL ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div>${teamPicker('team-pick')}</div></div>
@@ -1164,6 +1164,16 @@ async function pickGrid(sel) {
   paintHockeyRoster();
 }
 
+// The keeper deadline, on the roster pages (set in League Settings). Shown while keepers are open or a deadline is set ahead.
+function keeperBanner() {
+  if (!ov || ov.league_format !== 'keeper' || !ov.keeper_deadline) return '';
+  if (ov.offseason && ov.keepers_finalized) return '';
+  const when = new Date(ov.keeper_deadline + 'Z').toLocaleString();
+  return `<div class="note" style="margin-bottom:var(--space-4)"><b>Keeper deadline: ${esc(when)}.</b> ${ov.offseason
+    ? `Pick your keepers on the <a href="#" onclick="go('league-settings'); return false">League Settings</a> tab. Teams that haven't picked by then are trimmed automatically.`
+    : 'Teams pick their keepers after the season rolls over.'}</div>`;
+}
+
 async function renderRoster() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
@@ -1173,7 +1183,7 @@ async function renderRoster() {
   roster.sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   const counts = {}; roster.forEach(r => counts[r.position] = (counts[r.position] || 0) + 1);
   const open = ov.roster_size - roster.length;
-  $('content').innerHTML = `
+  $('content').innerHTML = keeperBanner() + `
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.division_name ? ((t.conference_name || 'Conference') + ' · ' + t.division_name) : (t.conference_name || ''))} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">${teamPicker('team-pick')}
@@ -1899,10 +1909,12 @@ async function renderLeagueSettings() {
       + `<p>Teams that keep their whole roster only get the rookie draft. Teams that keep less get the draft style below.</p>`
       + (isCommissioner
         ? `<p><label>Draft style <select id="keeper-style">${KEEPER_STYLES.map(([v, l]) => `<option value="${v}"${v === lg.keeper_draft_style ? ' selected' : ''}>${l}</option>`).join('')}</select></label></p>
-           <p><label>Most players a team can keep <input id="keeper-limit" type="number" min="0" max="100" value="${lg.keeper_limit ?? ''}" placeholder="whole roster" style="width:8em"></label>
+           <p><label>Most players a team can keep <input id="keeper-limit" type="number" min="0" max="100" value="${lg.keeper_limit ?? ''}" placeholder="whole roster" style="width:8em"></label></p>
+           <p><label>Keeper deadline <input id="keeper-deadline" type="datetime-local" value="${utcToLocalInput(lg.keeper_deadline)}"></label>
               <button id="keeper-settings-save">Save</button></p>`
         : `<p>Draft style: ${esc(style[1])}. ${esc(style[2])}</p><p>Most players a team can keep: ${lg.keeper_limit ?? 'its whole roster'}</p>`)
-      + `</div>`;
+      + `<p><b>Keeper deadline:</b> ${lg.keeper_deadline ? esc(fmtUtc(lg.keeper_deadline)) : '<span class="muted">not set yet</span>'}</p>`
+      + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
   }
 
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
@@ -1910,15 +1922,12 @@ async function renderLeagueSettings() {
     html += keeperPhase
       ? `<p>Keeper selection is open until <b>${esc(fmtUtc(lg.keeper_deadline))}</b>. Teams that haven't picked by then are trimmed automatically: the players with the fewest games played last season are released.</p>`
       : `<p class="muted">Keepers are set. Each draft starts once every team that takes part has roster room for it - teams that kept their whole roster drop players first.</p>`;
-    if (isCommissioner && keeperPhase) {
-      html += `<p><label>Deadline <input id="keeper-deadline" type="datetime-local" value="${utcToLocalInput(lg.keeper_deadline)}"></label>
-        <button id="keeper-deadline-save">Save deadline</button> <button id="keeper-finalize">Close keepers now</button></p>`;
-    }
+    if (isCommissioner && keeperPhase) html += `<p><button id="keeper-finalize">Close keepers now</button></p>`;
   } else if (isCommissioner) {
     html += `<p>When the season is over, roll the league over to archive it and open the offseason.</p>`
       + (keepsRosters ? `<p><label>Rookie draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"></label>
            ${needsRefill ? `<label> Refill rounds <input id="rollover-refill" type="number" min="1" max="60" value="${lg.offseason_refill_rounds || 3}" style="width:4em"></label>` : ''}
-           ${isKeeper ? `<label> Keeper deadline <input id="rollover-deadline" type="datetime-local" value="${utcToLocalInput(lg.keeper_deadline)}"></label>` : ''}</p>` : '')
+         </p>${isKeeper && !lg.keeper_deadline ? '<p class="muted">Set the keeper deadline in Keeper Settings above before rolling over.</p>' : ''}` : '')
       + `<button id="rollover-btn">Roll over to season ${lg.season_number + 1}</button>`;
   }
   html += `</div><div id="keeper-pick-card"></div>`;
@@ -1936,14 +1945,14 @@ async function renderLeagueSettings() {
   const sel = $('league-format');
   if (sel) sel.onchange = () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {league_format: sel.value})), 'League format saved.');
   on('keeper-settings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
-    keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10)})), 'Keeper settings saved.'));
-  on('keeper-deadline-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Deadline saved.'));
+    keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
+    keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
     const num = (id) => $(id) ? parseInt($(id).value, 10) : null;
-    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill'),
-      keeper_deadline: $('rollover-deadline') ? localInputToUtc($('rollover-deadline').value) : null})), `Season ${lg.season_number} archived. The league is in the offseason.`);
+    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill')})),
+      `Season ${lg.season_number} archived. The league is in the offseason.`);
   });
 
   if (keeperPhase) await renderKeeperPicks(lg);

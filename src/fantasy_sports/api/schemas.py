@@ -158,9 +158,6 @@ class LeagueOut(ORMModel):
 class RolloverRequest(BaseModel):
     offseason_draft_rounds: int | None = Field(default=None, ge=1, le=60)   # rookie rounds: Keeper / Dynasty only
     refill_rounds: int | None = Field(default=None, ge=1, le=60)            # Keeper with a combined or separate draft style
-    keeper_deadline: datetime.datetime | None = None                        # Keeper only (UTC)
-
-    _deadline = field_validator("keeper_deadline")(_naive_utc)
 
 
 class KeeperPlayerOut(BaseModel):

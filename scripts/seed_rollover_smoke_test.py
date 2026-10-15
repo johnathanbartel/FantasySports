@@ -201,7 +201,11 @@ assert client.get(f"/leagues/{lid}").json()["offseason"] is False
 # ---- Keeper, rookie_resign: owners pick keepers, the rest are released, one rookie draft ------------------------
 lid, tids, first, best_first = finish_season("KeepR", "keeper", keeper_draft_style="rookie_resign", keeper_limit=12)
 assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2}, headers=H).status_code == 409, "needs a deadline"
-resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "keeper_deadline": future()}, headers=H)
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": past()}, headers=H).status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2}, headers=H).status_code == 409, "deadline in the past"
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future()}, headers=H).status_code == 200
+assert client.get(f"/leagues/{lid}/overview").json()["keeper_deadline"] is not None, "the roster page reads the deadline"
+resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2}, headers=H)
 assert resp.status_code == 200, resp.text
 assert resp.json()["keepers_finalized"] is False and all(roster_count(t) == full for t in tids)
 blocked = client.post("/drafts/start", json={"league_id": lid}, headers=H)
@@ -233,10 +237,10 @@ assert client.get(f"/leagues/{lid}").json()["offseason"] is False
 
 # ---- Keeper, separate: a rookie draft, then a refill draft; a team that kept everyone gets rookies only -------
 lid, tids, first, best_first = finish_season("KeepS", "keeper", keeper_draft_style="separate")
-resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "keeper_deadline": future()}, headers=H)
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future()}, headers=H).status_code == 200
+resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2}, headers=H)
 assert resp.status_code == 409, "separate needs refill rounds"
-resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 3,
-                                                       "keeper_deadline": future()}, headers=H)
+resp = client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 3}, headers=H)
 assert resp.status_code == 200, resp.text
 ids0 = [p["draftable_asset_id"] for p in client.get(f"/leagues/{lid}/teams/{tids[0]}/keepers").json()["players"]]
 ids1 = [p["draftable_asset_id"] for p in client.get(f"/leagues/{lid}/teams/{tids[1]}/keepers").json()["players"]]
@@ -262,8 +266,8 @@ assert client.get(f"/leagues/{lid}").json()["offseason"] is False
 
 # ---- Keeper, combined: one draft of rookies and refills ----------------------------------------------------------
 lid, tids, first, best_first = finish_season("KeepC", "keeper", keeper_draft_style="combined", keeper_limit=16)
-assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 3,
-                                                       "keeper_deadline": future()}, headers=H).status_code == 200
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future()}, headers=H).status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 3}, headers=H).status_code == 200
 assert client.post(f"/leagues/{lid}/keepers/finalize", headers=H).status_code == 200      # nobody picked: all auto-trimmed to 16
 assert [roster_count(t) for t in tids] == [16] * 4
 combined = run_draft(lid, headers=H)
@@ -273,8 +277,36 @@ assert client.get(f"/leagues/{lid}").json()["offseason"] is False
 print("Rollover smoke test passed: permissions, all four formats, keeper picks / deadline / auto-trim, roster freeze, "
       "draft kinds, order and pools, archive.")
 
+# ---- AI teams keep by a composite of age, points per game and games played ---------------------------------------
+lid, tids, first, best_first = finish_season("KeepAI", "keeper", keeper_draft_style="rookie_resign", keeper_limit=10)
+ai_team = db.get(Team, tids[0])
+ai_team.owner_user_id, ai_team.is_ai_owned = None, True
+db.commit()
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future()}, headers=H).status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 1}, headers=H).status_code == 200
+for c in db.query(KeeperCandidate).filter_by(team_id=tids[0]).all():
+    i = c.roster_order
+    c.age, c.points_per_game, c.games_played = 20 + i, 0.1 * (full - 1 - i), 82 - 2 * i     # earlier = younger, better, more games
+    if i == full - 1:
+        c.age, c.points_per_game, c.games_played = 18, 3.0, 82                              # but the last is young AND good
+    # team 1 (human, did not submit): trimmed by games played only, however old or weak
+for c in db.query(KeeperCandidate).filter_by(team_id=tids[1]).all():
+    c.age, c.points_per_game, c.games_played = 18, 3.0, c.roster_order
+db.commit()
+assert client.post(f"/leagues/{lid}/keepers/finalize", headers=H).status_code == 200
+db.expire_all()
+ai_kept = sorted(c.roster_order for c in db.query(KeeperCandidate).filter_by(team_id=tids[0], kept=True))
+assert ai_kept == [0, 1, 2, 3, 4, 5, 6, 7, 8, full - 1], ai_kept
+human_kept = sorted(c.roster_order for c in db.query(KeeperCandidate).filter_by(team_id=tids[1], kept=True))
+assert human_kept == list(range(full - 10, full)), human_kept
+assert roster_count(tids[0]) == 10 and roster_count(tids[1]) == 10
+
+from fantasy_sports.platform.draft_stats import last_completed_season_year
+assert last_completed_season_year(datetime.date(2026, 10, 15)) == 2025, "after the new season's dates begin: last season"
+assert last_completed_season_year(datetime.date(2026, 7, 1)) == 2025, "before they begin: the season that just ended"
+
 # ---- a Keeper league left open in its keeper-selection phase (for looking at the page by hand) -----------------
 lid, tids, first, best_first = finish_season("KeepOpen", "keeper", keeper_draft_style="separate", keeper_limit=14)
-assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 2,
-                                                       "keeper_deadline": future(72)}, headers=H).status_code == 200
+assert client.patch(f"/leagues/{lid}/settings", json={"keeper_deadline": future(72)}, headers=H).status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={"offseason_draft_rounds": 2, "refill_rounds": 2}, headers=H).status_code == 200
 print(f"League {lid} (KeepOpen) is left in keeper selection.")

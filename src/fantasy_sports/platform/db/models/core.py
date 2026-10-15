@@ -187,6 +187,8 @@ class KeeperCandidate(Base):
     draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
     season_number: Mapped[int] = mapped_column(Integer)          # the offseason (the new season's number)
     games_played: Mapped[int] = mapped_column(Integer, default=0)
+    points_per_game: Mapped[float] = mapped_column(Float, default=0.0)    # the AI keeper score reads these three
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)       # on the rollover date; NULL = birth date unknown
     kept: Mapped[bool] = mapped_column(Boolean, default=False)
     roster_order: Mapped[int] = mapped_column(Integer, default=0)   # tiebreak: earlier roster entries are kept first
 
