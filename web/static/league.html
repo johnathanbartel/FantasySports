@@ -1862,18 +1862,27 @@ async function showMatchup(m, index, wk) {
 // ---- RANKINGS ---------------------------------------------------------------------------------------------
 const LEAGUE_FORMATS = [['traditional_redraft', 'Traditional Redraft'], ['future_pick_redraft', 'Future Draft Pick Redraft'], ['keeper', 'Keeper'], ['dynasty', 'Dynasty']];
 
+const LEAGUE_FORMAT_NOTES = {
+  traditional_redraft: 'Rosters reset each season. The next season's draft order is randomly selected on draft day.',
+  future_pick_redraft: 'The next season's draft is a snake draft in reverse order of the standings.',
+  keeper: 'The next season's draft is in reverse order of the standings. It does not snake.',
+  dynasty: 'The next season's draft is in reverse order of the standings. It does not snake.',
+};
+
 // Everyone can read the league's settings; only the commissioner gets the controls (the API enforces it too).
 async function renderLeagueSettings() {
   const lg = await api(`/leagues/${LEAGUE_ID}`);
   const label = Object.fromEntries(LEAGUE_FORMATS)[lg.league_format] || lg.league_format;
   $('content').innerHTML = `<div class="card"><h3>League Format</h3>` + (isCommissioner
     ? `<select id="league-format">${LEAGUE_FORMATS.map(([v, l]) => `<option value="${v}"${v === lg.league_format ? ' selected' : ''}>${l}</option>`).join('')}</select>`
-    : `<p>${esc(label)}</p><p class="muted">Only the commissioner can change league settings.</p>`) + `</div>`;
+    : `<p>${esc(label)}</p><p class="muted">Only the commissioner can change league settings.</p>`) + `<p class="muted" id="league-format-note">${esc(LEAGUE_FORMAT_NOTES[lg.league_format] || '')}</p></div>`;
   const sel = $('league-format');
   if (sel) sel.onchange = async () => {
     showError(''); showResult('');
     try {
       await api(`/leagues/${LEAGUE_ID}/settings`, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({league_format: sel.value})});
+      lg.league_format = sel.value;
+      $('league-format-note').textContent = LEAGUE_FORMAT_NOTES[sel.value] || '';
       showResult('League format saved.');
     } catch (e) { showError(e.message); sel.value = lg.league_format; }
   };
