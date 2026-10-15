@@ -171,6 +171,8 @@ class LeagueSeason(Base):
     season_number: Mapped[int] = mapped_column(Integer)
     league_format: Mapped[str] = mapped_column(String(24))
     archived_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    # The season's champion, if the commissioner named one at rollover: it picks last in the next draft.
+    champion_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     data: Mapped[dict] = mapped_column(JSON)
 
 

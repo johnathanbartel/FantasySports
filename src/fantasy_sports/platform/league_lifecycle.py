@@ -14,6 +14,8 @@ from fantasy_sports.platform.db.models.core import (
     DraftPick,
     FreeAgencyTransaction,
     League,
+    KeeperCandidate,
+    KeeperSubmission,
     LeagueSeason,
     LeagueSeries,
     LeagueUniverse,
@@ -144,15 +146,16 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(TradeItem).filter(TradeItem.trade_id.in_(trade_ids)).delete(synchronize_session=False)
         db.query(Trade).filter(Trade.id.in_(trade_ids)).delete(synchronize_session=False)
 
-    # 9. Team-level child records
+    # 9. Team-level child records (the keeper rows and season archive point at teams, so they go first)
+    db.query(KeeperCandidate).filter(KeeperCandidate.league_id == league_id).delete(synchronize_session=False)
+    db.query(KeeperSubmission).filter(KeeperSubmission.league_id == league_id).delete(synchronize_session=False)
+    db.query(LeagueSeason).filter(LeagueSeason.league_id == league_id).delete(synchronize_session=False)
     if team_ids:
         db.query(TeamPeckingOrder).filter(TeamPeckingOrder.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(LineupEntry).filter(LineupEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(WeeklyTeamScore).filter(WeeklyTeamScore.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(Team).filter(Team.id.in_(team_ids)).delete(synchronize_session=False)
-
-    db.query(LeagueSeason).filter(LeagueSeason.league_id == league_id).delete(synchronize_session=False)
 
     # 10. Conferences, divisions, universes, and league
     db.query(Division).filter(Division.league_id == league_id).delete(synchronize_session=False)
