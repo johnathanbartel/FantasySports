@@ -262,7 +262,7 @@ def ai_fill_snake(db: Session, league_id: int, now: datetime.datetime | None = N
     normally do this on their own, a visit at a time (platform/ai/ai_roster.py). Returns team_id -> players signed."""
     from types import SimpleNamespace
 
-    from fantasy_sports.platform.ai import snake_ai
+    from fantasy_sports.platform.ai import ai_roster, snake_ai
 
     now = now or datetime.datetime.utcnow()
     league = db.get(League, league_id)
@@ -271,6 +271,8 @@ def ai_fill_snake(db: Session, league_id: int, now: datetime.datetime | None = N
     stub = SimpleNamespace(league_id=league_id)
     teams = [t for t in db.query(Team).filter_by(league_id=league_id, is_ai_owned=True).order_by(Team.id)]
     signed: dict[int, int] = {}
+    for team in teams:
+        ai_roster._manage_injured_list(db, team)             # NHL: injured players to the IL first, freeing spots
     progress = True
     while board and progress:
         progress = False
