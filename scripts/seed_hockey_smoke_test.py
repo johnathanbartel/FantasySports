@@ -100,6 +100,55 @@ def seed_reference_data(db):
     return {"nhl": nhl, "assets_by_name": by_name, "commissioner": commissioner}
 
 
+def check_injured_list(db, headers, skater, goalie):
+    """Injury status on the player card data, and the injured list: eligibility, capacity, lines, roster count."""
+    from fantasy_sports.platform import free_agency, injuries
+    from fantasy_sports.platform.db.models.core import RosterEntry
+
+    entry = db.query(RosterEntry).filter_by(draftable_asset_id=skater.id).one()
+    team_id = entry.team_id
+
+    def read():
+        resp = client.get(f"/teams/{team_id}/pecking-order")
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def il(asset_id, on):
+        return client.post(f"/teams/{team_id}/injured-list", json={"draftable_asset_id": asset_id, "on": on}, headers=headers)
+
+    def ranked_ids(body):
+        return {p["draftable_asset_id"] for g in body["groups"] for p in g["ranked"] + g["unranked"]}
+
+    assert skater.id in ranked_ids(read())
+    assert il(skater.id, True).status_code == 400, "a healthy player can't go on the injured list"
+
+    # Day-to-day shows on the card but isn't IL-eligible.
+    injuries.set_injury(db, skater.player, "DTD", "Upper body")
+    db.commit()
+    card = next(p for g in read()["groups"] for p in g["ranked"] + g["unranked"] if p["draftable_asset_id"] == skater.id)
+    assert (card["injury_status"], card["injury_note"]) == ("DTD", "Upper body"), card
+    assert il(skater.id, True).status_code == 400, "day-to-day players stay on the lines"
+
+    count_before = free_agency.roster_count(db, team_id)
+    injuries.set_injury(db, skater.player, "IR", "Lower body")
+    db.commit()
+    resp = il(skater.id, True)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [p["draftable_asset_id"] for p in body["injured_list"]] == [skater.id]
+    assert body["injured_list"][0]["injury_status"] == "IR"
+    assert skater.id not in ranked_ids(body), "injured-list players leave the lines"
+    assert free_agency.roster_count(db, team_id) == count_before - 1, "the injured list frees a roster spot"
+    assert il(skater.id, True).status_code == 400, "already on the list"
+
+    resp = il(skater.id, False)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["injured_list"] == [] and skater.id in ranked_ids(body)
+    assert il(skater.id, False).status_code == 400, "not on the list"
+    print("Injured list checks passed: status on the card, IL eligibility, off the lines, roster spot freed, activation.")
+
+
 def main():
     db = SessionLocal()
     ref = seed_reference_data(db)
@@ -160,6 +209,8 @@ def main():
     picks = client.get(f"/drafts/{draft['id']}/picks").json()
     print(f"Full pick history ({len(picks)} picks): "
           f"{[(p['round'], p['pick_number'], p['display_name']) for p in picks]}")
+
+    check_injured_list(db, headers, matthews, swayman)
 
     resp = client.get("/health")
     assert resp.status_code == 200, resp.text

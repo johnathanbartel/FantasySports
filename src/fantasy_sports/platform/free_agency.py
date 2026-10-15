@@ -125,7 +125,8 @@ def fa_spent(db: Session, team_id: int) -> int:
 
 
 def roster_count(db: Session, team_id: int) -> int:
-    return db.query(RosterEntry).filter_by(team_id=team_id).count()
+    """Active roster spots used; players on the injured list don't count."""
+    return db.query(RosterEntry).filter_by(team_id=team_id, on_injured_list=False).count()
 
 
 def _sign(db: Session, team: Team, asset_id: int, price: int, reason: str, now: datetime.datetime) -> None:

@@ -109,9 +109,10 @@ def assert_hockey_team(db: Session, team: Team) -> None:
 
 
 def roster_players(db: Session, team_id: int) -> dict[int, tuple[int, object]]:
-    """player_id -> (draftable_asset_id, Player) for the team's rostered players."""
+    """player_id -> (draftable_asset_id, Player) for the team's rostered players who can play. Players on the
+    injured list are left out (see platform/injuries.py): they aren't ranked, resolved or scored."""
     out = {}
-    for entry in db.query(RosterEntry).filter_by(team_id=team_id):
+    for entry in db.query(RosterEntry).filter_by(team_id=team_id, on_injured_list=False):
         asset = entry.draftable_asset
         if asset.asset_type == "player" and asset.player is not None:
             out[asset.player_id] = (asset.id, asset.player)

@@ -280,6 +280,10 @@ class Player(Base):
     # Source id (CFBD player id / nflfastR gsis_id) for future ingestion joins.
     external_ref: Mapped[str | None] = mapped_column(String(60), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Real-world injury report (hockey): NULL = healthy; else DTD / OUT / IR / LTIR (platform/injuries.py).
+    injury_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    injury_note: Mapped[str | None] = mapped_column(String(200), nullable=True)   # e.g. "Lower body"
+    injury_updated_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class DefenseGroup(Base):
@@ -503,6 +507,8 @@ class RosterEntry(Base):
     draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
     acquired_via: Mapped[str] = mapped_column(String(20), default="draft")
     acquired_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    # On the team's injured list: off the lines, doesn't play or score, and doesn't count toward the roster limit.
+    on_injured_list: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     draftable_asset: Mapped["DraftableAsset"] = relationship()
 

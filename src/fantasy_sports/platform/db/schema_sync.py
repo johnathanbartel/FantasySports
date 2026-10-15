@@ -33,6 +33,18 @@ def ensure_latest_schema(engine):
             if "published_periods" not in cols:
                 conn.execute(text("ALTER TABLE simulator_games ADD COLUMN published_periods INTEGER"))
 
+        if "players" in tables:
+            cols = {c["name"] for c in insp.get_columns("players")}
+            for name, ddl in (("injury_status", "VARCHAR(10)"), ("injury_note", "VARCHAR(200)"),
+                              ("injury_updated_at", "DATETIME")):
+                if name not in cols:
+                    conn.execute(text(f"ALTER TABLE players ADD COLUMN {name} {ddl}"))
+
+        if "roster_entries" in tables:
+            cols = {c["name"] for c in insp.get_columns("roster_entries")}
+            if "on_injured_list" not in cols:
+                conn.execute(text("ALTER TABLE roster_entries ADD COLUMN on_injured_list BOOLEAN DEFAULT 0 NOT NULL"))
+
         if "series_daily_games" in tables:
             cols = {c["name"] for c in insp.get_columns("series_daily_games")}
             if "calendar_date_end" not in cols:

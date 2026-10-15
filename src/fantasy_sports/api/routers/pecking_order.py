@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, current_user
 from fantasy_sports.api.schemas import (
-    PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
+    InjuredListRequest, PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
 )
-from fantasy_sports.platform import pecking_order as po
+from fantasy_sports.platform import injuries, pecking_order as po
+from fantasy_sports.platform.league_features import roster_limit
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.db.models.core import League, RealTeam, Team, Universe, User
@@ -56,6 +57,8 @@ def _player_out(
         points_per_game=rate.get("points_per_game"),
         real_team=real_team,
         real_team_code=real_team_code,
+        injury_status=player.injury_status,
+        injury_note=player.injury_note,
     )
 
 
@@ -144,7 +147,13 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
                 "is_home": False
             })
 
-    return PeckingOrderOut(team_id=team.id, groups=groups, real_schedules=real_schedules)
+    il_entries = injuries.injured_list_entries(db, team.id)
+    il_roster = {e.draftable_asset.player_id: (e.draftable_asset_id, e.draftable_asset.player)
+                 for e in il_entries if e.draftable_asset.player is not None}
+    il_rates = rates_by_asset(db, [a for a, _ in il_roster.values()])
+    injured_list = [_player_out(il_roster, pid, None, il_rates, team_map) for pid in il_roster]
+    return PeckingOrderOut(team_id=team.id, groups=groups, real_schedules=real_schedules,
+                           injured_list=injured_list, injured_list_capacity=injuries.IL_CAPACITY)
 
 
 @router.get("/{team_id}/pecking-order", response_model=PeckingOrderOut)
@@ -178,6 +187,26 @@ def set_pecking_order(team_id: int, payload: PeckingOrderSetRequest, db: Session
     team = assert_can_manage_team(db, user, team_id)
     try:
         po.replace_groups(db, team, payload.assignments)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    db.commit()
+    return _read(db, team)
+
+
+@router.post("/{team_id}/injured-list", response_model=PeckingOrderOut)
+def set_injured_list(team_id: int, payload: InjuredListRequest, db: Session = Depends(get_db),
+                     user: User = Depends(current_user)):
+    """Moves one of the team's players onto (on=true) or off (on=false) its injured list. Same authority as setting
+    the lines. Only injured players can go on; the list holds a fixed number (platform/injuries.py)."""
+    team = assert_can_manage_team(db, user, team_id)
+    try:
+        if payload.on:
+            injuries.place_on_injured_list(db, team, payload.draftable_asset_id)
+        else:
+            league = db.get(League, team.league_id)
+            injuries.activate_from_injured_list(db, team, payload.draftable_asset_id,
+                                                roster_limit(db, league))
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e))
