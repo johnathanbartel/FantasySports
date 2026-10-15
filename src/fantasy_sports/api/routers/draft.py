@@ -17,7 +17,7 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order
+from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order, season_rollover
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import is_college, roster_spots
@@ -90,6 +90,14 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
         assert_league_full(db, league)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    offseason_order = None
+    if league.offseason:
+        # The next season's draft: the commissioner starts it, the order follows the league format.
+        if user is None:
+            raise HTTPException(401, "Sign in as the commissioner to start the offseason draft")
+        assert_commissioner(db, user, league.id)
+        offseason_order = season_rollover.draft_order(db, league)
+        payload = payload.model_copy(update={"team_order": offseason_order, "randomize_order": offseason_order is None})
     if payload.team_order:
         team_map = {t.id: t for t in teams}
         if set(payload.team_order) == set(team_map.keys()):
@@ -111,11 +119,23 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
             "This league's player pool is empty - ingest the universe's rosters first "
             "(for NFL: scripts/ingest_nfl_rosters_and_stats.py)",
         )
-    if not is_college(db, league.id):
+    rounds = league.draft_rounds
+    if league.offseason:
+        rostered = {r[0] for r in db.query(RosterEntry.draftable_asset_id).join(Team, Team.id == RosterEntry.team_id)
+                    .filter(Team.league_id == league.id)}
+        pool = [a for a in pool if a.id not in rostered]
+        rounds = season_rollover.next_draft_rounds(db, league)
+        over = season_rollover.teams_over_cap(db, league, rounds)
+        if over:
+            raise HTTPException(409, "Roster freeze: these teams have to drop players before the draft - " + "; ".join(over))
+        if len(pool) < len(teams) * rounds:
+            raise HTTPException(400, f"Only {len(pool)} undrafted players are left for {len(teams)} teams x {rounds} rounds")
+    elif not is_college(db, league.id):
         # Outside college leagues the draft fills every roster spot (starters and bench): one round per spot.
         spots = roster_spots(db, league.id)
         if spots and league.draft_rounds != spots:
             league.draft_rounds = spots
+        rounds = league.draft_rounds
         if len(pool) < len(teams) * league.draft_rounds:
             raise HTTPException(
                 400,
@@ -125,7 +145,8 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
 
     timed = payload.pick_seconds is not None or payload.overnight_start or payload.overnight_end
     now = utcnow()
-    draft = Draft(league_id=league.id, status="in_progress", started_at=now)
+    draft = Draft(league_id=league.id, status="in_progress", started_at=now, season_number=league.season_number,
+                  is_snake=not league.offseason or league.league_format in ("traditional_redraft", "future_pick_redraft"))
     if timed:
         # A pick clock changes how the draft runs for everyone, so only the commissioner may set one. The original
         # untimed start stays open exactly as before.
@@ -142,8 +163,8 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
     draft_clock.begin_pick(draft, now)
 
     pick_number = 1
-    for round_number in range(1, league.draft_rounds + 1):
-        order = teams if round_number % 2 == 1 else list(reversed(teams))
+    for round_number in range(1, rounds + 1):
+        order = teams if (round_number % 2 == 1 or not draft.is_snake) else list(reversed(teams))
         for team in order:
             db.add(
                 DraftPick(
@@ -212,7 +233,8 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    already_picked = {
+    already_picked = {r[0] for r in db.query(RosterEntry.draftable_asset_id).join(Team, Team.id == RosterEntry.team_id)
+                      .filter(Team.league_id == draft.league_id)} | {
         p.draftable_asset_id
         for p in db.query(DraftPick).filter(
             DraftPick.draft_id == draft_id, DraftPick.draftable_asset_id.isnot(None)
@@ -247,6 +269,7 @@ def _close_if_finished(db: Session, draft_id: int) -> None:
             # Free agency opens now (platform/free_agency.is_open), and a league that doesn't set its own schedule gets one.
             league = db.get(League, draft.league_id)
             if league:
+                league.offseason = False
                 auto_schedule.ensure_schedule(db, league)
 
 

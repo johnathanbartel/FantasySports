@@ -132,6 +132,24 @@ class LeagueOut(ORMModel):
     draft_scheduled_at: datetime.datetime | None
     series_length_days: int | None
     league_format: str
+    season_number: int
+    offseason: bool
+    offseason_draft_rounds: int | None
+
+
+class RolloverRequest(BaseModel):
+    offseason_draft_rounds: int | None = Field(default=None, ge=1, le=60)   # Keeper / Dynasty only
+
+
+class LeagueSeasonSummary(BaseModel):
+    season_number: int
+    league_format: str
+    archived_at: datetime.datetime
+    standings: list[dict]
+
+
+class LeagueSeasonOut(LeagueSeasonSummary):
+    data: dict
 
 
 class DivisionOut(BaseModel):
