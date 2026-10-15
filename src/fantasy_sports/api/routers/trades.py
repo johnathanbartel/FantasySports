@@ -41,8 +41,7 @@ class TradePickOut(BaseModel):
     round: int
     original_team_id: int
     original_team_name: str
-    projected_overall: int | None = None     # where it would land if the season ended today
-    value: float | None = None               # points of the player at that spot (what AI teams count it as)
+    projected_overall: int | None = None     # where it would land if the season ended today (a pick's point value stays server-side)
 
 
 class TradeRespondRequest(BaseModel):
@@ -130,7 +129,7 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=trade.league_id)}
     league = db.get(League, trade.league_id)
     pick_items = [it for it in trade.items if it.draftable_asset_id is None]
-    order, points = (pick_trading.projected_order(db, league), pick_trading.ranked_points(db, league)) if pick_items else ([], [])
+    order = pick_trading.projected_order(db, league) if pick_items else []
 
     def picks_out(team_id: int) -> list[TradePickOut]:
         out = []
@@ -139,8 +138,7 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
                 continue
             overall = pick_trading.projected_overall(league, order, it.pick_round, it.pick_original_team_id)
             out.append(TradePickOut(season=it.pick_season, round=it.pick_round, original_team_id=it.pick_original_team_id,
-                                    original_team_name=names.get(it.pick_original_team_id, "?"), projected_overall=overall,
-                                    value=round(pick_trading.pick_value(points, overall), 2)))
+                                    original_team_name=names.get(it.pick_original_team_id, "?"), projected_overall=overall))
         return out
 
     total_teams = db.query(Team).filter_by(league_id=trade.league_id).count()
@@ -239,13 +237,12 @@ def tradeable_picks(league_id: int, team_id: int, db: Session = Depends(get_db))
     if not mine:
         return []
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
-    order, points = pick_trading.projected_order(db, league), pick_trading.ranked_points(db, league)
+    order = pick_trading.projected_order(db, league)
     out = []
     for p in mine:
         overall = pick_trading.projected_overall(league, order, p["round"], p["original_team_id"])
         out.append(TradePickOut(season=p["season"], round=p["round"], original_team_id=p["original_team_id"],
-                                original_team_name=names.get(p["original_team_id"], "?"), projected_overall=overall,
-                                value=round(pick_trading.pick_value(points, overall), 2)))
+                                original_team_name=names.get(p["original_team_id"], "?"), projected_overall=overall))
     return out
 
 
