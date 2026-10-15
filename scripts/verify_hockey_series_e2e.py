@@ -370,6 +370,10 @@ def main() -> None:
         other = client.get(f"/leagues/{league_id}/leaders", headers=auth["intruder"]).json()
         check(other["games_counted"] <= lead["games_counted"] or other["games_hidden"] <= lead["games_hidden"] + 7, "leaders: an outsider's view obeys the veil")
 
+        hs = client.get(f"/leagues/{league_id}/series-standings", headers=auth["human"]).json()["standings"]
+        check(all(r["home_wins"] + r["away_wins"] == r["wins"] and r["home_losses"] + r["away_losses"] == r["losses"]
+                  and r["home_ties"] + r["away_ties"] == r["ties"] for r in hs), "standings: home and away records add up to the overall record")
+
         # ---- standings tie-out ---------------------------------------------------------------------------------------------------------------
         sd = client.get(f"/leagues/{league_id}/series-standings").json()["standings"]
         by = {r["team_id"]: r for r in sd}

@@ -38,6 +38,7 @@ class GameRecord:
     home_score: int
     away_score: int
     final: bool
+    game_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,12 @@ class TeamStanding:
     ties: int = 0
     goals_for: int = 0
     goals_against: int = 0
+    home_wins: int = 0
+    home_losses: int = 0
+    home_ties: int = 0
+    away_wins: int = 0
+    away_losses: int = 0
+    away_ties: int = 0
     h2h_wins: int = 0  # wins over the other teams tied with this one on W-L and goal differential
     rank: int = 0
 
@@ -105,7 +112,7 @@ def load_league(db: Session, league_id: int) -> tuple[list[int], list[SeriesReco
         rows = db.query(SeriesDailyGame).filter(SeriesDailyGame.series_id.in_(ids)).order_by(
             SeriesDailyGame.calendar_date, SeriesDailyGame.id)
         games = [GameRecord(g.series_id, g.calendar_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score,
-                            g.status == "FINAL") for g in rows]
+                            g.status == "FINAL", g.id) for g in rows]
     return team_ids, series, games
 
 
@@ -144,18 +151,15 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
     rows = {t: TeamStanding(t) for t in team_ids}
     results: list[tuple[int, int]] = []  # (winner, loser) per decided game
     for g in _counted(games, as_of):
-        for tid, gf, ga in ((g.home_team_id, g.home_score, g.away_score), (g.away_team_id, g.away_score, g.home_score)):
+        for tid, gf, ga, side in ((g.home_team_id, g.home_score, g.away_score, "home"), (g.away_team_id, g.away_score, g.home_score, "away")):
             r = rows.get(tid)
             if r is None:
                 continue
             r.goals_for += gf
             r.goals_against += ga
-            if gf > ga:
-                r.wins += 1
-            elif gf < ga:
-                r.losses += 1
-            else:
-                r.ties += 1
+            result = "wins" if gf > ga else "losses" if gf < ga else "ties"
+            setattr(r, result, getattr(r, result) + 1)
+            setattr(r, f"{side}_{result}", getattr(r, f"{side}_{result}") + 1)
         w = _winner(g)
         if w is not None:
             results.append((w, g.away_team_id if w == g.home_team_id else g.home_team_id))
