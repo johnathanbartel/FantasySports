@@ -154,7 +154,8 @@ figcaption { font-size: 14px; margin-top: var(--space-1); opacity: .7; }
 body > div[style*="min-height"] { background: transparent !important; color: var(--ink); }
 /* The centered content column becomes a sheet of paper laid on the field. */
 body > div[style*="min-height"] > div[style*="max-width"] {
-  background: var(--panel); border: var(--bw) solid var(--ink);
+  /* slightly see-through so the animated arena (arena.js) shows faintly behind the content */
+  background: color-mix(in srgb, var(--panel) 90%, transparent); border: var(--bw) solid var(--ink);
   box-shadow: 8px 8px 0 var(--ink), inset 4px 4px 0 #ffffff88;
   margin-top: 22px !important; margin-bottom: 8px !important;
 }

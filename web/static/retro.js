@@ -89,6 +89,16 @@ const Retro = (() => {
     b.setAttribute('data-nosound', ''); paintSoundBtn(b);
     b.addEventListener('click', () => { soundOn = !soundOn; store.set('fm-sound', soundOn ? 'on' : 'off'); paintSoundBtn(b); click(); });
     nav.appendChild(b);
+    // Arena toggle: the animated rink/court/field behind the page (see arena.js).
+    const a = document.createElement('button'); a.type = 'button'; a.className = 'retro-sound'; a.title = 'Toggle the animated background';
+    a.setAttribute('data-nosound', '');
+    const paintArena = () => { const on = typeof Arena === 'undefined' ? store.get('fm-arena') !== 'off' : Arena.isEnabled(); a.textContent = 'Arena: ' + (on ? 'On' : 'Off'); a.setAttribute('aria-pressed', on); };
+    a.addEventListener('click', () => { if (typeof Arena !== 'undefined') Arena.setEnabled(!Arena.isEnabled()); else store.set('fm-arena', store.get('fm-arena') === 'off' ? 'on' : 'off'); paintArena(); click(); });
+    paintArena(); nav.appendChild(a);
+  }
+  function loadArena() {
+    if (document.querySelector('script[data-arena]')) return;
+    const s = document.createElement('script'); s.src = '/static/arena.js'; s.setAttribute('data-arena', ''); document.body.appendChild(s);
   }
 
   // ---------- Pixel art ----------
@@ -127,7 +137,7 @@ const Retro = (() => {
     scope.querySelectorAll('[data-badge]:not([data-done])').forEach(el => { el.innerHTML = badge(el.dataset.badge, +el.dataset.px || 4); el.dataset.done = 1; });
   }
 
-  document.addEventListener('DOMContentLoaded', () => { mountSoundToggle(); hydrate(); detectTheme(); });
+  document.addEventListener('DOMContentLoaded', () => { mountSoundToggle(); hydrate(); detectTheme(); loadArena(); });
   // Sport ball/puck sprite for a list of universe codes (nhl, nfl, ncaaf, ...).
   const sportSprite = (codes, px = 4) => { const c = (codes || []).find(x => THEME_BY_UNIVERSE[x]); return sprite(SPRITE_BY_THEME[THEME_BY_UNIVERSE[c]] || 'star', px); };
   return { setTheme, sportSprite, click, whistle, sprite, badge, hydrate, THEME_BY_UNIVERSE };
