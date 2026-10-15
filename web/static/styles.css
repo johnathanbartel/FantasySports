@@ -11,9 +11,19 @@
      --page     page background (field, rink, court, starfield) */
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Pixelify+Sans:wght@400;600;700&display=swap');
 
+/* Pixelify Sans has an awkward "2". Use Press Start 2P's digits (0-9 only) inside body text; size-adjust
+   keeps them from looking oversized next to Pixelify's letters. */
+@font-face {
+  font-family: "FM Digits";
+  src: url(https://fonts.gstatic.com/s/pressstart2p/v16/e3t4euO8T-267oIAQAu6jDQyK3nVivM.woff2) format('woff2');
+  unicode-range: U+0030-0039;
+  size-adjust: 72%;
+  font-display: swap;
+}
+
 :root {
   --font-pixel: "Press Start 2P", ui-monospace, monospace;
-  --font-body: "Pixelify Sans", ui-monospace, monospace;
+  --font-body: "FM Digits", "Pixelify Sans", ui-monospace, monospace;
   --bw: 4px;
   --good: #1f9d44; --bad: #d8202e; --warn: #e8a800;
 
