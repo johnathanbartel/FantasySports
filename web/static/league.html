@@ -223,9 +223,10 @@ function draftLine() {
   return 'Recruiting not started';
 }
 
-function statCard(label, value, sub, href) {
+function statCard(label, value, sub, href, goTab) {
   const inner = `<div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}`;
   return href ? `<a class="card elev-sm stat" href="${href}" style="display:block;text-decoration:none;color:inherit;cursor:pointer" title="Open the draft board">${inner}</a>`
+    : goTab ? `<div class="card elev-sm stat" data-go="${goTab}" role="link" tabindex="0" style="cursor:pointer" title="Open the ${goTab} tab">${inner}</div>`
     : `<div class="card elev-sm stat">${inner}</div>`;
 }
 
@@ -264,13 +265,13 @@ async function renderHome() {
   $('content').innerHTML = `
     ${draftHero}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
-      ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`)}
-      ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`)}
+      ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`, null, 'teams')}
+      ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`, null, 'roster')}
       ${ov.draft_type === 'snake'
         ? statCard('Draft', isDraftSoonOrLive() ? `<span style="color:var(--color-accent)">${ov.draft_state === 'in_progress' ? 'In progress' : 'Starting soon'}</span>` : ({complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state), isDraftSoonOrLive() ? 'Open draft board →' : (ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`), draftBoardUrl())
         : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine(), draftBoardUrl())}
-      ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'))}
-      ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}
+      ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'), null, 'transactions')}
+      ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`, null, 'schedule') : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you', null, 'schedule')}
     </div>
     ${fillNeeded && ov.is_college && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
       <span><strong>${ov.ai_teams_with_open_spots} AI team${ov.ai_teams_with_open_spots === 1 ? '' : 's'}</strong> still have open roster spots. AI teams are required to fill them through free agency - this normally happens automatically when recruiting ends.</span>
@@ -305,7 +306,10 @@ async function renderHome() {
 }
 
 function bindNav() {
-  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go, b.dataset.team ? {team_id: Number(b.dataset.team)} : {}));
+  document.querySelectorAll('[data-go]').forEach(b => {
+    b.onclick = () => go(b.dataset.go, b.dataset.team ? {team_id: Number(b.dataset.team)} : {});
+    if (b.getAttribute('role') === 'link') b.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); } };
+  });
 }
 
 async function runAiFill() {
