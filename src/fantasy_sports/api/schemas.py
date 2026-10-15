@@ -374,6 +374,8 @@ class DraftPickOut(BaseModel):
     display_name: str | None
     picked_at: datetime.datetime | None
     is_autopick: bool
+    position: str | None = None  # the picked asset's position, for the draft-board grid colours
+    team: str | None = None      # the picked player's real team, when known
 
 
 class MakePickRequest(BaseModel):

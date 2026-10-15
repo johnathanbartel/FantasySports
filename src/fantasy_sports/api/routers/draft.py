@@ -2,7 +2,7 @@ from collections import defaultdict
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
@@ -28,6 +28,7 @@ from fantasy_sports.platform.db.models.core import (
     DraftPick,
     League,
     LeagueUniverse,
+    RealTeam,
     RosterEntry,
     Team,
     User,
@@ -59,6 +60,9 @@ def _active_presence(draft_id: int, now: datetime.datetime) -> tuple[list[int], 
 
 
 def _pick_out(p: DraftPick) -> DraftPickOut:
+    asset = p.draftable_asset
+    player = asset.player if asset is not None and asset.asset_type == "player" else None
+    real_team = object_session(p).get(RealTeam, player.real_team_id) if player is not None and player.real_team_id else None
     return DraftPickOut(
         id=p.id,
         round=p.round,
@@ -68,6 +72,8 @@ def _pick_out(p: DraftPick) -> DraftPickOut:
         display_name=draftable_asset_display_name(p.draftable_asset) if p.draftable_asset else None,
         picked_at=p.picked_at,
         is_autopick=p.is_autopick,
+        position=draftable_asset_position(asset) if asset is not None else None,
+        team=real_team.name if real_team is not None else None,
     )
 
 
