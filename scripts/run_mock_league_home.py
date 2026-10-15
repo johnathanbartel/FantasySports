@@ -182,6 +182,9 @@ def main():
     db.commit()
     victim2 = client.get(f"/teams/{t1}/lineup", params={"week_id": wk}).json()[0]["draftable_asset_id"]
     client.post(f"/teams/{t1}/free-agency/drop", json={"draftable_asset_id": victim2}, headers=B)
+    for drop in db.query(FreeAgencyTransaction).filter_by(kind="drop"):      # let the 24-hour waiver hold run out
+        drop.created_at -= datetime.timedelta(hours=25)
+    db.commit()
     r = client.post(f"/teams/{t1}/free-agency/add", json={"draftable_asset_id": victim2}, headers=B)
     check(r.status_code == 400 and "free-agency money" in r.text, f"an unaffordable signing must be refused: {r.text}")
     db.query(FreeAgencyTransaction).filter(FreeAgencyTransaction.price == 10**6).delete()

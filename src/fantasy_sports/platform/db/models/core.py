@@ -910,6 +910,27 @@ class FreeAgencyTransaction(Base):
     draftable_asset: Mapped["DraftableAsset"] = relationship()
 
 
+class WaiverClaim(Base):
+    """A team's claim on a player who is on waivers (see platform/waivers.py). A dropped player is on waivers for 24
+    hours; available_at is the moment that ends. When it passes, the pending claim from the team that is first in
+    the waiver order signs him (status "won"), the other claims are "lost", and a claim that could not be filled
+    (roster full, not enough money) is "failed". With no claims he simply becomes a free agent."""
+
+    __tablename__ = "waiver_claims"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    available_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(10), default="pending")   # pending / won / lost / failed / cancelled
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
 class InjuryAlert(Base):
     """A change in the injury status of a player on a team's roster, for that team's manager to see (created by
     platform/injury_sync.py). new_status None = healthy again. read_at is set when the manager dismisses it."""

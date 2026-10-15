@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
-from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
+from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season, waivers
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
@@ -40,6 +40,12 @@ from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
 router = APIRouter(tags=["league-home"])
+
+def _tick(db: Session, league_id: int) -> None:
+    """Waiver claims whose 24 hours are up, then the AI teams' due roster decisions (so they see who has cleared)."""
+    waivers.process(db, league_id)
+    ai_roster.tick(db, league_id)       # platform/ai/ai_roster.py
+
 
 # Eager-load what draftable_asset_display_name / the school lookup touch, so listing a pool of
 # thousands of players isn't thousands of tiny queries.
@@ -111,7 +117,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    ai_roster.tick(db, league_id)       # AI teams' due roster decisions (platform/ai/ai_roster.py)
+    _tick(db, league_id)       # AI teams' due roster decisions (platform/ai/ai_roster.py)
     db.commit()
     draft = _status(db, league_id)
     user_map = {u.id: u for u in db.query(User)}
@@ -188,6 +194,7 @@ class FreeAgentOut(BaseModel):
     this_season_points: float | None = None
     this_season_games: int | None = None
     asking_price: int   # PROVISIONAL rule - see platform/free_agency.py
+    waiver_until: datetime.datetime | None = None   # on waivers (claim only) until then, naive UTC
 
 
 class FreeAgentsOut(BaseModel):
@@ -211,7 +218,7 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    ai_roster.tick(db, league_id)
+    _tick(db, league_id)
     db.commit()
     is_open = free_agency.is_open(db, league_id)
     note = ("Asking prices are provisional: each player's recruiting price, revealed once recruiting ends."
@@ -223,6 +230,7 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
     taken = free_agency.rostered_ids(db, league_id)
     schools = _school_names(db)
     free_ids = [a for a in prices if a not in taken]
+    on_waivers = waivers.waiver_until(db, league_id, datetime.datetime.utcnow())
     stats = stats_by_asset(db, free_ids)
     rates = rates_by_asset(db, free_ids)
     current = current_season_stats(db, free_ids)
@@ -233,7 +241,7 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
             real_team=_school(a, schools), age=draftable_asset_age(a), last_season_points=stats.get(a.id, {}).get("points"),
             points_per_game=rates.get(a.id, {}).get("points_per_game"),
             this_season_points=current.get(a.id, {}).get("points"), this_season_games=current.get(a.id, {}).get("games"),
-            asking_price=prices[a.id])
+            asking_price=prices[a.id], waiver_until=on_waivers.get(a.id))
         for a in assets
     ])
 
@@ -301,6 +309,7 @@ def fa_add(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db)
     enough free-agency money."""
     team = assert_can_manage_team(db, user, team_id)
     reason = free_agency.COMMISSIONER if team.is_ai_owned else free_agency.USER
+    waivers.process(db, team.league_id)
     try:
         txn = free_agency.add_player(db, team, payload.draftable_asset_id, reason)
     except ValueError as e:
@@ -337,6 +346,87 @@ def run_ai_fill(league_id: int, db: Session = Depends(get_db), user: User = Depe
     return {"signed": [{"team_id": t, "players": n} for t, n in signed.items()], "total": sum(signed.values())}
 
 
+# ------------------------------------------------------------------ waivers
+class WaiverOrderRow(BaseModel):
+    position: int
+    team_id: int
+    team_name: str
+    goal_diff: int | None = None       # the differential the order was built on (None under the draft fallback)
+    moved_back: bool = False           # won a claim since the reset
+
+
+class WaiverPlayerOut(BaseModel):
+    draftable_asset_id: int
+    display_name: str
+    position: str | None
+    real_team: str | None
+    until: datetime.datetime           # naive UTC
+    dropped_by_team_id: int | None
+    claimed: bool = False              # the requested team has a pending claim
+
+
+class WaiversOut(BaseModel):
+    basis: str                         # "goal_diff" / "draft"
+    basis_note: str
+    reset_at: datetime.datetime        # the last reset, naive UTC
+    next_reset_at: datetime.datetime
+    order: list[WaiverOrderRow]
+    players: list[WaiverPlayerOut]
+
+
+@router.get("/leagues/{league_id}/waivers", response_model=WaiversOut)
+def league_waivers(league_id: int, team_id: int | None = None, db: Session = Depends(get_db)):
+    """The waiver order, when it next resets, and the players on waivers now. team_id marks that team's pending claims."""
+    if db.get(League, league_id) is None:
+        raise HTTPException(404, "League not found")
+    now = datetime.datetime.utcnow()
+    _tick(db, league_id)
+    db.commit()
+    order = waivers.waiver_order(db, league_id, now)
+    names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
+    note = ("Reverse of goal differential through the last fully completed week: the worst differential claims first."
+            if order.basis == waivers.BASIS_GOAL_DIFF else
+            "Reverse of the first round of the draft, until a full week of games has been completed.")
+    note += " It resets at midnight Pacific every Saturday night, and a team that wins a claim drops to the back until then."
+    until = waivers.waiver_until(db, league_id, now)
+    mine = waivers.pending_claims(db, team_id) if team_id is not None else set()
+    schools = _school_names(db)
+    assets = db.query(DraftableAsset).options(*_EAGER).filter(DraftableAsset.id.in_(list(until) or [0])).all()
+    by = waivers.dropped_by(db, league_id, list(until))
+    return WaiversOut(
+        basis=order.basis, basis_note=note, reset_at=order.reset_at, next_reset_at=waivers.next_reset(now),
+        order=[WaiverOrderRow(position=i, team_id=t, team_name=names.get(t, str(t)), goal_diff=order.goal_diff.get(t),
+                              moved_back=t in order.moved_back) for i, t in enumerate(order.teams, start=1)],
+        players=sorted((WaiverPlayerOut(
+            draftable_asset_id=a.id, display_name=draftable_asset_display_name(a), position=draftable_asset_position(a),
+            real_team=_school(a, schools), until=until[a.id], dropped_by_team_id=by.get(a.id), claimed=a.id in mine)
+            for a in assets), key=lambda p: (p.until, p.display_name)))
+
+
+@router.post("/teams/{team_id}/waivers/claim")
+def waiver_claim(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Claims a player on waivers. The claim is filled when his 24 hours end, if this team is first in the waiver order
+    among the teams that claimed him and still has a roster spot (and money, in a college league)."""
+    team = assert_can_manage_team(db, user, team_id)
+    try:
+        claim = waivers.place_claim(db, team, payload.draftable_asset_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.commit()
+    return {"draftable_asset_id": claim.draftable_asset_id, "available_at": claim.available_at}
+
+
+@router.post("/teams/{team_id}/waivers/cancel")
+def waiver_cancel(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    team = assert_can_manage_team(db, user, team_id)
+    try:
+        waivers.cancel_claim(db, team, payload.draftable_asset_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.commit()
+    return {"cancelled": payload.draftable_asset_id}
+
+
 @router.get("/leagues/{league_id}/transactions", response_model=list[TransactionOut])
 def transactions(league_id: int, limit: int = 300, db: Session = Depends(get_db)):
     """The league's transaction log, newest first: recruiting awards (who
@@ -344,7 +434,7 @@ def transactions(league_id: int, limit: int = 300, db: Session = Depends(get_db)
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    ai_roster.tick(db, league_id)
+    _tick(db, league_id)
     db.commit()
     schools = _school_names(db)
     out = [_txn_out(db, t, schools) for t in

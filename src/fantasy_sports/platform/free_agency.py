@@ -1,5 +1,5 @@
 """
-Free agency: how a team fills a roster spot it left open in the recruiting draft.
+Free agency (and, through platform/waivers.py, the 24-hour waiver period after a drop): how a team fills a roster spot it left open in the recruiting draft.
 
 Teams may recruit fewer players than the roster size. The gap is filled by
 signing free agents - players in the league's pool that no team in the league
@@ -32,7 +32,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
-from fantasy_sports.platform import pecking_order, season
+from fantasy_sports.platform import pecking_order, season, waivers
 from fantasy_sports.platform.league_features import is_college, roster_limit
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
@@ -138,28 +138,40 @@ def _sign(db: Session, team: Team, asset_id: int, price: int, reason: str, now: 
         kind="add", price=price, reason=reason, created_at=now))
 
 
+def signing_problem(db: Session, league: League, team: Team, asset_id: int) -> str | None:
+    """Why `team` cannot sign this player right now (pool, roster spot, money), as a message for the user, or None.
+    Whether he is on waivers is not checked here."""
+    if asset_id not in set(pool_ids(db, league.id)):
+        return "That player isn't in this league's pool"
+    if asset_id in rostered_ids(db, league.id):
+        return "That player is already on a team's roster"
+    limit = roster_limit(db, league)
+    if roster_count(db, team.id) >= limit:
+        return f"Roster is full ({limit}) - drop a player first"
+    price = asking_prices(db, league)[asset_id]
+    money = team_money(db, team)["fa_money"]
+    if is_college(db, league.id) and price > money:
+        return (f"He costs ${price} but only ${max(0, money)} of free-agency money is left "
+                f"(Season Budget less Roster Cost)")
+    return None
+
+
 def add_player(
     db: Session, team: Team, asset_id: int, reason: str, now: datetime.datetime | None = None
 ) -> FreeAgencyTransaction:
-    """A person's signing (the AI's required fill goes through ai_fill_rosters).
-    Raises ValueError with a message meant for the user."""
+    """A person's signing (the AI's required fill goes through ai_fill_rosters). A player on waivers can't be signed,
+    only claimed (platform/waivers.py). Raises ValueError with a message meant for the user."""
     now = now or datetime.datetime.utcnow()
     league = db.get(League, team.league_id)
     if not is_open(db, league.id):
         raise ValueError("Free agency opens when the draft ends")
-    if asset_id not in set(pool_ids(db, league.id)):
-        raise ValueError("That player isn't in this league's pool")
-    if asset_id in rostered_ids(db, league.id):
-        raise ValueError("That player is already on a team's roster")
-    limit = roster_limit(db, league)
-    if roster_count(db, team.id) >= limit:
-        raise ValueError(f"Roster is full ({limit}) - drop a player first")
-    price = asking_prices(db, league)[asset_id]
-    money = team_money(db, team)["fa_money"]
-    if is_college(db, league.id) and price > money:
-        raise ValueError(f"He costs ${price} but only ${max(0, money)} of free-agency money is left "
-                         f"(Season Budget less Roster Cost)")
-    _sign(db, team, asset_id, price, reason, now)
+    until = waivers.waiver_until(db, league.id, now).get(asset_id)
+    if until is not None:
+        raise ValueError(f"He is on waivers until {until:%Y-%m-%d %H:%M} UTC - place a claim instead")
+    problem = signing_problem(db, league, team, asset_id)
+    if problem:
+        raise ValueError(problem)
+    _sign(db, team, asset_id, asking_prices(db, league)[asset_id], reason, now)
     db.flush()
     return db.query(FreeAgencyTransaction).filter_by(team_id=team.id, draftable_asset_id=asset_id).order_by(
         FreeAgencyTransaction.id.desc()).first()
@@ -196,7 +208,8 @@ def ai_fill_rosters(db: Session, league_id: int, now: datetime.datetime | None =
     value = pricing.value_by_asset(db, db.query(Team).filter_by(league_id=league_id).count(), league.draft_rounds)
     assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(list(prices) or [0]))}
     position = {i: draftable_asset_position(a) for i, a in assets.items()}
-    free = {a for a in prices if a not in rostered_ids(db, league_id)}
+    on_waivers = waivers.waiver_until(db, league_id, now)
+    free = {a for a in prices if a not in rostered_ids(db, league_id) and a not in on_waivers}
     signed: dict[int, int] = {}
 
     # Per-team state for the fill.
@@ -247,7 +260,8 @@ def free_agent_board(db: Session, league_id: int) -> list:
     from fantasy_sports.api.schemas import DraftBoardAsset
     from fantasy_sports.platform.draft_stats import stats_by_asset
 
-    free_ids = [a for a in pool_ids(db, league_id) if a not in rostered_ids(db, league_id)]
+    on_waivers = waivers.waiver_until(db, league_id, datetime.datetime.utcnow())
+    free_ids = [a for a in pool_ids(db, league_id) if a not in rostered_ids(db, league_id) and a not in on_waivers]
     stats = stats_by_asset(db, free_ids)
     assets = db.query(DraftableAsset).filter(DraftableAsset.id.in_(free_ids or [0])).all()
     return sorted((DraftBoardAsset(
