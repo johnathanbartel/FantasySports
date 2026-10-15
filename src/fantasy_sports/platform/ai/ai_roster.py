@@ -27,7 +27,7 @@ from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import free_agency, lineups, pecking_order, scoring
+from fantasy_sports.platform import free_agency, injuries, lineups, pecking_order, scoring
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.db.models.core import League, RosterEntry, Team
 from fantasy_sports.platform.draft_stats import stats_by_asset
@@ -100,12 +100,37 @@ def _set_weekly_lineup(db: Session, team: Team, now: datetime.datetime) -> None:
         return
 
 
+# ---- injured list -----------------------------------------------------------------------------------------------
+def _manage_injured_list(db: Session, team: Team) -> None:
+    """Hockey: the team moves its injured players (OUT / IR / LTIR) onto the injured list while it has room, which frees
+    roster spots it then refills from free agency. Players who have healed come back once there is a roster spot."""
+    try:
+        pecking_order.assert_hockey_team(db, team)
+    except ValueError:
+        return
+    limit = roster_limit(db, db.get(League, team.league_id))
+    for entry in injuries.injured_list_entries(db, team.id):
+        player = entry.draftable_asset.player if entry.draftable_asset.asset_type == "player" else None
+        active = db.query(RosterEntry).filter_by(team_id=team.id, on_injured_list=False).count()
+        if player is not None and player.injury_status not in injuries.IL_ELIGIBLE and active < limit:
+            injuries.activate_from_injured_list(db, team, entry.draftable_asset_id, limit)
+    for entry in db.query(RosterEntry).filter_by(team_id=team.id, on_injured_list=False).order_by(RosterEntry.id).all():
+        asset = entry.draftable_asset
+        player = asset.player if asset.asset_type == "player" else None
+        if player is None or player.injury_status not in injuries.IL_ELIGIBLE:
+            continue
+        if len(injuries.injured_list_entries(db, team.id)) >= injuries.IL_CAPACITY:
+            break
+        injuries.place_on_injured_list(db, team, asset.id)
+
+
 # ---- one visit --------------------------------------------------------------------------------------------------
 def _visit(db: Session, league: League, team: Team, at: datetime.datetime, board: list, visit: int) -> None:
     from fantasy_sports.api.helpers import draftable_asset_position
 
     limit = roster_limit(db, league)
-    entries = db.query(RosterEntry).filter_by(team_id=team.id).all()
+    _manage_injured_list(db, team)
+    entries = db.query(RosterEntry).filter_by(team_id=team.id, on_injured_list=False).all()
     stub = SimpleNamespace(league_id=league.id)
     if len(entries) < limit and board:
         pick = snake_ai.choose_pick(db, stub, team.id, board)

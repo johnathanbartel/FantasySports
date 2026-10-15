@@ -226,7 +226,11 @@ function draftLine() {
   return 'Recruiting not started';
 }
 
-function statCard(label, value, sub) { return `<div class="card elev-sm stat"><div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`; }
+function statCard(label, value, sub, href) {
+  const inner = `<div class="l">${label}</div><div class="v">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}`;
+  return href ? `<a class="card elev-sm stat" href="${href}" style="display:block;text-decoration:none;color:inherit;cursor:pointer" title="Open the draft board">${inner}</a>`
+    : `<div class="card elev-sm stat">${inner}</div>`;
+}
 
 // ---- HOME ----------------------------------------------------------------------------------
 async function renderHome() {
@@ -266,8 +270,8 @@ async function renderHome() {
       ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`)}
       ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`)}
       ${ov.draft_type === 'snake'
-        ? statCard('Draft', isDraftSoonOrLive() ? `<span style="color:var(--color-accent)">${ov.draft_state === 'in_progress' ? 'In progress' : 'Starting soon'}</span>` : ({complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state), isDraftSoonOrLive() ? `<a href="${draftBoardUrl()}" style="font-weight:600">Open draft board →</a>` : (ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`))
-        : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine())}
+        ? statCard('Draft', isDraftSoonOrLive() ? `<span style="color:var(--color-accent)">${ov.draft_state === 'in_progress' ? 'In progress' : 'Starting soon'}</span>` : ({complete: 'Complete', in_progress: 'In progress', not_started: 'Not started'}[ov.draft_state] || ov.draft_state), isDraftSoonOrLive() ? 'Open draft board →' : (ov.draft_state === 'complete' ? 'Every roster spot was drafted' : `${ov.roster_size} rounds, one per roster spot`), draftBoardUrl())
+        : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine(), draftBoardUrl())}
       ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'))}
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`) : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you')}
     </div>
@@ -294,16 +298,6 @@ async function renderHome() {
           <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Standings</h3><a href="#" id="all-standings">Full standings</a></div>
           ${played ? standings.slice(0, 5).map((s, i) => `<div class="row"><span class="muted" style="width:18px">${i + 1}</span><span style="flex:1">${tn(s.team_id, s.team_name)}</span><strong>${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</strong></div>`).join('')
             : '<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">No games played yet. Standings fill in once weekly matchups are scored.</p>'}
-        </div>
-        <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
-          <h3 style="margin:0 0 var(--space-2)">Quick links</h3>
-          <div style="display:flex;flex-direction:column;gap:6px;font-size:14px">
-            ${ov.draft_type === 'snake' ? `<a href="/static/draft-board.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Draft board</a>`
-              : `<a href="/static/recruiting-board.html?league_id=${LEAGUE_ID}">Recruiting board</a>`}
-            <a href="/static/lineup.html?league_id=${LEAGUE_ID}${mine ? '&team_id=' + mine.id : ''}">Lineup</a>
-            ${(ov.universe_codes || []).includes('nhl') ? `<a href="#" data-go="roster">Roster &amp; lines (3-game series)</a>` : ''}
-            ${isCommissioner ? `<a href="/static/commissioner.html?league_id=${LEAGUE_ID}">Commissioner mode</a>` : ''}
-          </div>
         </div>
       </div>
     </div>`;
@@ -335,8 +329,8 @@ function txnText(x) {
 }
 function txnBadge(x) {
   if (x.kind === 'recruited') return '<span class="pill">Recruiting</span>';
-  const why = {ai_fill: 'AI required fill', user: 'Owner', commissioner: 'Commissioner'}[x.reason] || '';
-  return `<span class="pill ${x.reason === 'ai_fill' ? 'ai' : ''}">${x.kind === 'added' ? 'Signed' : 'Dropped'}${why ? ' · ' + why : ''}</span>`;
+  const why = {user: 'Owner', commissioner: 'Commissioner'}[x.reason] || '';
+  return `<span class="pill">${x.kind === 'added' ? 'Signed' : 'Dropped'}${why ? ' · ' + why : ''}</span>`;
 }
 function txnRow(x) { return `<div class="row"><span style="flex:1;font-size:13px">${txnText(x)}</span>${txnBadge(x)}</div>`; }
 
