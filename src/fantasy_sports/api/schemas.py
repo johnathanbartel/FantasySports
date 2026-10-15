@@ -586,6 +586,8 @@ class PeckingOrderPlayerOut(BaseModel):
     points_per_game: float | None = None
     real_team: str | None = None
     real_team_code: str | None = None
+    injury_status: str | None = None   # DTD / OUT / IR / LTIR; None = healthy
+    injury_note: str | None = None
 
 
 class PeckingOrderGroupOut(BaseModel):
@@ -600,6 +602,23 @@ class PeckingOrderOut(BaseModel):
     team_id: int
     groups: list[PeckingOrderGroupOut]
     real_schedules: dict[str, dict[int, list[dict]]] = {}
+    injured_list: list[PeckingOrderPlayerOut] = []
+    injured_list_capacity: int = 0
+
+
+class InjuryAlertOut(BaseModel):
+    id: int
+    draftable_asset_id: int
+    player_name: str
+    old_status: str | None = None
+    new_status: str | None = None   # None = healthy again
+    note: str | None = None
+    created_at: datetime.datetime
+
+
+class InjuredListRequest(BaseModel):
+    draftable_asset_id: int
+    on: bool   # True = place on the injured list, False = activate
 
 
 class PeckingOrderResolveRequest(BaseModel):

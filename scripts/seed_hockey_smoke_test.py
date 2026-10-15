@@ -28,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # Mock external network calls to keep test offline and hermetic
 _fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
 _fetch_patcher.start()
+_injury_patcher = patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None)
+_injury_patcher.start()
 
 db_path = Path(os.environ.get("HOCKEY_SMOKE_DB", "hockey_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
@@ -100,6 +102,97 @@ def seed_reference_data(db):
     return {"nhl": nhl, "assets_by_name": by_name, "commissioner": commissioner}
 
 
+def check_injured_list(db, headers, skater, goalie):
+    """Injury status on the player card data, and the injured list: eligibility, capacity, lines, roster count."""
+    from fantasy_sports.platform import free_agency, injuries
+    from fantasy_sports.platform.db.models.core import RosterEntry
+
+    entry = db.query(RosterEntry).filter_by(draftable_asset_id=skater.id).one()
+    team_id = entry.team_id
+
+    def read():
+        resp = client.get(f"/teams/{team_id}/pecking-order")
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def il(asset_id, on):
+        return client.post(f"/teams/{team_id}/injured-list", json={"draftable_asset_id": asset_id, "on": on}, headers=headers)
+
+    def ranked_ids(body):
+        return {p["draftable_asset_id"] for g in body["groups"] for p in g["ranked"] + g["unranked"]}
+
+    assert skater.id in ranked_ids(read())
+    assert il(skater.id, True).status_code == 400, "a healthy player can't go on the injured list"
+
+    # Day-to-day shows on the card but isn't IL-eligible.
+    injuries.set_injury(db, skater.player, "DTD", "Upper body")
+    db.commit()
+    card = next(p for g in read()["groups"] for p in g["ranked"] + g["unranked"] if p["draftable_asset_id"] == skater.id)
+    assert (card["injury_status"], card["injury_note"]) == ("DTD", "Upper body"), card
+    assert il(skater.id, True).status_code == 400, "day-to-day players stay on the lines"
+
+    count_before = free_agency.roster_count(db, team_id)
+    injuries.set_injury(db, skater.player, "IR", "Lower body")
+    db.commit()
+    resp = il(skater.id, True)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [p["draftable_asset_id"] for p in body["injured_list"]] == [skater.id]
+    assert body["injured_list"][0]["injury_status"] == "IR"
+    assert skater.id not in ranked_ids(body), "injured-list players leave the lines"
+    assert free_agency.roster_count(db, team_id) == count_before - 1, "the injured list frees a roster spot"
+    assert il(skater.id, True).status_code == 400, "already on the list"
+
+    resp = il(skater.id, False)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["injured_list"] == [] and skater.id in ranked_ids(body)
+    assert il(skater.id, False).status_code == 400, "not on the list"
+    print("Injured list checks passed: status on the card, IL eligibility, off the lines, roster spot freed, activation.")
+
+
+def check_injury_sync(db, headers, healed):
+    """ESPN report parsing and application, offline, from a saved sample of the real response."""
+    import json
+    from fantasy_sports.platform import injury_sync
+    from fantasy_sports.platform.db.models.core import Player, RealTeam, Universe
+
+    nhl = db.query(Universe).filter_by(code="nhl").one()
+    ana = RealTeam(universe_id=nhl.id, name="Anaheim Ducks", external_ref="ANA")
+    db.add(ana)
+    db.flush()
+    granlund = Player(universe_id=nhl.id, real_team_id=ana.id, full_name="Mikael Granlund", position="C")
+    db.add(granlund)
+    db.flush()
+    db.commit()
+    assert healed.player.injury_status == "IR"   # left injured by check_injured_list; not in the sample report
+
+    sample = json.loads((Path(__file__).parent / "fixtures" / "espn_injuries_sample.json").read_text(encoding="utf-8"))
+    entries = injury_sync.parse_report(sample)
+    assert len(entries) == 128 and {e.status for e in entries} == {"DTD", "OUT", "IR"}
+    assert injury_sync.apply_report(db, entries[:5]) == [], "a short report is ignored"
+    assert healed.player.injury_status == "IR"
+
+    changes = {c.name: c for c in injury_sync.apply_report(db, entries)}
+    db.commit()
+    assert (granlund.injury_status, granlund.injury_note) == ("DTD", "Upper Body"), (granlund.injury_status, granlund.injury_note)
+    assert (changes["Mikael Granlund"].old_status, changes["Mikael Granlund"].new_status) == (None, "DTD")
+    assert healed.player.injury_status is None and changes[healed.player.full_name].new_status is None
+    assert injury_sync.apply_report(db, entries) == [], "re-applying the same report changes nothing"
+
+    # Alerts go to the team that rosters an affected player (here: Matthews healed, on a team with an owner token).
+    from fantasy_sports.platform.db.models.core import InjuryAlert, RosterEntry
+    owner_team = db.query(RosterEntry).filter_by(draftable_asset_id=healed.id).one().team_id
+    resp = client.get(f"/teams/{owner_team}/injury-alerts", headers=headers)
+    assert resp.status_code == 200, resp.text
+    alerts = resp.json()
+    assert [(a["player_name"], a["old_status"], a["new_status"]) for a in alerts] == [("Auston Matthews", "IR", None)], alerts
+    assert db.query(InjuryAlert).filter_by(player_name="Mikael Granlund").count() == 0, "nobody rosters Granlund"
+    assert client.post(f"/teams/{owner_team}/injury-alerts/read", headers=headers).json() == {"dismissed": 1}
+    assert client.get(f"/teams/{owner_team}/injury-alerts", headers=headers).json() == []
+    print("Injury sync checks passed: parsed ESPN sample, matched by name, short report ignored, healed players cleared.")
+
+
 def main():
     db = SessionLocal()
     ref = seed_reference_data(db)
@@ -160,6 +253,9 @@ def main():
     picks = client.get(f"/drafts/{draft['id']}/picks").json()
     print(f"Full pick history ({len(picks)} picks): "
           f"{[(p['round'], p['pick_number'], p['display_name']) for p in picks]}")
+
+    check_injured_list(db, headers, matthews, swayman)
+    check_injury_sync(db, headers, matthews)
 
     resp = client.get("/health")
     assert resp.status_code == 200, resp.text
