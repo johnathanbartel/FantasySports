@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import threading
 import unicodedata
 import urllib.request
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import injuries
-from fantasy_sports.platform.db.models.core import Player, RealTeam, Universe
+from fantasy_sports.platform.db.models.core import DraftableAsset, InjuryAlert, Player, RealTeam, RosterEntry, Universe
 
 ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
 HEADERS = {"User-Agent": "FantasySportsPlatform-InjurySync/1.0"}
@@ -114,7 +115,42 @@ def apply_report(db: Session, entries: list[ReportEntry], now: datetime.datetime
             if player.injury_status in ("DTD", "OUT", "IR") and player.id not in seen:
                 changes.append(Change(player.id, player.full_name, player.injury_status, None, None))
                 injuries.set_injury(db, player, None, None, now)
+    create_alerts(db, changes, now)
     return changes
+
+
+def create_alerts(db: Session, changes: list[Change], now: datetime.datetime | None = None) -> int:
+    """One alert per team that has the player on its roster (injured list included). Returns how many. Flushes."""
+    now = now or datetime.datetime.utcnow()
+    by_player = {c.player_id: c for c in changes}
+    if not by_player:
+        return 0
+    n = 0
+    rows = (db.query(RosterEntry).join(RosterEntry.draftable_asset)
+            .filter(DraftableAsset.player_id.in_(list(by_player))).all())
+    for entry in rows:
+        c = by_player[entry.draftable_asset.player_id]
+        db.add(InjuryAlert(team_id=entry.team_id, draftable_asset_id=entry.draftable_asset_id, player_name=c.name,
+                           old_status=c.old_status, new_status=c.new_status, note=c.note, created_at=now))
+        n += 1
+    db.flush()
+    return n
+
+
+_last_attempt: datetime.datetime | None = None
+_lock = threading.Lock()
+
+
+def sync_if_stale(db: Session, min_interval: datetime.timedelta = datetime.timedelta(minutes=15)) -> list[Change] | None:
+    """sync(), but at most once per min_interval per process (a failed fetch counts, so an outage isn't retried on every
+    page view). Returns None when skipped or failed. Meant for the roster view's lazy refresh."""
+    global _last_attempt
+    now = datetime.datetime.utcnow()
+    with _lock:
+        if _last_attempt is not None and now - _last_attempt < min_interval:
+            return None
+        _last_attempt = now
+    return sync(db, now)
 
 
 def sync(db: Session, now: datetime.datetime | None = None) -> list[Change] | None:

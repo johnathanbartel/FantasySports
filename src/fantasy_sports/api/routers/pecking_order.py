@@ -11,14 +11,14 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, current_user
 from fantasy_sports.api.schemas import (
-    InjuredListRequest, PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
+    InjuredListRequest, InjuryAlertOut, PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
 )
 from fantasy_sports.platform import injuries, pecking_order as po
 from fantasy_sports.platform.league_features import roster_limit
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.player_rates import rates_by_asset
-from fantasy_sports.platform.db.models.core import League, RealTeam, Team, Universe, User
+from fantasy_sports.platform.db.models.core import InjuryAlert, League, RealTeam, Team, Universe, User
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(prefix="/teams", tags=["pecking-order"])
@@ -172,6 +172,11 @@ def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
     except Exception:
         pass
     try:
+        from fantasy_sports.platform import injury_sync
+        injury_sync.sync_if_stale(db)        # ESPN injury report, at most every 15 minutes; alerts affected managers
+    except Exception:
+        db.rollback()
+    try:
         ai_roster.tick(db, team.league_id)      # AI teams set their own lines (platform/ai/ai_roster.py)
         db.commit()
     except Exception:
@@ -212,6 +217,24 @@ def set_injured_list(team_id: int, payload: InjuredListRequest, db: Session = De
         raise HTTPException(400, str(e))
     db.commit()
     return _read(db, team)
+
+
+@router.get("/{team_id}/injury-alerts", response_model=list[InjuryAlertOut])
+def get_injury_alerts(team_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The team's unread injury alerts (a rostered player's status changed), newest first."""
+    team = assert_can_manage_team(db, user, team_id)
+    return (db.query(InjuryAlert).filter_by(team_id=team.id, read_at=None)
+            .order_by(InjuryAlert.created_at.desc(), InjuryAlert.id.desc()).limit(50).all())
+
+
+@router.post("/{team_id}/injury-alerts/read")
+def mark_injury_alerts_read(team_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Dismisses all of the team's unread injury alerts."""
+    team = assert_can_manage_team(db, user, team_id)
+    n = (db.query(InjuryAlert).filter_by(team_id=team.id, read_at=None)
+         .update({InjuryAlert.read_at: datetime.datetime.utcnow()}, synchronize_session=False))
+    db.commit()
+    return {"dismissed": n}
 
 
 @router.post("/{team_id}/pecking-order/resolve", response_model=PeckingOrderResolvedOut)

@@ -606,6 +606,16 @@ class PeckingOrderOut(BaseModel):
     injured_list_capacity: int = 0
 
 
+class InjuryAlertOut(BaseModel):
+    id: int
+    draftable_asset_id: int
+    player_name: str
+    old_status: str | None = None
+    new_status: str | None = None   # None = healthy again
+    note: str | None = None
+    created_at: datetime.datetime
+
+
 class InjuredListRequest(BaseModel):
     draftable_asset_id: int
     on: bool   # True = place on the injured list, False = activate

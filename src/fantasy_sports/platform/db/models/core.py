@@ -907,6 +907,23 @@ class FreeAgencyTransaction(Base):
     draftable_asset: Mapped["DraftableAsset"] = relationship()
 
 
+class InjuryAlert(Base):
+    """A change in the injury status of a player on a team's roster, for that team's manager to see (created by
+    platform/injury_sync.py). new_status None = healthy again. read_at is set when the manager dismisses it."""
+
+    __tablename__ = "injury_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    player_name: Mapped[str] = mapped_column(String(100))
+    old_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    new_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    read_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Trade(Base):
     """A trade proposal between two teams in a league.
     status:

@@ -28,6 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # Mock external network calls to keep test offline and hermetic
 _fetch_patcher = patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None)
 _fetch_patcher.start()
+_injury_patcher = patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None)
+_injury_patcher.start()
 
 db_path = Path(os.environ.get("HOCKEY_SMOKE_DB", "hockey_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
@@ -149,7 +151,7 @@ def check_injured_list(db, headers, skater, goalie):
     print("Injured list checks passed: status on the card, IL eligibility, off the lines, roster spot freed, activation.")
 
 
-def check_injury_sync(db, healed):
+def check_injury_sync(db, headers, healed):
     """ESPN report parsing and application, offline, from a saved sample of the real response."""
     import json
     from fantasy_sports.platform import injury_sync
@@ -177,6 +179,17 @@ def check_injury_sync(db, healed):
     assert (changes["Mikael Granlund"].old_status, changes["Mikael Granlund"].new_status) == (None, "DTD")
     assert healed.player.injury_status is None and changes[healed.player.full_name].new_status is None
     assert injury_sync.apply_report(db, entries) == [], "re-applying the same report changes nothing"
+
+    # Alerts go to the team that rosters an affected player (here: Matthews healed, on a team with an owner token).
+    from fantasy_sports.platform.db.models.core import InjuryAlert, RosterEntry
+    owner_team = db.query(RosterEntry).filter_by(draftable_asset_id=healed.id).one().team_id
+    resp = client.get(f"/teams/{owner_team}/injury-alerts", headers=headers)
+    assert resp.status_code == 200, resp.text
+    alerts = resp.json()
+    assert [(a["player_name"], a["old_status"], a["new_status"]) for a in alerts] == [("Auston Matthews", "IR", None)], alerts
+    assert db.query(InjuryAlert).filter_by(player_name="Mikael Granlund").count() == 0, "nobody rosters Granlund"
+    assert client.post(f"/teams/{owner_team}/injury-alerts/read", headers=headers).json() == {"dismissed": 1}
+    assert client.get(f"/teams/{owner_team}/injury-alerts", headers=headers).json() == []
     print("Injury sync checks passed: parsed ESPN sample, matched by name, short report ignored, healed players cleared.")
 
 
@@ -242,7 +255,7 @@ def main():
           f"{[(p['round'], p['pick_number'], p['display_name']) for p in picks]}")
 
     check_injured_list(db, headers, matthews, swayman)
-    check_injury_sync(db, matthews)
+    check_injury_sync(db, headers, matthews)
 
     resp = client.get("/health")
     assert resp.status_code == 200, resp.text
