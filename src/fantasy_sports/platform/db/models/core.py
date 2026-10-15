@@ -20,6 +20,7 @@ import datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -280,6 +281,8 @@ class Player(Base):
     # Source id (CFBD player id / nflfastR gsis_id) for future ingestion joins.
     external_ref: Mapped[str | None] = mapped_column(String(60), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Date of birth (hockey: from the NHL roster sync); NULL = unknown. Age is derived, see platform/player_age.py.
+    birth_date: Mapped[datetime.date | None] = mapped_column(Date, nullable=True)
     # Real-world injury report (hockey): NULL = healthy; else DTD / OUT / IR / LTIR (platform/injuries.py).
     injury_status: Mapped[str | None] = mapped_column(String(10), nullable=True)
     injury_note: Mapped[str | None] = mapped_column(String(200), nullable=True)   # e.g. "Lower body"

@@ -116,6 +116,9 @@ let POSITIONS = FOOTBALL_POSITIONS;   // set from the league's universe in refre
 const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
+// Transactions-tab list header and age cell. Age comes from the NHL roster sync, so only hockey shows it.
+const ageCell = (v) => isHockey() ? `<span class="pts muted" title="Age">${v ?? '-'}</span>` : '';
+const txHeader = (price, action) => `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts" title="Age in years">Age</span>' : ''}<span class="pts" title="${LAST} fantasy points, ESPN standard">Points</span><span class="pts" title="Points per game">PPG</span>${price ? '<span class="pts" title="Asking price (provisional)">Price</span>' : ''}<span style="width:64px"></span></div>`;
 const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
@@ -341,11 +344,11 @@ function teamPicker(id) {
   const mineFirst = ov.teams.slice().sort((a, b) => (canManage(b) ? 1 : 0) - (canManage(a) ? 1 : 0) || a.id - b.id);
   return `<select id="${id}" class="inp">${mineFirst.map(t => `<option value="${t.id}"${t.id === activeTeamId ? ' selected' : ''}>${esc(t.name)}${t.is_ai_owned ? ' (AI)' : ''}</option>`).join('')}</select>`;
 }
+// "Acting for" only matters in a solo league (one human managing AI teams); with several humans each acts for their own team.
+const actingForPicker = (id) => ov.teams.filter(t => !t.is_ai_owned).length > 1 ? '' : `<div><div class="card-kicker">Acting for</div>${teamPicker(id)}</div>`;
 function ensureActiveTeam() {
   if (!activeTeamId || !teamsById[activeTeamId]) {
     const q = Number(params.get('team_id'));
-// "Acting for" only matters in a solo league (one human managing AI teams); with several humans each acts for their own team.
-const actingForPicker = (id) => ov.teams.filter(t => !t.is_ai_owned).length > 1 ? '' : `<div><div class="card-kicker">Acting for</div>${teamPicker(id)}</div>`;
     activeTeamId = (teamsById[q] && q) || myTeam()?.id || (canActForAi ? ov.teams.find(t => t.is_ai_owned)?.id : null) || ov.teams[0]?.id;
   }
 }
@@ -1181,10 +1184,10 @@ async function renderRoster() {
         ? `${open} open spot${open === 1 ? '' : 's'}. Open spots are filled through <a href="#" data-go="transactions">free agency on the Transactions tab</a>${t.is_ai_owned ? ' - AI teams are required to fill theirs, and do so automatically.' : '.'}`
         : 'Teams may recruit fewer players than the roster size. Free agency opens when recruiting ends, and open spots are filled there.'}</div>` : ''}
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-5)">
-      ${roster.length ? `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span><span class="pts">Points</span><span class="pts">PPG</span>${canDrop(t) ? '<span style="width:64px"></span>' : ''}</div>`
+      ${roster.length ? `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts">Age</span>' : ''}<span class="pts">Points</span><span class="pts">PPG</span>${canDrop(t) ? '<span style="width:64px"></span>' : ''}</div>`
         + roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
         <span class="pill">${r.acquired_via === 'free_agency' ? 'Free agency' : r.acquired_via === 'recruiting' ? 'Recruited' : esc(r.acquired_via || '')}</span>
-        <span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span><span class="pts" title="Points per game">${ppg(r.points_per_game)}</span>
+        ${isHockey() ? `<span class="pts" title="Age">${r.age ?? '-'}</span>` : ''}<span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span><span class="pts" title="Points per game">${ppg(r.points_per_game)}</span>
         ${canDrop(t) ? `<button class="btn btn-ghost" data-drop="${r.draftable_asset_id}">Drop</button>` : ''}</div>`).join('')
         : '<p class="muted" style="margin:var(--space-3) 0">No players yet.</p>'}
     </div>
@@ -1266,9 +1269,9 @@ function drawFa() {
     `<button class="chip${f.pos === v ? ' on' : ''}" data-pos="${v}">${l}<span class="n">${n}</span></button>`).join('');
   chips.querySelectorAll('.chip').forEach(b => b.onclick = () => { f.pos = b.dataset.pos; drawFa(); });
   const can = canManage(team) && sum.open_spots > 0;
-  $('fa-list').innerHTML = rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
+  $('fa-list').innerHTML = (rows.length ? txHeader(ov.is_college) : '') + rows.slice(0, 50).map(p => `<div class="row">${posTag(p.position)}
       <span style="flex:1;min-width:0"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
-      <span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
+      ${ageCell(p.age)}<span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
       <button class="btn btn-primary" data-add="${p.draftable_asset_id}" ${can ? '' : 'disabled'} title="${can ? '' : (canManage(team) ? 'Roster is full - drop a player first' : 'You can only sign for your own team')}">Sign</button></div>`).join('')
     + (rows.length > 50 ? `<p class="muted" style="font-size:12px;margin:var(--space-2) 0">Showing 50 of ${rows.length} - search or pick a position to narrow.</p>` : '')
     || '<p class="muted" style="margin:var(--space-2) 0">No free agents match.</p>';
@@ -1279,9 +1282,9 @@ function drawTxRoster() {
   const {roster, team} = cache.tx;
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
   const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
-  $('tx-roster').innerHTML = sorted.length ? sorted.map(r => `<div class="row">${posTag(r.position)}
+  $('tx-roster').innerHTML = sorted.length ? txHeader(false) + sorted.map(r => `<div class="row">${posTag(r.position)}
     <span style="flex:1;min-width:0"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
-    <span class="pts muted" title="Points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
+    ${ageCell(r.age)}<span class="pts muted" title="${LAST} points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
     <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
     : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
   $('tx-roster').querySelectorAll('[data-drop]').forEach(b => b.onclick = () => {

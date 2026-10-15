@@ -228,6 +228,7 @@ class RosterEntryOut(BaseModel):
     display_name: str  # player full_name, or "<Real Team> <Group>" for defense groups
     position: str | None = None      # QB/RB/WR/TE/PK, or DL/LB/DB for a defense group
     real_team: str | None = None     # the school
+    age: int | None = None           # whole years; None when unknown (and for defense groups)
     last_season_points: float | None = None  # last season, ESPN standard scoring (None for defense groups / no stat line)
     acquired_via: str | None = None
     games: int | None = None                  # games with stored credit (None = no stored games)

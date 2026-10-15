@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
-from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
+from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
 from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
@@ -182,6 +182,7 @@ class FreeAgentOut(BaseModel):
     display_name: str
     position: str | None
     real_team: str | None
+    age: int | None = None
     last_season_points: float | None
     points_per_game: float | None = None
     asking_price: int   # PROVISIONAL rule - see platform/free_agency.py
@@ -226,7 +227,7 @@ def free_agents(league_id: int, db: Session = Depends(get_db)):
     return FreeAgentsOut(open=True, price_note=note, players=[
         FreeAgentOut(
             draftable_asset_id=a.id, display_name=draftable_asset_display_name(a), position=draftable_asset_position(a),
-            real_team=_school(a, schools), last_season_points=stats.get(a.id, {}).get("points"),
+            real_team=_school(a, schools), age=draftable_asset_age(a), last_season_points=stats.get(a.id, {}).get("points"),
             points_per_game=rates.get(a.id, {}).get("points_per_game"), asking_price=prices[a.id])
         for a in assets
     ])

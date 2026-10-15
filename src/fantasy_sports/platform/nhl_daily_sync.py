@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po, series_schedule
+from fantasy_sports.platform.player_age import parse_birth_date
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, Game, League, LeagueSeries, LeagueUniverse, Player, RealTeam, SeriesDailyGame, Universe, Week,
 )
@@ -585,7 +586,7 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
 def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | None = None) -> int:
     """Syncs active NHL team rosters from the public NHL API so call-ups from the AHL
     are immediately marked active=True with DraftableAsset records in the player pool.
-    Returns the number of players activated or added.
+    Also fills players.birth_date from the roster's birthDate. Returns the number of players activated or added.
     """
     if teams is None:
         teams = db.query(RealTeam).filter_by(universe_id=nhl.id).all()
@@ -604,6 +605,7 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
     }
 
     activated_count = 0
+    birth_dates_set = 0
     for team in teams:
         if not team.external_ref:
             continue
@@ -622,7 +624,11 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
                 continue
             p_id_str = str(p_id)
             existing = players_by_ref.get(p_id_str)
+            birth_date = parse_birth_date(item.get("birthDate"))
             if existing:
+                if birth_date and existing.birth_date != birth_date:
+                    existing.birth_date = birth_date
+                    birth_dates_set += 1
                 if not existing.active or existing.real_team_id != team.id:
                     existing.active = True
                     existing.real_team_id = team.id
@@ -639,7 +645,7 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
                 pos = POSITION_MAP.get(item.get("positionCode"), "C")
                 new_player = Player(
                     universe_id=nhl.id, real_team_id=team.id, full_name=name, position=pos,
-                    external_ref=p_id_str, active=True,
+                    external_ref=p_id_str, active=True, birth_date=birth_date,
                 )
                 db.add(new_player)
                 db.flush()
@@ -650,7 +656,7 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
                 asset_by_ref[p_id_str] = asset.id
                 activated_count += 1
 
-    if activated_count:
+    if activated_count or birth_dates_set:
         db.commit()
     return activated_count
 
