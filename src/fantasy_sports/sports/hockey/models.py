@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fantasy_sports.platform.db.base import Base
@@ -118,3 +118,20 @@ class EventCredit(Base):
     draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
     role: Mapped[str] = mapped_column(String(20))
     credit_points: Mapped[float] = mapped_column(Float)
+
+
+class NhlStandingsSnapshot(Base):
+    """One team's NHL standings points as of a calendar date, fetched once from the NHL API and never overwritten.
+    Best Matchup (docs/hockey_spec.md 5.2) reads the snapshot dated the day a window locks, so the selection made at
+    lock can be reproduced later no matter how the standings move afterwards."""
+
+    __tablename__ = "nhl_standings_snapshots"
+    __table_args__ = (UniqueConstraint("universe_id", "real_team_id", "as_of_date", name="uq_nhl_standings_team_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    universe_id: Mapped[int] = mapped_column(ForeignKey("universes.id"), index=True)
+    real_team_id: Mapped[int] = mapped_column(ForeignKey("real_teams.id"))
+    as_of_date: Mapped[datetime.date] = mapped_column(Date, index=True)
+    points: Mapped[int] = mapped_column(Integer)
+    games_played: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

@@ -453,6 +453,18 @@ async function finishReplay() {
 }
 
 // ---------- final ----------
+// The chronological division: which real periods make up each fantasy period (docs/hockey_spec.md 6.1).
+function divisionHtml(prov) {
+  const groups = G.divisionPeriods(prov);
+  if (!groups.length) return '';
+  const body = groups.map(g => `<table class="table"><caption style="text-align:left;font-weight:600;padding:6px 0">Period ${g.period} · ${g.count} real periods</caption>
+    <thead><tr><th scope="col">Player</th><th scope="col">Team</th><th scope="col">Real game</th><th class="num" scope="col">Real period</th><th scope="col">Nominal start</th><th scope="col">OT</th><th class="num" scope="col">Points</th></tr></thead>
+    <tbody>${g.rows.map(r => `<tr><th scope="row">${esc(r.player)}</th><td>${esc(r.team)}</td><td>${esc(r.game)}</td><td class="num">${r.realPeriod}</td><td>${esc(r.start)}</td><td>${r.ot ? 'OT' : ''}</td><td class="num ${r.points < 0 ? 'neg' : ''}">${G.fmtPoints(r.points)}</td></tr>`).join('')}</tbody></table>`).join('');
+  return `<h3 style="font-size:16px;margin:var(--space-4) 0 0" id="division-h">Period division</h3>
+    <p class="muted" style="margin-top:4px">Each fantasy period is a third of the matchup's real periods, in the order they began. Overtime counts in the period holding that player's real third.</p>
+    <div class="tbl-wrap" aria-labelledby="division-h">${body}</div>`;
+}
+
 async function finalScreen() {
   const my = token;
   const [snap, all] = await Promise.all([api(`${base}/final`), fetchAllEvents(0)]);
@@ -474,6 +486,7 @@ async function finalScreen() {
        ${snap.scoring_events.length ? `<ol class="ticker">${snap.scoring_events.map(evHtml).join('')}</ol>` : '<p class="muted" style="margin:0">No goals.</p>'}</section></div>
      <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="box-h" id="boxscore"><h2 id="box-h" style="font-size:20px">Attribution box score</h2>
        <p class="muted" style="margin-top:0">Points are each player's credited value. The scoreboard is built from them but never changes them.</p>${boxes}
+       ${divisionHtml(prov)}
        <details class="prov"><summary>Data provenance</summary><ul>${G.provenanceLines(prov).map(l => `<li>${esc(l)}</li>`).join('')}</ul>
        <p class="muted" style="font-size:12px">Contract ${esc(snap.contract_version)} · ${snap.event_count} events</p></details></section>`;
   const h = $('board-h'); if (h) h.focus();

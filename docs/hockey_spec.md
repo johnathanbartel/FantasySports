@@ -92,18 +92,23 @@ In the NHL, teams play 3 to 4 games a week, meaning a player frequently has 1 re
    A player can contribute **at most one game score** to any single fantasy window.
 2. **Automated Default ("Best Matchup")**:
    When a player plays multiple real NHL games within the same window:
-   - The interface highlights which matchup is favorable (`Better Matchup ★`) based on opponent defensive rating and home/away status.
-   - The scoring engine automatically awards the game with the **highest fantasy score** (`MAX(points)` based on xG attribution).
-   - **Zero User Maintenance**: Casual or inactive managers are guaranteed their star player's best performance without having to log in or configure settings.
+   - The counting game is the one against the opponent with **fewer NHL standings points**, measured at lock time. Fantasy points play no part in the choice, so the pick can never be made with hindsight.
+   - **Lock**: the lock time is the `kickoff_at` of the player's **earliest game in that window**. After the lock the selection cannot change.
+   - **Tiebreak**: equal standings points go to the earlier `kickoff_at`, then the lower game id, so the result never depends on input order.
+   - **Standings snapshot**: the standings are fetched once per calendar day from the NHL API (`standings/{date}`, in `nhl_daily_sync`) before that day's first puck drop and stored insert-only in `nhl_standings_snapshots` (one row per team per date). The selection reads the snapshot dated the lock day, so it can be reproduced later; the choice records the lock time and each candidate's opponent points in the script provenance (`window.chosen[...].lock_at` / `.opponent_points`). A missing snapshot is an error, never a guess.
+   - The interface highlights the counting matchup (`Better Matchup ★`).
+   - **Zero User Maintenance**: Casual or inactive managers get the rule applied automatically, without having to log in or configure settings.
 3. **Optional Surplus Game Flex (Reassignment)**:
    For managers who want active tactical control:
    - A manager can see which matchup is the better matchup and send **either matchup** to count for an open target window (**Window 2 or Window 3**).
    - Whichever matchup is not moved remains to count in the originating window.
    - *Example*: McDavid plays on Sunday vs SJS and Tuesday vs BOS (Window 1), but Edmonton is idle on Thursday (Window 2). The manager can send Tuesday's matchup vs BOS to Window 2 while keeping the favorable Sunday matchup vs SJS in Window 1!
+   - *Lock*: a move must be submitted **before the same lock** (the kickoff of the player's earliest game in the source window); a move submitted at or after it is refused.
    - *Guardrail*: A surplus game can only be assigned to a window where the player does not already have an active game scheduled.
    - *Direction*: a surplus game moves **forward only** (Window 1 to 2 or 3, Window 2 to 3), so a game never rewrites a window that has already finished. One moved game per target window, and at least one game always stays where it was played.
-   - *"Has a game"* means the player's real team plays in that window, whether or not he earned credit in it: a scheduled game occupies its window. Such a game still never beats a game he earned credit in, so staying out of a game cannot be used to dodge a bad night (goalie GSAx).
-   - *Ties*: equal scores go to the earlier game, then the lower game id, so the result never depends on input order.
+   - *"Has a game"* means the player's real team plays in that window, whether or not he earned credit in it: a scheduled game occupies its window. A scheduled game he earned nothing in competes for Best Matchup like any other (only the opponent decides) and counts as 0.00 if chosen.
+   - *Ties*: equal standings points go to the earlier `kickoff_at`, then the lower game id, so the result never depends on input order.
+   - *A moved surplus game* keeps its real `kickoff_at`, so in its target window its periods sort first in the chronological division (section 6.1).
 4. **Off-Day Point Banking**:
    On rare league-wide freeze days (e.g. Christmas Eve/Day, 3-day holiday breaks), any points from isolated games enter the off-day bank (`off_day_banked_credits`) and can be applied as a bench spark (capped at +1.50 pts).
 
@@ -111,7 +116,28 @@ In the NHL, teams play 3 to 4 games a week, meaning a player frequently has 1 re
 
 ## 6. Game Simulator: Real-Time Progression, Normalization & Randomness
 
-### 6.1 Real-Time Progressive Simulation
+### 6.1 Chronological Period Division and Real-Time Progressive Simulation
+A matchup is one window (Sun–Tue, Wed–Thu or Fri–Sat). Each side has 6 starters resolved by the pecking order, so a full matchup has 12 counting games. The three fantasy periods are **not** a game-clock overlay of each player's own real periods. They are a chronological division of all the real periods in the matchup, computed per matchup:
+
+1. Each counting game contributes **3 real periods** with nominal start times: P1 = `kickoff_at`, P2 = `kickoff_at` + 60 min, P3 = `kickoff_at` + 120 min.
+2. The real periods of **both sides** are pooled (team affiliation is ignored) and sorted by nominal start ascending. Ties break by game id, then asset id (then period number), so the result never depends on input order.
+3. N is the number of pooled periods. A full matchup has 36; N is always a multiple of 3 and an empty slot only lowers it (one empty slot: 33). The sorted list is cut into 3 consecutive chunks of N/3: these are fantasy P1, P2 and P3.
+4. Each matchup has its own division and its own clock. Different matchups can be in different periods at the same moment.
+5. A moved surplus game uses its real `kickoff_at`, so it sorts first in its target window.
+
+*Example*: 6 starters kick off at 4:00 and 6 at 7:00 on the same day. Fantasy P1 = the 4:00 players' real P1 and P2; fantasy P2 = the 4:00 players' P3 plus the 7:00 players' P1; fantasy P3 = the 7:00 players' P2 and P3. If every starter kicks off together, real Pn is fantasy Pn.
+
+**Overtime.** OT minutes and OT events belong to the player's real P3, in whichever fantasy period that P3 landed. Shootouts are excluded (the scoring contract; they are never ingested).
+
+**Clock and event placement** (one shared function, `sports/hockey/simulator/division.py`; only nominal times are used, never live event timestamps):
+- Real period progress at time t = clamp((t − nominal_start) / 60 min, 0, 1). Fantasy period k progress = the mean progress of the real periods in chunk k.
+- Clock display: `Period k — MM:SS left`, remaining = 20:00 × (1 − progress).
+- An event at offset s seconds into real period p has an estimated wall time of nominal_start(p) + (s / 1200) × 60 min. Its fantasy `game_second` = (k − 1) × 1200 + 1200 × progress_k(event wall time), kept inside 1–1199 within period k.
+- OT events sit at the end of their fantasy period, in their relative order.
+- Events with no real clock (inverted opponent errors, unattributed team goals, the tie-break goal) are drawn inside the fantasy periods from the seeded stream. The monotonic scoreboard validator (FS-025) still applies.
+
+The division, with every real period's player, fantasy team, game, real period, nominal start, OT flag and points, is stored in the script provenance (`provenance.division`) and returned by `GET /simulator/games/{id}/final`, behind the same spoiler veil as the rest of the box score (section 9). *Not yet wired*: the live service still paces a published script over its real-time window (`window_seconds`); driving the live clock from the division's nominal times is a follow-up.
+
 Simulated games do not execute as a single instantaneous batch calculation. Instead, games **progress in real time** throughout the game window:
 - **Anytime Status Checking**: When a manager opens the app, the interface displays:
   - Current period and time remaining (e.g., `Period 2 — 14:18 left`).
@@ -220,7 +246,10 @@ The frontend Schedule and Lineup interface is structured into three dedicated fu
      - Whichever matchup is kept remains active in the originating window.
 4. **Main Matchup Canvas**:
    - Real-time progressive simulation view: period clock, live scoreboard, shots on goal, and on-ice narrative ticker.
-5. **Matchup Scoreboard Card & Period Spoiler Veil**:
+5. **Box Score Division Table**:
+   - Below the attribution box score, one table per fantasy period lists every real period assigned to it: player, fantasy team, real game (opponent and date), real period number, nominal start time, an `OT` flag, and the points earned in that real period.
+   - Rows read chronologically; the points tie out to the attribution box score. It is shown only once the viewer has watched or skipped to the final, like the rest of the box score.
+6. **Matchup Scoreboard Card & Period Spoiler Veil**:
    - Header indicates period status (e.g., `Period 1 in progress`, `Period 2 in progress`, `Final`).
    - Clean horizontal line layout: `<Road Team> <Road Goals> — <Home Goals> <Home Team>`.
    - During Period 1 (first third of game/players underway): scoreboard displays `0 - 0 in progress`.

@@ -16,10 +16,11 @@ from typing import Iterable, Mapping
 
 from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimScript, validate_script
 from fantasy_sports.sports.hockey.simulator import model, windows
+from fantasy_sports.sports.hockey.simulator.division import Division, division_table, fallback_counting_games
 from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger, tie_out_ledger
 from fantasy_sports.sports.hockey.simulator.model import (
     ADAPTER_ID, ADAPTER_VERSION, DEFAULT_WINDOW_SECONDS, GAME_SECONDS, PERIOD_SECONDS, PERIODS, HockeyGameInputs,
-    Ledger, Normalized, TieOutError, validate_inputs,
+    Ledger, Normalized, TieOutError, WindowContext, validate_inputs,
 )
 from fantasy_sports.sports.hockey.simulator.normalize import check_ordering, derive_rng, normalize
 from fantasy_sports.sports.hockey.simulator.timeline import build_events
@@ -37,6 +38,12 @@ def inputs_digest(inputs: HockeyGameInputs) -> str:
                          + ([a.game_id] if a.game_id is not None else []) for a in
                          sorted(s.attempts, key=lambda a: a.attempt_id)],
         })
+    if inputs.counting_games:                # only games with kickoff data: older inputs keep their digest
+        payload.append({"counting": [[c.asset_id, c.side, c.game_id, c.kickoff_at.isoformat(), c.opponent]
+                                     for c in sorted(inputs.counting_games, key=lambda c: (c.side, c.asset_id))]})
+    starters = [[side, sorted(inputs.side(side).starters)] for side in ("home", "away") if inputs.side(side).starters]
+    if starters:
+        payload.append({"starters": starters})
     if inputs.window_index is not None:      # only window games: a plain game's digest is unchanged
         payload.append({"window": inputs.window_index, "week_start": inputs.week_start})
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -65,12 +72,22 @@ class HockeySimulatorAdapter:
         self.window_seconds = window_seconds
 
     def build_window_script(self, game_inputs: HockeyGameInputs, game_dates: Mapping[int, datetime.date], seed: int,
-                            assignments=(), scheduled_games: Mapping[int, Iterable[int]] | None = None) -> SimScript:
+                            assignments=(), scheduled_games: Mapping[int, Iterable[int]] | None = None,
+                            context: WindowContext | None = None) -> SimScript:
         """A window game from ALL of the week's credit for the starters: each player's one counting game is chosen
-        (Best Game, or the manager's surplus-game moves in `assignments`: pipeline.WindowAssignment), only that game's
-        credit is kept, and the usual script is built from it. `game_dates` maps real game id -> calendar date."""
-        resolved, report = windows.resolve_window_inputs(game_inputs, game_dates, assignments, scheduled_games)
+        (Best Matchup, or the manager's surplus-game moves in `assignments`: pipeline.WindowAssignment), only that
+        game's credit is kept, and the usual script is built from it. `game_dates` maps real game id -> calendar date;
+        `context` carries kickoffs, opponents and the standings snapshot the choice and the division need."""
+        resolved, report = windows.resolve_window_inputs(game_inputs, game_dates, assignments, scheduled_games, context)
         return self.build_script(resolved, seed, extra_provenance={"window": report})
+
+    @staticmethod
+    def _fallback_games(inputs: HockeyGameInputs):
+        """Inputs without kickoff data: every game starts at the same moment, so a real Pn lands in fantasy Pn."""
+        starters = {s: windows.side_starters(inputs.side(s)) for s in ("home", "away")}
+        return fallback_counting_games(
+            [l for s in ("home", "away") for l in inputs.side(s).lines],
+            [a for s in ("home", "away") for a in inputs.side(s).attempts], starters)
 
     def build_script(self, game_inputs: Mapping | HockeyGameInputs, seed: int,
                      extra_provenance: Mapping | None = None) -> SimScript:
@@ -81,7 +98,9 @@ class HockeySimulatorAdapter:
         ledger = build_ledger(inputs)
         tie_out_ledger(inputs, ledger)
         norm = normalize(ledger, derive_rng(seed, inputs.daily_game_id, "noise"))
-        events = build_events(inputs, ledger, norm, derive_rng(seed, inputs.daily_game_id, "story"))
+        counting = inputs.counting_games or self._fallback_games(inputs)
+        division = Division.build(counting)
+        events = build_events(inputs, ledger, norm, derive_rng(seed, inputs.daily_game_id, "story"), division)
         provenance = {
             "adapter": ADAPTER_ID, "adapter_version": ADAPTER_VERSION, "seed": seed,
             "inputs_digest": inputs_digest(inputs),
@@ -97,6 +116,10 @@ class HockeySimulatorAdapter:
             "teams": {"home": {"team_id": inputs.home.team_id, "name": inputs.home.name},
                       "away": {"team_id": inputs.away.team_id, "name": inputs.away.name}},
             "box_score": box_score(inputs),
+            "division": division_table(
+                division, counting, [l for s in ("home", "away") for l in inputs.side(s).lines],
+                [a for s in ("home", "away") for a in inputs.side(s).attempts],
+                {"home": inputs.home.name, "away": inputs.away.name}),
         }
         if extra_provenance:
             provenance.update(extra_provenance)

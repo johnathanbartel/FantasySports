@@ -14,12 +14,13 @@ stored shot_credits / event_credits rows. This package only reads those credits.
 
 from __future__ import annotations
 
+import datetime
 import math
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Callable, Mapping
 
 ADAPTER_ID = "hockey-xg"
-ADAPTER_VERSION = "1.0"
+ADAPTER_VERSION = "1.1"   # 1.1: chronological period division (docs/hockey_spec.md 6.1); events no longer sit on the real game clock
 
 # --- Scoreboard shape (PROVISIONAL product defaults; see docs/hockey_simulator_scoring.md) -----------------
 TOTAL_GOALS = 6.0       # expected combined goals before noise: two teams x the ~3.0 NHL per-team average
@@ -78,11 +79,46 @@ class ShotAttempt:
 
 
 @dataclass(frozen=True)
+class CountingGame:
+    """The one real game that counts for a starter in this matchup, with what the chronological division needs:
+    when it kicks off (nominal; naive Eastern as stored) and how to label it in the box score."""
+    asset_id: int
+    player_name: str
+    side: str                  # "home" / "away": the fantasy side that owns the starter
+    game_id: int
+    kickoff_at: datetime.datetime
+    opponent: str = ""         # e.g. "vs BOS" / "@ BOS"
+
+
+@dataclass(frozen=True)
+class RealGame:
+    """A stored real NHL game, as the window resolver needs it."""
+    game_id: int
+    kickoff_at: datetime.datetime
+    home_key: object           # hashable key of the home team (what `standings` is asked about)
+    away_key: object
+    home_label: str = ""
+    away_label: str = ""
+
+
+@dataclass(frozen=True)
+class WindowContext:
+    """Everything beyond credit lines that window scoring needs (docs/hockey_spec.md 5.2 and 6.1)."""
+    games: Mapping[int, RealGame]
+    asset_team: Mapping[int, object]            # a starter's real team key
+    standings: Callable[[object, datetime.datetime], "int | None"]   # NHL points of a team key as of a lock time
+    asset_names: Mapping[int, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class SideInput:
     team_id: int
     name: str
     lines: tuple[CreditLine, ...] = ()
     attempts: tuple[ShotAttempt, ...] = ()
+    # The side's resolved starters as (asset_id, name), credit or not: a starter with no credit still plays three real
+    # periods that belong in the chronological division. Empty for plain inputs, which fall back to the credited assets.
+    starters: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -95,6 +131,9 @@ class HockeyGameInputs:
     # 3 (Fri-Sat) of the week starting on `week_start` (ISO date of the Sunday). None for a plain single-date game.
     window_index: int | None = None
     week_start: str | None = None
+    # The counting game of every starter (one each). Empty means "no kickoff data": every real game is then treated as
+    # starting at the same moment, so a real period n lands in fantasy period n (the degenerate chronological division).
+    counting_games: tuple[CountingGame, ...] = ()
 
     def side(self, key: str) -> SideInput:
         return self.home if key == "home" else self.away

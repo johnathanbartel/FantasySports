@@ -307,13 +307,16 @@ def process_shots(shots) -> GameResult:
 # A fantasy week runs Sunday to Saturday and has three windows - 1: Sun-Mon-Tue, 2: Wed-Thu, 3: Fri-Sat - each a
 # standalone game. A player contributes AT MOST ONE real game's score to a window:
 #   * one real game in the window: that game;
-#   * several: the "Best Game", the highest fantasy score (ties: the earlier game, then the lower game id);
+#   * several: the "Best Matchup", the game against the opponent with FEWER NHL standings points, measured at lock time
+#     (the kickoff of his earliest game in the window; ties: the earlier kickoff, then the lower game id). Fantasy points
+#     play no part in the choice, and nothing changes the selection after the lock;
 #   * a manager may move a SURPLUS game (a window with two or more of the player's games) to a LATER window (2 or 3)
 #     in which the player has no real game of his own; the other game stays and still counts where it was.
-# A game's score is the sum of the credit lines it earned the player; a goalie's can be negative, and Best Game is
-# still the maximum (the least bad), never skipped.
+# A game's score is the sum of the credit lines it earned the player; a goalie's can be negative. A move must be
+# submitted before the same lock.
 # ---------------------------------------------------------------------------------------------------------------
 import datetime  # noqa: E402
+from typing import Callable  # noqa: E402
 
 WINDOWS = (1, 2, 3)
 # Python weekday(): Monday = 0 ... Sunday = 6
@@ -358,6 +361,10 @@ class PlayerGame:
     # cannot be moved onto it) but is never the Best Game while a game with credit competes: not playing is not a
     # way to dodge a bad night.
     scheduled_only: bool = False
+    # Best Matchup inputs (needed only when a window holds two or more of the player's games): when the game kicks off
+    # (naive Eastern, as stored) and a hashable key for the opponent, which `standings` resolves to NHL points.
+    kickoff_at: datetime.datetime | None = None
+    opponent: object = None
 
     @property
     def window(self) -> tuple[datetime.date, int]:
@@ -370,6 +377,8 @@ class WindowAssignment:
     asset_id: int
     game_id: int
     target_window: int
+    # When the manager submitted the move. When given, it must be before the source window's lock.
+    submitted_at: datetime.datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -380,30 +389,64 @@ class WindowScore:
     window: int
     game_id: int | None          # the game that counts (None = the player has no game in this window)
     points: float                # 0.0 when no game counts
-    source: str                  # none / single / best_game / reassigned
+    source: str                  # none / single / best_matchup / reassigned
     candidates: tuple[int, ...]  # the games that competed for this window
-    dropped: tuple[int, ...]     # candidates that lost to the Best Game
+    dropped: tuple[int, ...]     # candidates that lost to the Best Matchup
+    lock_at: datetime.datetime | None = None                 # kickoff of the player's earliest game in the window
+    opponent_points: tuple[tuple[int, int], ...] = ()        # (game id, opponent's NHL points at lock) per candidate
 
 
-def player_game_points(credits, scheduled=()) -> list[PlayerGame]:
+# standings(opponent, lock_at) -> the opponent's NHL standings points at `lock_at`, or None when unknown.
+Standings = Callable[[object, datetime.datetime], "int | None"]
+
+
+def player_game_points(credits, scheduled=(), meta=None) -> list[PlayerGame]:
     """Sums credit lines into per-game scores. `credits` yields (asset_id, game_id, game_date, points). `scheduled`
     yields (asset_id, game_id, game_date) for every game a player's team played; one with no credit line becomes a
-    scheduled-only game (0.0). Exact (math.fsum) and sorted, so the same credits always give the same games."""
+    scheduled-only game (0.0). `meta` maps (asset_id, game_id) -> (kickoff_at, opponent key) for Best Matchup.
+    Exact (math.fsum) and sorted, so the same credits always give the same games."""
+    meta = meta or {}
+
+    def info(a, g):
+        k, o = meta.get((a, g), (None, None))
+        return {"kickoff_at": k, "opponent": o}
+
     parts: dict[tuple[int, int, datetime.date], list[float]] = defaultdict(list)
     for asset_id, game_id, game_date, points in credits:
         parts[(asset_id, game_id, game_date)].append(points)
-    games = [PlayerGame(a, g, d, math.fsum(p)) for (a, g, d), p in parts.items()]
+    games = [PlayerGame(a, g, d, math.fsum(p), **info(a, g)) for (a, g, d), p in parts.items()]
     have = {(g.asset_id, g.game_id) for g in games}
-    games += [PlayerGame(a, g, d, 0.0, scheduled_only=True) for a, g, d in set(scheduled) if (a, g) not in have]
+    games += [PlayerGame(a, g, d, 0.0, scheduled_only=True, **info(a, g)) for a, g, d in set(scheduled) if (a, g) not in have]
     return sorted(games, key=lambda g: (g.asset_id, g.game_date, g.game_id))
 
 
-def _best(games: list[PlayerGame]) -> PlayerGame:
-    played = [g for g in games if not g.scheduled_only] or games      # a game he earned credit in beats one he did not
-    return max(played, key=lambda g: (g.points, -g.game_date.toordinal(), -g.game_id))
+def _lock_at(games: list[PlayerGame]) -> datetime.datetime | None:
+    """The window's lock: the kickoff of the player's earliest game in it (None when no kickoff is known)."""
+    kicks = [g.kickoff_at for g in games]
+    return None if not kicks or any(k is None for k in kicks) else min(kicks)
 
 
-def resolve_player_week(games, assignments=()) -> tuple[WindowScore, WindowScore, WindowScore]:
+def _best_matchup(pool: list[PlayerGame], lock_at: datetime.datetime | None, standings: Standings | None
+                  ) -> tuple[PlayerGame, tuple[tuple[int, int], ...]]:
+    """The counting game among several: the one against the opponent with FEWER NHL standings points at lock time.
+    Fantasy points play no part. Ties: the earlier kickoff, then the lower game id."""
+    if len(pool) == 1:
+        return pool[0], ()
+    if lock_at is None or standings is None or any(g.kickoff_at is None or g.opponent is None for g in pool):
+        raise WindowError("Best Matchup needs each game's kickoff and opponent and the standings at lock time")
+    points = []
+    for g in pool:
+        pts = standings(g.opponent, lock_at)
+        if pts is None:
+            raise WindowError(f"No NHL standings snapshot for game {g.game_id}'s opponent at lock ({lock_at.isoformat()})")
+        points.append((g.game_id, int(pts)))
+    by_id = dict(points)
+    best = min(pool, key=lambda g: (by_id[g.game_id], g.kickoff_at, g.game_id))
+    return best, tuple(points)
+
+
+def resolve_player_week(games, assignments=(), standings: Standings | None = None
+                        ) -> tuple[WindowScore, WindowScore, WindowScore]:
     """One player's three windows for one week, from all his real games that week."""
     games = sorted(games, key=lambda g: (g.game_date, g.game_id))
     if not games:
@@ -430,6 +473,9 @@ def resolve_player_week(games, assignments=()) -> tuple[WindowScore, WindowScore
         source = game.window[1]
         if a.target_window <= source:
             raise WindowError(f"A game from Window {source} can only move to a later window, not Window {a.target_window}")
+        lock = _lock_at(native[source])
+        if a.submitted_at is not None and lock is not None and a.submitted_at >= lock:
+            raise WindowError(f"Window {source} locked at {lock.isoformat()}: a move must be submitted before the lock")
         if len(native[source]) < 2:
             raise WindowError(f"Window {source} has only one game for this player: there is no surplus game to move")
         if native[a.target_window]:
@@ -454,15 +500,16 @@ def resolve_player_week(games, assignments=()) -> tuple[WindowScore, WindowScore
         if not pool:
             out.append(WindowScore(asset_id, start, w, None, 0.0, "none", (), ()))
             continue
-        best = _best(pool)
+        lock = _lock_at(native[w])           # a game moved out still counts toward the lock: it is the earliest kickoff
+        best, opp = _best_matchup(pool, lock, standings)
         out.append(WindowScore(
-            asset_id, start, w, best.game_id, best.points, "single" if len(pool) == 1 else "best_game",
-            tuple(g.game_id for g in pool), tuple(g.game_id for g in pool if g.game_id != best.game_id)))
+            asset_id, start, w, best.game_id, best.points, "single" if len(pool) == 1 else "best_matchup",
+            tuple(g.game_id for g in pool), tuple(g.game_id for g in pool if g.game_id != best.game_id), lock, opp))
     assert_one_game_per_window(out)
     return tuple(out)  # type: ignore[return-value]
 
 
-def resolve_windows(player_games, assignments=()) -> dict[tuple[int, datetime.date], tuple[WindowScore, ...]]:
+def resolve_windows(player_games, assignments=(), standings: Standings | None = None) -> dict[tuple[int, datetime.date], tuple[WindowScore, ...]]:
     """Resolves every player-week in `player_games`. Keys are (asset_id, week_start)."""
     grouped: dict[tuple[int, datetime.date], list[PlayerGame]] = defaultdict(list)
     for g in player_games:
@@ -471,7 +518,7 @@ def resolve_windows(player_games, assignments=()) -> dict[tuple[int, datetime.da
     for a in assignments:
         if not any(k[0] == a.asset_id and any(g.game_id == a.game_id for g in v) for k, v in grouped.items()):
             raise WindowError(f"Player {a.asset_id} has no game {a.game_id} to move")
-    return {key: resolve_player_week(games, [a for a in assignments if a.asset_id == key[0]])
+    return {key: resolve_player_week(games, [a for a in assignments if a.asset_id == key[0]], standings)
             for key, games in sorted(grouped.items())}
 
 

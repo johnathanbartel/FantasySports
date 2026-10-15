@@ -17,13 +17,14 @@ from typing import NamedTuple
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po
-from fantasy_sports.platform.db.models.core import Game, LeagueUniverse, SeriesDailyGame, Team, Universe
+from fantasy_sports.platform.db.models.core import Game, LeagueUniverse, RealTeam, SeriesDailyGame, Team, Universe
 from fantasy_sports.platform.simulator import service
 from fantasy_sports.sports.hockey import pipeline
-from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, Shot, ShotCredit
+from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, NhlStandingsSnapshot, Shot, ShotCredit
 from fantasy_sports.sports.hockey.simulator.adapter import HockeySimulatorAdapter
 from fantasy_sports.sports.hockey.simulator.model import (
-    DEFAULT_WINDOW_SECONDS, EPS, ROLES, CreditLine, HockeyGameInputs, InputError, ShotAttempt, SideInput,
+    DEFAULT_WINDOW_SECONDS, EPS, ROLES, CountingGame, CreditLine, HockeyGameInputs, InputError, RealGame, ShotAttempt,
+    SideInput, WindowContext,
 )
 
 
@@ -102,12 +103,40 @@ def _credits_for(db: Session, assets: dict, game_ids: list[int], tag_games: bool
     return lines, attempts
 
 
-def _side(db: Session, team: Team, game_ids: list[int]) -> SideInput:
+def _side(db: Session, team: Team, game_ids: list[int]) -> tuple[SideInput, dict[int, int | None]]:
+    """(the side's inputs, starter asset id -> his real team id)."""
     roster = po.roster_players(db, team.id)
     starters = resolve_day_starters(db, team, game_ids)
     assets = {roster[pid][0]: roster[pid][1] for ids in starters.values() for pid in ids}
     lines, attempts = _credits_for(db, assets, game_ids)
-    return SideInput(team_id=team.id, name=team.name, lines=tuple(lines), attempts=tuple(attempts))
+    side = SideInput(team_id=team.id, name=team.name, lines=tuple(lines), attempts=tuple(attempts),
+                     starters=tuple(sorted((a, p.full_name) for a, p in assets.items())))
+    return side, {a: p.real_team_id for a, p in assets.items()}
+
+
+def _team_labels(db: Session, team_ids) -> dict[int, str]:
+    """Real team id -> short label (the NHL abbreviation when stored, else the name)."""
+    return {t.id: t.external_ref or t.name for t in db.query(RealTeam).filter(RealTeam.id.in_(sorted(set(team_ids)) or [0]))}
+
+
+def _real_game(game: Game, labels: dict[int, str]) -> RealGame:
+    if game.kickoff_at is None:
+        raise InputError(f"real game {game.id} has no kickoff time; the chronological division needs it")
+    return RealGame(game.id, game.kickoff_at, game.home_team_id, game.away_team_id,
+                    labels.get(game.home_team_id, ""), labels.get(game.away_team_id, ""))
+
+
+def _counting_games(key: str, side: SideInput, asset_team: dict[int, int | None], by_team: dict[int, RealGame]):
+    """One counting game per starter whose real team plays among `by_team` (a starter with no game is an empty slot)."""
+    out = []
+    for asset_id, name in side.starters:
+        game = by_team.get(asset_team.get(asset_id))
+        if game is None:
+            continue
+        at_home = asset_team[asset_id] == game.home_key
+        out.append(CountingGame(asset_id, name, key, game.game_id, game.kickoff_at,
+                                f"vs {game.away_label}" if at_home else f"@ {game.home_label}"))
+    return out
 
 
 def build_inputs(db: Session, daily_game: SeriesDailyGame) -> HockeyGameInputs:
@@ -115,8 +144,19 @@ def build_inputs(db: Session, daily_game: SeriesDailyGame) -> HockeyGameInputs:
     game_ids = real_game_ids(db, league_id, daily_game.calendar_date)
     home = db.get(Team, daily_game.home_team_id)
     away = db.get(Team, daily_game.away_team_id)
+    home_side, home_teams = _side(db, home, game_ids)
+    away_side, away_teams = _side(db, away, game_ids)
+    rows = db.query(Game).filter(Game.id.in_(game_ids or [0])).order_by(Game.id).all()
+    labels = _team_labels(db, [t for g in rows for t in (g.home_team_id, g.away_team_id)])
+    by_team: dict[int, RealGame] = {}
+    for g in rows:                                        # one game per real team per calendar day
+        real = _real_game(g, labels)
+        by_team.setdefault(g.home_team_id, real)
+        by_team.setdefault(g.away_team_id, real)
+    counting = (_counting_games("home", home_side, home_teams, by_team)
+                + _counting_games("away", away_side, away_teams, by_team))
     return HockeyGameInputs(daily_game_id=daily_game.id, calendar_date=daily_game.calendar_date.isoformat(),
-                            home=_side(db, home, game_ids), away=_side(db, away, game_ids))
+                            home=home_side, away=away_side, counting_games=tuple(counting))
 
 
 def publish_game(db: Session, daily_game: SeriesDailyGame, seed: int | None = None,
@@ -145,7 +185,7 @@ def week_games(db: Session, league_id: int, start: datetime.date) -> dict[int, d
 
 
 def _window_side(db: Session, team: Team, dates: dict[int, datetime.date], start: datetime.date, window_index: int,
-                 moved_assets: set[int]) -> SideInput:
+                 moved_assets: set[int]) -> tuple[SideInput, dict[int, int | None]]:
     """A team's starters for one window and ALL of the week's credit for them, every line tagged with its game."""
     in_window = {gid for gid, d in dates.items() if pipeline.window_of(d) == (start, window_index)}
     roster = po.roster_players(db, team.id)
@@ -162,7 +202,9 @@ def _window_side(db: Session, team: Team, dates: dict[int, datetime.date], start
     starters = po.resolve_starters(order, frozenset(scheduled), frozenset(confirmed)).starters
     assets = {roster[pid][0]: roster[pid][1] for ids in starters.values() for pid in ids}
     lines, attempts = _credits_for(db, assets, week_ids, tag_games=True)
-    return SideInput(team_id=team.id, name=team.name, lines=tuple(lines), attempts=tuple(attempts))
+    side = SideInput(team_id=team.id, name=team.name, lines=tuple(lines), attempts=tuple(attempts),
+                     starters=tuple(sorted((a, p.full_name) for a, p in assets.items())))
+    return side, {a: p.real_team_id for a, p in assets.items()}
 
 
 class WindowLoad(NamedTuple):
@@ -170,6 +212,28 @@ class WindowLoad(NamedTuple):
     inputs: HockeyGameInputs
     game_dates: dict[int, datetime.date]            # real game id -> date, for the whole week
     scheduled_games: dict[int, tuple[int, ...]]     # asset id -> every real game his team plays that week
+    context: WindowContext                          # kickoffs, opponents and the standings snapshots
+
+
+def _window_context(db: Session, home: Team, away: Team, dates: dict[int, datetime.date],
+                    asset_team: dict[int, int | None]) -> WindowContext:
+    """Kickoffs and opponents for the week's real games, every roster player's real team, and the stored standings
+    snapshots (Best Matchup reads the snapshot dated the day a window locks; a missing one is an error, never a guess)."""
+    rows = db.query(Game).filter(Game.id.in_(sorted(dates) or [0])).order_by(Game.id).all()
+    labels = _team_labels(db, [t for g in rows for t in (g.home_team_id, g.away_team_id)])
+    games = {g.id: _real_game(g, labels) for g in rows}
+    snaps: dict[tuple[int, datetime.date], int] = {}
+    if rows:
+        for snap in db.query(NhlStandingsSnapshot).filter(
+                NhlStandingsSnapshot.universe_id == rows[0].universe_id,
+                NhlStandingsSnapshot.as_of_date.in_(sorted(set(dates.values())))):
+            snaps[(snap.real_team_id, snap.as_of_date)] = snap.points
+    names: dict[int, str] = {}
+    for team in (home, away):                    # the resolver considers the whole roster, not just the starters
+        for _, (asset_id, player) in po.roster_players(db, team.id).items():
+            asset_team.setdefault(asset_id, player.real_team_id)
+            names[asset_id] = player.full_name
+    return WindowContext(games, asset_team, lambda team_key, lock_at: snaps.get((team_key, lock_at.date())), names)
 
 
 def _scheduled_games(db: Session, teams: list[Team], dates: dict[int, datetime.date]) -> dict[int, tuple[int, ...]]:
@@ -192,9 +256,10 @@ def build_window_inputs(db: Session, daily_game_id: int, home: Team, away: Team,
     dates = week_games(db, home.league_id, week_start)
     moved = {a.asset_id for a in assignments if a.target_window == window_index}
     window_day = pipeline.window_dates(week_start, window_index)[0]
+    home_side, home_teams = _window_side(db, home, dates, week_start, window_index, moved)
+    away_side, away_teams = _window_side(db, away, dates, week_start, window_index, moved)
     inputs = HockeyGameInputs(
-        daily_game_id=daily_game_id, calendar_date=window_day.isoformat(),
-        home=_window_side(db, home, dates, week_start, window_index, moved),
-        away=_window_side(db, away, dates, week_start, window_index, moved),
+        daily_game_id=daily_game_id, calendar_date=window_day.isoformat(), home=home_side, away=away_side,
         window_index=window_index, week_start=week_start.isoformat())
-    return WindowLoad(inputs, dates, _scheduled_games(db, [home, away], dates))
+    context = _window_context(db, home, away, dates, {**home_teams, **away_teams})
+    return WindowLoad(inputs, dates, _scheduled_games(db, [home, away], dates), context)

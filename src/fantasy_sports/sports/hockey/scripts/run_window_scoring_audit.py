@@ -2,8 +2,9 @@
 Offline audit of NHL 3-window scoring (FS-035; docs/hockey_spec.md section 5).
 
   A. The calendar: Sunday-Saturday weeks, Window 1 = Sun-Mon-Tue, 2 = Wed-Thu, 3 = Fri-Sat.
-  B. Window resolution (sports/hockey/pipeline.py, pure): a single game counts; several games resolve to the Best Game
-     (highest points; ties go to the earlier game); a surplus game can move to a LATER open window; every rule's
+  B. Window resolution (sports/hockey/pipeline.py, pure): a single game counts; several games resolve to the Best
+     Matchup (the opponent with FEWER NHL standings points at lock; ties go to the earlier kickoff, then the lower game
+     id; fantasy points play no part); a surplus game can move to a LATER open window before the lock; every rule's
      refusal; and the one-game-per-window invariant over thousands of seeded random player-weeks.
   C. The adapter (sports/hockey/simulator): one game per player per window is enforced at its boundary; window games
      are resolved before scoring; negative goalie credit is inverted; scoreboards are monotonic and NHL-shaped;
@@ -85,16 +86,23 @@ def audit_calendar() -> None:
 SUN = D(2026, 10, 11)
 
 
-def pg(asset, game, offset, points):
+def pg(asset, game, offset, points, opp=50, hour=19):
+    """A player's game. The opponent key IS the opponent's NHL standings points (see STAND), so `opp` reads as 'the
+    opponent has this many points at lock'."""
     from fantasy_sports.sports.hockey.pipeline import PlayerGame
-    return PlayerGame(asset, game, SUN + datetime.timedelta(days=offset), points)
+    day = SUN + datetime.timedelta(days=offset)
+    return PlayerGame(asset, game, day, points, kickoff_at=datetime.datetime.combine(day, datetime.time(hour)), opponent=opp)
+
+
+def STAND(opponent, lock_at):
+    return opponent
 
 
 def audit_resolution() -> None:
     from fantasy_sports.sports.hockey import pipeline as p
 
     def week(games, moves=()):
-        return p.resolve_player_week(games, [p.WindowAssignment(*m) for m in moves])
+        return p.resolve_player_week(games, [p.WindowAssignment(*m) for m in moves], STAND)
 
     # Credits -> per-game points (exact sums).
     rows = [(1, 10, SUN, 0.1), (1, 10, SUN, 0.2), (1, 10, SUN, 0.3), (1, 11, SUN + datetime.timedelta(days=2), 1.0)]
@@ -110,48 +118,79 @@ def audit_resolution() -> None:
     check([s.source for s in w] == ["single", "none", "none"] and w[1].points == 0.0 and w[1].game_id is None,
           "a window with no game scores nothing")
 
-    # Best Game.
-    w = week([pg(1, 100, 0, 0.4), pg(1, 101, 2, 1.1)])
-    check(w[0].game_id == 101 and w[0].source == "best_game" and w[0].dropped == (100,) and w[0].candidates == (100, 101),
-          "two games in a window: the higher score is the Best Game and the other is dropped")
-    w = week([pg(1, 100, 0, 1.1), pg(1, 101, 2, 1.1)])
-    check(w[0].game_id == 100, "a tie goes to the earlier game")
-    w = week([pg(1, 105, 0, 1.0), pg(1, 100, 0, 1.0)])
-    check(w[0].game_id == 100, "a tie on the same day goes to the lower game id")
-    w = week([pg(9, 100, 0, -0.8), pg(9, 101, 2, -0.1)])
-    check(w[0].game_id == 101 and close(w[0].points, -0.1), "goalie: the least negative game is the Best Game")
+    # Best Matchup: the opponent with FEWER standings points counts; fantasy points play no part.
+    w = week([pg(1, 100, 0, 0.4, opp=30), pg(1, 101, 2, 1.1, opp=12)])
+    check(w[0].game_id == 101 and w[0].source == "best_matchup" and w[0].dropped == (100,) and w[0].candidates == (100, 101),
+          "two games in a window: the weaker opponent's game is the Best Matchup and the other is dropped")
+    w = week([pg(1, 100, 0, 5.0, opp=12), pg(1, 101, 2, -3.0, opp=30)])
+    check(w[0].game_id == 100 and w[0].lock_at == datetime.datetime.combine(SUN, datetime.time(19))
+          and w[0].opponent_points == ((100, 12), (101, 30)),
+          "fantasy points play no part, and the selection records the lock and each opponent's points")
+    w = week([pg(9, 100, 0, -0.8, opp=40), pg(9, 101, 2, 0.9, opp=15)])
+    check(w[0].game_id == 101, "goalie: the weaker opponent counts whatever the credit (no dodging a bad night either way)")
+    w = week([pg(1, 100, 0, 1.1, opp=20), pg(1, 101, 2, 0.2, opp=20)])
+    check(w[0].game_id == 100, "equal opponent points: a tie goes to the earlier kickoff")
+    w = week([pg(1, 105, 0, 1.0, opp=20, hour=19), pg(1, 100, 0, 1.0, opp=20, hour=19)])
+    check(w[0].game_id == 100, "equal points and equal kickoff: the lower game id")
+    w = week([pg(1, 100, 0, 1.0, opp=20, hour=21), pg(1, 105, 0, 1.0, opp=20, hour=19)])
+    check(w[0].game_id == 105, "equal points on the same day: the earlier kickoff beats the lower game id")
     w = week([pg(9, 100, 0, -0.8)])
     check(close(w[0].points, -0.8) and w[0].source == "single", "a lone negative goalie game still counts (it is inverted later, not hidden)")
-    w = week([pg(1, 100, 0, 0.5), pg(1, 101, 1, 0.2), pg(1, 102, 2, 0.9)])
-    check(w[0].game_id == 102 and w[0].dropped == (100, 101), "three games in a window: still exactly one counts")
-    w = week([pg(9, 100, 0, -0.8), dataclasses.replace(pg(9, 101, 2, 0.0), scheduled_only=True)])
-    check(w[0].game_id == 100 and close(w[0].points, -0.8) and w[0].dropped == (101,),
-          "a game his team played but he earned nothing in never beats his credited game (no dodging a bad night)")
-    w = week([dataclasses.replace(pg(9, 100, 0, 0.0), scheduled_only=True), dataclasses.replace(pg(9, 101, 2, 0.0), scheduled_only=True)])
+    w = week([pg(1, 100, 0, 0.5, opp=30), pg(1, 101, 1, 0.2, opp=25), pg(1, 102, 2, 0.9, opp=40)])
+    check(w[0].game_id == 101 and w[0].dropped == (100, 102), "three games in a window: still exactly one counts")
+    w = week([pg(9, 100, 0, -0.8, opp=40), dataclasses.replace(pg(9, 101, 2, 0.0, opp=10), scheduled_only=True)])
+    check(w[0].game_id == 101 and w[0].points == 0.0 and w[0].dropped == (100,),
+          "a scheduled game he earned nothing in competes like any other: only the opponent decides")
+    w = week([dataclasses.replace(pg(9, 100, 0, 0.0, opp=20), scheduled_only=True), dataclasses.replace(pg(9, 101, 2, 0.0, opp=20), scheduled_only=True)])
     check(w[0].game_id == 100 and w[0].points == 0.0, "two scheduled-only games: the earlier one stands for the window at 0.0")
+    check(raises(lambda: p.resolve_player_week([pg(1, 100, 0, 1.0), pg(1, 101, 2, 1.0)]), p.WindowError, "Best Matchup needs"),
+          "refused: two games in a window with no standings function (never a silent fallback)")
+    check(raises(lambda: p.resolve_player_week([pg(1, 100, 0, 1.0), pg(1, 101, 2, 1.0)], standings=lambda o, t: None),
+                 p.WindowError, "No NHL standings snapshot"), "refused: a missing standings snapshot at lock")
+    # The lock: the earliest kickoff in the window. Standings are read AT the lock, so they cannot change the pick later.
+    seen = []
+
+    def spy(opponent, lock_at):
+        seen.append(lock_at)
+        return opponent
+    g_late = pg(1, 100, 2, 1.0, opp=20, hour=19)       # Tuesday 19:00
+    g_early = pg(1, 101, 0, 1.0, opp=30, hour=13)      # Sunday 13:00: the lock
+    w = p.resolve_player_week([g_late, g_early], standings=spy)
+    check(set(seen) == {g_early.kickoff_at} and w[0].lock_at == g_early.kickoff_at,
+          "the standings are read at the lock: the kickoff of the player's earliest game in the window")
+    snapshot_at_lock = {20: 20, 30: 30}
+    after = p.resolve_player_week([g_late, g_early], standings=lambda o, t: snapshot_at_lock[o] if t <= g_early.kickoff_at else 99 - o)
+    check(after[0].game_id == w[0].game_id == 100, "a standings change after lock cannot change the selection (it is read at lock only)")
     check(raises(lambda: week([pg(1, 100, 0, 1.0), pg(1, 101, 3, 0.5)], [(1, 100, 2)]), p.WindowError, "no surplus"),
           "refused: no surplus game (control for the scheduled-only case below)")
     check(raises(lambda: week([pg(1, 100, 0, 1.0), dataclasses.replace(pg(1, 101, 3, 0.0), scheduled_only=True)]
                               + [pg(1, 102, 2, 0.4)], [(1, 100, 2)]), p.WindowError, "already has a game"),
           "refused: a window where his team plays is occupied even if he earned nothing in it")
-    order_a = week([pg(1, 100, 0, 0.4), pg(1, 101, 2, 1.1), pg(1, 102, 3, 0.3)])
-    order_b = week([pg(1, 102, 3, 0.3), pg(1, 101, 2, 1.1), pg(1, 100, 0, 0.4)])
+    order_a = week([pg(1, 100, 0, 0.4, opp=20), pg(1, 101, 2, 1.1, opp=10), pg(1, 102, 3, 0.3)])
+    order_b = week([pg(1, 102, 3, 0.3), pg(1, 101, 2, 1.1, opp=10), pg(1, 100, 0, 0.4, opp=20)])
     check(order_a == order_b, "the input order never changes the result (deterministic)")
 
     # Surplus game flex.
-    surplus = [pg(1, 100, 0, 1.0), pg(1, 101, 2, 0.5)]            # Sunday + Tuesday, idle Wed-Thu and Fri-Sat
+    surplus = [pg(1, 100, 0, 1.0, opp=10), pg(1, 101, 2, 0.5, opp=30)]   # Sunday + Tuesday, idle Wed-Thu and Fri-Sat
     default = week(surplus)
     moved = week(surplus, [(1, 100, 2)])
     check(default[0].game_id == 100 and default[1].game_id is None and sum(s.points for s in default) == 1.0,
-          "default: Best Game (Sunday, 1.0) counts and Window 2 stays empty")
+          "default: Best Matchup (Sunday, the weaker opponent) counts and Window 2 stays empty")
     check(moved[0].game_id == 101 and moved[0].source == "single" and moved[1].game_id == 100 and moved[1].source == "reassigned"
           and close(sum(s.points for s in moved), 1.5), "moving Sunday to idle Window 2: Tuesday keeps Window 1, total 1.5 instead of 1.0")
     check(week(surplus, [(1, 101, 3)])[2].game_id == 101, "a surplus game can go to Window 3 as well")
     thursday = [pg(1, 100, 3, 0.9), pg(1, 101, 4, 0.2)]
     check(week(thursday, [(1, 100, 3)])[2].game_id == 100, "Window 2's surplus game can move on to Window 3")
-    three = [pg(1, 100, 0, 1.0), pg(1, 101, 1, 0.6), pg(1, 102, 2, 0.4)]
+    three = [pg(1, 100, 0, 1.0, opp=10), pg(1, 101, 1, 0.6, opp=20), pg(1, 102, 2, 0.4, opp=30)]
     both = week(three, [(1, 100, 2), (1, 101, 3)])
     check([s.game_id for s in both] == [102, 100, 101], "three games in Window 1: one stays, one to each later window")
+    lock = surplus[0].kickoff_at                                   # Sunday 19:00
+    before = datetime.timedelta(minutes=1)
+    check(week(surplus, []) and p.resolve_player_week(surplus, [p.WindowAssignment(1, 100, 2, lock - before)], STAND)[1].game_id == 100,
+          "a move submitted before the lock is accepted")
+    check(raises(lambda: p.resolve_player_week(surplus, [p.WindowAssignment(1, 100, 2, lock)], STAND), p.WindowError, "before the lock")
+          and raises(lambda: p.resolve_player_week(surplus, [p.WindowAssignment(1, 101, 2, lock + before)], STAND), p.WindowError, "before the lock"),
+          "refused: a move submitted at or after the lock (the earliest game's kickoff)")
 
     # Refusals (each message is meant for the manager).
     bad = [
@@ -189,7 +228,7 @@ def audit_resolution() -> None:
         for day in range(7):
             for _ in range(rng.choice([0, 0, 1, 1, 2] if day in (0, 2, 4) else [0, 0, 0, 1])):
                 gid += 1
-                games.append(pg(n, gid, day, round(rng.uniform(-1.0, 2.0), 3)))
+                games.append(pg(n, gid, day, round(rng.uniform(-1.0, 2.0), 3), opp=rng.randint(10, 40), hour=rng.choice([13, 19, 21])))
         if not games:
             continue
         weeks += 1
@@ -207,9 +246,9 @@ def audit_resolution() -> None:
         if rng.random() < 0.15:                                      # ...and some arbitrary, usually illegal, ones
             moves.append((n, rng.choice(games).game_id, rng.choice([1, 2, 3])))
         try:
-            scores = p.resolve_player_week(games, [p.WindowAssignment(*m) for m in moves])
+            scores = p.resolve_player_week(games, [p.WindowAssignment(*m) for m in moves], STAND)
         except p.WindowError:
-            scores = p.resolve_player_week(games)                      # an invalid set of moves falls back to no moves
+            scores = p.resolve_player_week(games, standings=STAND)     # an invalid set of moves falls back to no moves
             moves = []
         moved_total += len(moves)
         p.assert_one_game_per_window(scores)
@@ -224,21 +263,34 @@ def audit_resolution() -> None:
             if s.source == "reassigned":
                 assert s.game_id in moved_ids and not [g for g in games if g.window[1] == s.window]
             else:
-                assert s.points == max(g.points for g in native), "Best Game must be the maximum"
+                best = min(native, key=lambda g: (g.opponent, g.kickoff_at, g.game_id))
+                assert s.game_id == best.game_id, "Best Matchup must be the weakest opponent (ties: earlier kickoff, lower id)"
                 multi_windows += len(native) > 1
         counted = [s.game_id for s in scores if s.game_id is not None]
         dropped = [g for s in scores for g in s.dropped]
         assert len(counted) == len(set(counted)) and not set(counted) & set(dropped), "a game counted twice or counted and dropped"
         assert set(counted) | set(dropped) == set(by_id), "every game is counted or dropped exactly once"
     check(weeks > 3000 and multi_windows > 500 and moved_total > 500,
-          f"fuzz: {weeks} random player-weeks ({games_total} games, {multi_windows} Best Game windows, {moved_total} moves): "
-          "one game per window, Best Game is the maximum, every game counted or dropped exactly once")
+          f"fuzz: {weeks} random player-weeks ({games_total} games, {multi_windows} Best Matchup windows, {moved_total} moves): "
+          "one game per window, Best Matchup is the weakest opponent, every game counted or dropped exactly once")
 
 
 # ---------------------------------------------------------------------------------------------------------------
 # C. Adapter
 # ---------------------------------------------------------------------------------------------------------------
 GAME_DATES = {101: SUN, 102: SUN + datetime.timedelta(days=2), 103: SUN + datetime.timedelta(days=3)}
+NHL_POINTS = {"VAN": 20, "BOS": 10, "EDM": 30}
+
+
+def make_context(extra_teams=None):
+    """Games: 101 EDM v VAN (Sun), 102 EDM @ BOS (Tue), 103 VAN v EDM (Thu). Home skater and goalie are Oilers, the
+    rival skater and goalie are Canucks. Standings are what the NHL API would have said at lock."""
+    from fantasy_sports.sports.hockey.simulator import RealGame, WindowContext
+    at = lambda day, hour=19: datetime.datetime.combine(GAME_DATES[day] if isinstance(day, int) else day, datetime.time(hour))
+    games = {101: RealGame(101, at(101), "EDM", "VAN", "EDM", "VAN"), 102: RealGame(102, at(102), "BOS", "EDM", "BOS", "EDM"),
+             103: RealGame(103, at(103), "VAN", "EDM", "VAN", "EDM")}
+    teams = {1: "EDM", 9: "EDM", 21: "VAN", 29: "VAN", **(extra_teams or {})}
+    return WindowContext(games, teams, lambda team, lock: NHL_POINTS.get(team))
 
 
 def L(line_id, asset, name, pos, role, points, game, sec=600, **kw):
@@ -269,22 +321,28 @@ def audit_adapter() -> None:
 
     check(raises(lambda: adapter.build_script(inputs, 1), InputError, "one game per player per window"),
           "the adapter refuses a game whose player has credit from two real games (one game per window)")
-    resolved, report = windows.resolve_window_inputs(inputs, GAME_DATES)
+    ctx = make_context()
+    check(raises(lambda: windows.resolve_window_inputs(inputs, GAME_DATES), InputError, "Best Matchup needs"),
+          "a window with two games for a player cannot be resolved without kickoffs and standings")
+    resolved, report = windows.resolve_window_inputs(inputs, GAME_DATES, context=ctx)
     kept = {l.line_id for l in resolved.home.lines + resolved.away.lines}
-    check(kept == {"a", "d", "e", "f"}, "Best Game keeps the skater's Sunday goal (1.0) and the goalie's Tuesday save (+0.4)")
-    check({k: v["game_id"] for k, v in report["chosen"].items()} == {"1": 101, "9": 102, "21": 101, "29": 101},
+    check(kept == {"b", "d", "e", "f"}, "Best Matchup keeps Tuesday at BOS (10 points, weaker than VAN's 20) for the Oilers: skater 0.3, goalie +0.4")
+    check({k: v["game_id"] for k, v in report["chosen"].items()} == {"1": 102, "9": 102, "21": 101, "29": 101},
           "the report names the counting game for every player")
-    script = adapter.build_window_script(inputs, GAME_DATES, seed=11)
-    check(script.provenance["window"]["chosen"]["9"]["source"] == "best_game" and script.provenance["window"]["chosen"]["9"]["dropped"] == [101],
+    check(report["chosen"]["1"]["opponent_points"] == {"101": 20, "102": 10}
+          and report["chosen"]["1"]["lock_at"] == datetime.datetime.combine(SUN, datetime.time(19)).isoformat(),
+          "the report records the lock and the standings used, so the selection can be reproduced")
+    script = adapter.build_window_script(inputs, GAME_DATES, seed=11, context=ctx)
+    check(script.provenance["window"]["chosen"]["9"]["source"] == "best_matchup" and script.provenance["window"]["chosen"]["9"]["dropped"] == [101],
           "script provenance records what was chosen and what was dropped")
-    check(close(script.provenance["raw"]["home"], 1.4) and close(script.provenance["raw"]["away"], 0.8),
-          "tie-out: raw team totals equal the counting games exactly (home 1.0 + 0.4, away 0.6 + 0.2)")
-    check(close(sum(x["points"] for x in script.provenance["box_score"]["home"]), 1.4), "box score ties out to the counting games")
-    again = adapter.build_window_script(inputs, GAME_DATES, seed=11)
+    check(close(script.provenance["raw"]["home"], 0.7) and close(script.provenance["raw"]["away"], 0.8),
+          "tie-out: raw team totals equal the counting games exactly (home 0.3 + 0.4, away 0.6 + 0.2)")
+    check(close(sum(x["points"] for x in script.provenance["box_score"]["home"]), 0.7), "box score ties out to the counting games")
+    again = adapter.build_window_script(inputs, GAME_DATES, seed=11, context=ctx)
     check(json.dumps(dataclasses.asdict(script), sort_keys=True, default=str) == json.dumps(dataclasses.asdict(again), sort_keys=True, default=str)
           and script.provenance["inputs_digest"] == again.provenance["inputs_digest"],
           "the same window and seed replay to a byte-identical script")
-    other = adapter.build_window_script(window_inputs(home, away, window=1), GAME_DATES, seed=12)
+    other = adapter.build_window_script(window_inputs(home, away, window=1), GAME_DATES, seed=12, context=ctx)
     check(other.provenance["raw"] == script.provenance["raw"], "a different seed changes the story, never the credit that counts")
 
     # Scoreboard shape: monotonic, NHL-sized, ordered.
@@ -296,7 +354,7 @@ def audit_adapter() -> None:
 
     # Negative GSAx inversion on a window's only goalie game.
     sad = window_inputs([L("n", 9, "Goalie", "G", "goalie", -0.9, 101, 400, xg=0.1, is_goal=True)], [L("o", 21, "Rival", "C", "shooter", 0.4, 101)])
-    s = adapter.build_window_script(sad, GAME_DATES, seed=3)
+    s = adapter.build_window_script(sad, GAME_DATES, seed=3, context=ctx)
     check(close(s.provenance["inverted_value"]["away"], 0.9) and any(e.detail.get("origin") == "inverted" for e in s.events),
           "a goalie's lone bad game (-0.9 GSAx) is inverted into the opponent's chances")
     check(close(s.provenance["offense"]["away"] - s.provenance["offense"]["home"], s.provenance["raw"]["away"] - s.provenance["raw"]["home"]),
@@ -306,19 +364,19 @@ def audit_adapter() -> None:
     flex_lines = [L("a", 1, "Skater", "W", "shooter", 1.0, 101), L("b", 1, "Skater", "W", "shooter", 0.3, 102, 900)]
     w2 = window_inputs(flex_lines, [L("e", 21, "Rival", "C", "shooter", 0.6, 103, 800)], window=2)
     sched = {1: [101, 102], 21: [103]}
-    base = adapter.build_window_script(w2, GAME_DATES, 5, scheduled_games=sched)
+    base = adapter.build_window_script(w2, GAME_DATES, 5, scheduled_games=sched, context=ctx)
     check(base.provenance["window"]["chosen"].get("1") is None and close(base.provenance["raw"]["home"], 0.0),
           "without a move, the skater has nothing in Window 2")
-    flexed = adapter.build_window_script(w2, GAME_DATES, 5, [p.WindowAssignment(1, 101, 2)], sched)
+    flexed = adapter.build_window_script(w2, GAME_DATES, 5, [p.WindowAssignment(1, 101, 2)], sched, ctx)
     check(flexed.provenance["window"]["chosen"]["1"] == {"game_id": 101, "points": 1.0, "source": "reassigned", "dropped": []}
           and close(flexed.provenance["raw"]["home"], 1.0), "the moved Sunday game scores in Window 2 (reassigned, 1.0)")
-    w1 = adapter.build_window_script(window_inputs(flex_lines, [], window=1), GAME_DATES, 5, [p.WindowAssignment(1, 101, 2)], sched)
+    w1 = adapter.build_window_script(window_inputs(flex_lines, [], window=1), GAME_DATES, 5, [p.WindowAssignment(1, 101, 2)], sched, ctx)
     check(w1.provenance["window"]["chosen"]["1"]["game_id"] == 102 and close(w1.provenance["raw"]["home"], 0.3),
           "...and Window 1 keeps his other game (Tuesday, 0.3): a game never counts twice")
     check(raises(lambda: adapter.build_window_script(window_inputs(flex_lines, [], window=2), GAME_DATES, 5,
-                                                     [p.WindowAssignment(1, 101, 2)], {1: [101, 102, 103]}), InputError, "already has a game"),
+                                                     [p.WindowAssignment(1, 101, 2)], {1: [101, 102, 103]}, ctx), InputError, "already has a game"),
           "a game played but unscored in the target window still blocks the move (schedule, not credit, decides)")
-    check(raises(lambda: adapter.build_window_script(window_inputs(flex_lines, [], window=1), GAME_DATES, 5, [p.WindowAssignment(1, 102, 1)], sched),
+    check(raises(lambda: adapter.build_window_script(window_inputs(flex_lines, [], window=1), GAME_DATES, 5, [p.WindowAssignment(1, 102, 1)], sched, ctx),
                  InputError, "Window 2 or Window 3"), "an illegal move surfaces as an InputError, scoring nothing")
     no_ids = window_inputs([dataclasses.replace(flex_lines[0], game_id=None)], [])
     check(raises(lambda: adapter.build_window_script(no_ids, GAME_DATES, 1), InputError, "real game id"), "window scoring needs every line's real game id")
@@ -328,7 +386,7 @@ def audit_adapter() -> None:
     from fantasy_sports.sports.hockey.simulator import CreditLine, HockeyGameInputs, SideInput
     plain = HockeyGameInputs(1, "2026-10-14", SideInput(1, "H", (CreditLine("x", "x", 1, "P", "W", "shooter", 1.0),)), SideInput(2, "A"))
     sp = adapter.build_script(plain, 4)
-    check(sp.provenance["adapter_version"] == "1.0" and "window" not in sp.provenance, "a plain single-date game builds exactly as before")
+    check(sp.provenance["adapter_version"] == "1.1" and "window" not in sp.provenance, "a plain single-date game still builds (no window block)")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -344,7 +402,7 @@ def audit_database_path() -> None:
         )
         from fantasy_sports.platform.db.session import SessionLocal, engine
         from fantasy_sports.sports.hockey import pipeline as p
-        from fantasy_sports.sports.hockey.models import Shot, ShotCredit
+        from fantasy_sports.sports.hockey.models import NhlStandingsSnapshot, Shot, ShotCredit
         from fantasy_sports.sports.hockey.pipeline import ShotRecord, process_game
         from fantasy_sports.sports.hockey.simulator import HockeySimulatorAdapter, loader
 
@@ -413,16 +471,26 @@ def audit_database_path() -> None:
                 for c in process_game(records).credits:
                     db.add(ShotCredit(shot_id=c.shot_id, draftable_asset_id=c.asset_id, role=c.role, credit_points=c.points))
                     all_credits.append((c.asset_id, games[key], c.points))
+            for real, pts in ((bos, 10), (tor, 12)):       # the standings snapshot dated Sunday, the day the window locks
+                db.add(NhlStandingsSnapshot(universe_id=nhl.id, real_team_id=real.id, as_of_date=SUN, points=pts, games_played=5))
             db.commit()
             teams = [db.get(Team, fan[0].id), db.get(Team, fan[1].id)]
 
             # Expected from the stored credits, independently of the loader.
             dates = {games["sun"]: SUN, games["tue"]: SUN + datetime.timedelta(days=2), games["thu"]: SUN + datetime.timedelta(days=3)}
-            expected = p.resolve_windows(p.player_game_points((a, g, dates[g], pts) for a, g, pts in all_credits))   # credits only
+            # Every roster player's team plays all three real games (BOS and TOR meet each time), so all of them are scheduled.
+            bruins = {v for _, v in hb.values()}
+            roster_assets = bruins | {v for _, v in ta.values()}
+            expected_meta = {(a, g): (datetime.datetime.combine(dates[g], datetime.time(19)), tor.id if a in bruins else bos.id)
+                             for a in roster_assets for g in dates}
+            expected = p.resolve_windows(
+                p.player_game_points(((a, g, dates[g], pts) for a, g, pts in all_credits),
+                                     [(a, g, dates[g]) for a in roster_assets for g in dates], expected_meta),
+                standings=lambda team, lock: {bos.id: 10, tor.id: 12}[team])
             lw = hb_a[2]
             lw_games = {g: pts for a, g, pts in all_credits if a == lw}
             check(close(lw_games[games["sun"]], 1.0) and close(lw_games[games["tue"]], 1.0),
-                  "fixture: Bruin LW scores 1.0 in both Window 1 games, so Best Game is a tie")
+                  "fixture: Bruin LW scores 1.0 in both Window 1 games, and both are against Toronto (12 points)")
 
             load = loader.build_window_inputs(db, 501, teams[0], teams[1], SUN, 1)
             check(set(load.game_dates) == set(games.values()) and load.inputs.window_index == 1,
@@ -430,34 +498,36 @@ def audit_database_path() -> None:
             home_assets = {l.asset_id for l in load.inputs.home.lines}
             check(all(l.game_id is not None for l in load.inputs.home.lines + load.inputs.away.lines), "every loaded credit line carries its real game id")
             adapter = HockeySimulatorAdapter()
-            script = adapter.build_window_script(load.inputs, load.game_dates, 2026, scheduled_games=load.scheduled_games)
+            script = adapter.build_window_script(load.inputs, load.game_dates, 2026, scheduled_games=load.scheduled_games, context=load.context)
             chosen = script.provenance["window"]["chosen"]
             want = {a: s[0].game_id for (a, _), s in expected.items() if s[0].game_id is not None}
             check(want and all(chosen[str(a)]["game_id"] == g for a, g in want.items()),
                   f"the database path picks the same counting game as the pure resolver for all {len(want)} credited players")
             check(chosen[str(lw)]["game_id"] == games["sun"] and chosen[str(lw)]["dropped"] == [games["tue"]],
-                  "a tie between two Window 1 games goes to the earlier game (Sunday)")
+                  "equal opponents (both against Toronto): the earlier kickoff counts (Sunday)")
+            check(chosen[str(lw)]["opponent_points"] == {str(games["sun"]): 12, str(games["tue"]): 12},
+                  "the loader read the stored standings snapshot dated the lock day")
             home_total = sum(v["points"] for k, v in chosen.items() if int(k) in {a for _, a in hb.values()})
             check(close(script.provenance["raw"]["home"], home_total, 1e-6), "tie-out: the script's raw home total equals the counting games' credit")
             check(script.events[-1].home_score != script.events[-1].away_score, "the window game has a decisive NHL scoreboard")
 
             # Window 2 (Thursday): Bruin C scores; flex a Window 1 game of the LW to Window 3 (idle for BOS).
             l2 = loader.build_window_inputs(db, 502, teams[0], teams[1], SUN, 2)
-            s2 = adapter.build_window_script(l2.inputs, l2.game_dates, 2026, scheduled_games=l2.scheduled_games)
+            s2 = adapter.build_window_script(l2.inputs, l2.game_dates, 2026, scheduled_games=l2.scheduled_games, context=l2.context)
             check(close(s2.provenance["raw"]["home"], 1.0), "Window 2: the Thursday game is each player's only game, Bruin C scores 1.0")
             move = [p.WindowAssignment(lw, games["sun"], 3)]
             l3 = loader.build_window_inputs(db, 503, teams[0], teams[1], SUN, 3, move)
-            s3 = adapter.build_window_script(l3.inputs, l3.game_dates, 2026, move, l3.scheduled_games)
+            s3 = adapter.build_window_script(l3.inputs, l3.game_dates, 2026, move, l3.scheduled_games, l3.context)
             check({int(k) for k in s3.provenance["window"]["chosen"]} == {lw} and s3.provenance["window"]["chosen"][str(lw)]["source"] == "reassigned"
                   and close(s3.provenance["raw"]["home"], 1.0),
                   "Window 3 has no real games, but the moved Sunday game makes the LW active there and scores 1.0")
             l1 = loader.build_window_inputs(db, 504, teams[0], teams[1], SUN, 1, move)
-            s1 = adapter.build_window_script(l1.inputs, l1.game_dates, 2026, move, l1.scheduled_games)
+            s1 = adapter.build_window_script(l1.inputs, l1.game_dates, 2026, move, l1.scheduled_games, l1.context)
             check(s1.provenance["window"]["chosen"][str(lw)]["game_id"] == games["tue"], "after the move Window 1 counts the LW's Tuesday game instead")
             try:
                 bad = [p.WindowAssignment(lw, games["sun"], 2)]
                 l = loader.build_window_inputs(db, 505, teams[0], teams[1], SUN, 2, bad)
-                adapter.build_window_script(l.inputs, l.game_dates, 2026, bad, l.scheduled_games)
+                adapter.build_window_script(l.inputs, l.game_dates, 2026, bad, l.scheduled_games, l.context)
                 raise AssertionError("moving a game into a window where the team plays was allowed")
             except Exception as e:
                 check(type(e).__name__ == "InputError" and "already has a game" in str(e),
@@ -500,7 +570,20 @@ def audit_real_data() -> None:
         # SYNTHETIC calendar: game ids in order, nine games a day from Sunday 2024-10-06.
         base = D(2024, 10, 6)
         date_of = {gid: base + datetime.timedelta(days=i // 9) for i, gid in enumerate(game_ids)}
-        player_games = p.player_game_points((a, g, date_of[g], pts) for a, g, pts in rows if a is not None)
+        # SYNTHETIC kickoffs (19:00 plus ten minutes per game of the day) and SYNTHETIC standings (a fixed function of the
+        # team id): the real data has neither, and Best Matchup needs both. The credit totals are still real.
+        game_team = {r[0]: (r[1], r[2]) for r in con.execute("select id, home_team_id, away_team_id from games where universe_id=?", (nhl,))}
+        team_of_asset = {r[0]: r[1] for r in con.execute(
+            "select a.id, p.real_team_id from draftable_assets a join players p on p.id=a.player_id where a.universe_id=?", (nhl,))}
+        kick_of = {gid: datetime.datetime.combine(date_of[gid], datetime.time(19)) + datetime.timedelta(minutes=10 * (i % 9))
+                   for i, gid in enumerate(game_ids)}
+
+        def opponent_of(a, g):
+            home, away = game_team[g]
+            return away if team_of_asset.get(a) == home else home
+        synthetic_points = lambda team, lock: (team * 7) % 31
+        meta = {(a, g): (kick_of[g], opponent_of(a, g)) for a, g, _ in rows if a is not None}
+        player_games = p.player_game_points(((a, g, date_of[g], pts) for a, g, pts in rows if a is not None), meta=meta)
         check(close(math.fsum(g.points for g in player_games), math.fsum(r[2] for r in rows if r[0] is not None), 1e-6),
               "tie-out: per-game player scores sum to the stored credits exactly")
         unnamed = sum(1 for r in rows if r[0] is None)
@@ -514,10 +597,11 @@ def audit_real_data() -> None:
         check(len(per_asset_sql) == len(per_asset_pg) and all(close(per_asset_pg[a], v, 1e-6) for a, v in per_asset_sql.items()),
               f"tie-out: every one of {len(per_asset_sql):,} players' season totals match game by game")
 
-        resolved = p.resolve_windows(player_games)
+        resolved = p.resolve_windows(player_games, standings=synthetic_points)
         multi = counted_points = dropped_points = 0.0
         n_multi = n_windows = 0
         by_key = defaultdict(dict)
+        by_game = {(g.asset_id, g.game_id): g for g in player_games}
         for g in player_games:
             by_key[(g.asset_id, g.window[0])][g.game_id] = g.points
         for (asset, start), scores in resolved.items():
@@ -530,14 +614,16 @@ def audit_real_data() -> None:
                 n_windows += s.game_id is not None
                 if len(s.candidates) > 1:
                     n_multi += 1
-                    assert s.points == max(games[c] for c in s.candidates)
+                    pick = min(s.candidates, key=lambda c: (synthetic_points(by_game[(asset, c)].opponent, None),
+                                                            by_game[(asset, c)].kickoff_at, c))
+                    assert s.game_id == pick, "Best Matchup must be the weakest opponent"
             counted_points += sum(games[g] for g in counted)
             dropped_points += sum(games[g] for g in dropped)
         check(close(counted_points + dropped_points, math.fsum(g.points for g in player_games), 1e-6),
-              "tie-out: points that count + points dropped by Best Game = all stored credit")
+              "tie-out: points that count + points dropped by Best Matchup = all stored credit")
         print(f"info  real credits on the synthetic calendar: {len(resolved):,} player-weeks, {n_windows:,} counted player-windows, "
-              f"{n_multi:,} resolved by Best Game, {dropped_points:.1f} points dropped of {counted_points + dropped_points:.1f}")
-        check(n_multi > 0, "the real data exercises Best Game (some players have two games in one window)")
+              f"{n_multi:,} resolved by Best Matchup, {dropped_points:.1f} points dropped of {counted_points + dropped_points:.1f}")
+        check(n_multi > 0, "the real data exercises Best Matchup (some players have two games in one window)")
 
         # The real adapter path: two real teams' credited players as the two sides, a window with two games for some.
         from fantasy_sports.platform.pecking_order import GROUP_BY_POSITION
@@ -574,17 +660,20 @@ def audit_real_data() -> None:
         sides = {k: SideInput(1 if k == "home" else 2, k, tuple(v)) for k, v in lines_by_side.items()}
         inputs = HockeyGameInputs(1, p.window_dates(window[0], window[1])[0].isoformat(), sides["home"], sides["away"],
                                   window_index=window[1], week_start=window[0].isoformat())
-        script = HockeySimulatorAdapter().build_window_script(inputs, {g: date_of[g] for g in wanted}, 35)
-        again = HockeySimulatorAdapter().build_window_script(inputs, {g: date_of[g] for g in wanted}, 35)
+        from fantasy_sports.sports.hockey.simulator import RealGame, WindowContext
+        ctx = WindowContext({g: RealGame(g, kick_of[g], game_team[g][0], game_team[g][1], str(game_team[g][0]), str(game_team[g][1]))
+                             for g in wanted}, {a: t for a, t in real_team_of.items()}, synthetic_points)
+        script = HockeySimulatorAdapter().build_window_script(inputs, {g: date_of[g] for g in wanted}, 35, context=ctx)
+        again = HockeySimulatorAdapter().build_window_script(inputs, {g: date_of[g] for g in wanted}, 35, context=ctx)
         chosen = script.provenance["window"]["chosen"]
         raw = script.provenance["raw"]
         side_total = {s: 0.0 for s in ("home", "away")}
         for k, v in chosen.items():
             side = "home" if real_team_of[int(k)] == team_a else "away"
             side_total[side] += v["points"]
-        check(close(raw["home"], side_total["home"], 1e-6) and close(raw["away"], side_total["away"], 1e-6),
+        check(close(raw["home"], side_total["home"], 1e-5) and close(raw["away"], side_total["away"], 1e-5),   # per-player points are rounded to 6 decimals
               f"real window game: raw totals tie out to each player's counting game (home {raw['home']:.3f}, away {raw['away']:.3f})")
-        check(any(v["source"] == "best_game" for v in chosen.values()), "...and it exercised Best Game on real credits")
+        check(any(v["source"] == "best_matchup" for v in chosen.values()), "...and it exercised Best Matchup on real credits")
         check(script.provenance["inputs_digest"] == again.provenance["inputs_digest"] and script.events == again.events,
               "...and replays identically for the same seed")
         last = script.events[-1]

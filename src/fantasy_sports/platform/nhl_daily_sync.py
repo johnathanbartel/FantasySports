@@ -25,7 +25,7 @@ from fantasy_sports.platform.db.models.core import (
     DraftableAsset, Game, League, LeagueSeries, LeagueUniverse, Player, RealTeam, SeriesDailyGame, Universe, Week,
 )
 from fantasy_sports.platform.simulator import service
-from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, Shot, ShotCredit
+from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, NhlStandingsSnapshot, Shot, ShotCredit
 from fantasy_sports.sports.hockey.pipeline import (
     BlockXgEstimator, EventRecord, ShotRecord, process_game, week_start,
     window_of, window_dates,
@@ -35,6 +35,7 @@ from fantasy_sports.sports.hockey.simulator import loader
 SCHEDULE_URL = "https://api-web.nhle.com/v1/schedule/{date}"
 PBP_URL = "https://api-web.nhle.com/v1/gamecenter/{game}/play-by-play"
 ROSTER_URL = "https://api-web.nhle.com/v1/roster/{team}/current"
+STANDINGS_URL = "https://api-web.nhle.com/v1/standings/{date}"
 HEADERS = {"User-Agent": "FantasySportsPlatform-NHLSync/1.0"}
 POSITION_MAP = {"L": "LW", "R": "RW", "C": "C", "D": "D", "G": "G"}
 EVENT_TYPES = {
@@ -136,6 +137,53 @@ def get_matchup_real_games(db: Session, dg: SeriesDailyGame, real_games_on_date:
 
 
 
+def parse_standings(payload: dict | None) -> dict[str, tuple[int, int]]:
+    """team abbreviation -> (NHL standings points, games played) from a standings-by-date response. Pure."""
+    out: dict[str, tuple[int, int]] = {}
+    for row in (payload or {}).get("standings", []):
+        abbrev = (row.get("teamAbbrev") or {}).get("default")
+        if abbrev and row.get("points") is not None:
+            out[abbrev] = (int(row["points"]), int(row.get("gamesPlayed") or 0))
+    return out
+
+
+def fetch_standings(as_of: datetime.date) -> dict[str, tuple[int, int]]:
+    """The NHL standings as of a date (api-web.nhle.com/v1/standings/{date}); empty on any failure."""
+    return parse_standings(_fetch_json(STANDINGS_URL.format(date=as_of.isoformat())))
+
+
+def store_standings_snapshot(db: Session, nhl: Universe, as_of: datetime.date,
+                             standings: dict[str, tuple[int, int]]) -> int:
+    """Insert-only: a team's snapshot for a date is never overwritten, so a selection made at lock stays reproducible.
+    Returns the number of rows added. Flushes, does not commit."""
+    teams = {t.external_ref: t for t in db.query(RealTeam).filter_by(universe_id=nhl.id) if t.external_ref}
+    have = {r[0] for r in db.query(NhlStandingsSnapshot.real_team_id).filter_by(universe_id=nhl.id, as_of_date=as_of)}
+    added = 0
+    for abbrev, (points, played) in sorted(standings.items()):
+        team = teams.get(abbrev)
+        if team is None or team.id in have:
+            continue
+        db.add(NhlStandingsSnapshot(universe_id=nhl.id, real_team_id=team.id, as_of_date=as_of,
+                                    points=points, games_played=played))
+        added += 1
+    db.flush()
+    return added
+
+
+def ensure_standings_snapshot(db: Session, nhl: Universe, as_of: datetime.date) -> int:
+    """Fetch and store the day's standings once, before the day's first puck drop. A snapshot taken after a game has
+    started would already include results the lock must not see, so it is skipped (returns 0)."""
+    if db.query(NhlStandingsSnapshot.id).filter_by(universe_id=nhl.id, as_of_date=as_of).first():
+        return 0
+    start = datetime.datetime.combine(as_of, datetime.time.min)
+    started = db.query(Game.id).filter(
+        Game.universe_id == nhl.id, Game.kickoff_at >= start, Game.kickoff_at < start + datetime.timedelta(days=1),
+        Game.status != "scheduled").first()
+    if started:
+        return 0
+    return store_standings_snapshot(db, nhl, as_of, fetch_standings(as_of))
+
+
 def _shot_clock_seconds(period: int, clock_str: str) -> int:
     try:
         minutes, seconds = clock_str.split(":")
@@ -152,6 +200,11 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
     ).all()
     game_ids = [g.id for g in games_for_day]
+    try:
+        with db.begin_nested():
+            ensure_standings_snapshot(db, nhl, target_date)  # Best Matchup reads the snapshot dated the lock day
+    except Exception:
+        pass
     has_shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).count() > 0 if game_ids else False
     all_final = bool(games_for_day) and all(g.status == "final" for g in games_for_day)
     if has_shots and all_final:

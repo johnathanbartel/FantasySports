@@ -151,6 +151,28 @@
     return {rows, total, tiesOut: claimed == null || Math.abs(total - claimed) < 1e-4};
   }
 
+  // "2026-10-14T19:00:00" -> "7:00 PM". Nominal start times are stored as naive Eastern, so no timezone maths here.
+  function fmtNominal(iso) {
+    const m = /T(\d{2}):(\d{2})/.exec(String(iso || ''));
+    if (!m) return '';
+    const h = Number(m[1]);
+    return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+  }
+
+  // The chronological division table from provenance.division (docs/hockey_spec.md 6.1 and 9): one group per fantasy
+  // period listing every real period assigned to it.
+  function divisionPeriods(provenance) {
+    const d = provenance && provenance.division;
+    if (!d || !Array.isArray(d.periods)) return [];
+    return d.periods.map(p => ({
+      period: p.fantasy_period, count: p.real_periods,
+      rows: p.rows.map(r => ({
+        player: r.player, team: r.fantasy_team, game: `${r.opponent} · ${r.game_date}`,
+        realPeriod: r.real_period, start: fmtNominal(r.nominal_start), ot: !!r.ot, points: r.points,
+      })),
+    }));
+  }
+
   // Human lines for the provenance panel. Only states what the stored record says.
   function provenanceLines(p) {
     if (!p) return ['No provenance was stored for this game.'];
@@ -167,7 +189,7 @@
 
   const api = {REPLAY_MS, MIN_GAP_MS, screenFor, controlsFor, clockLabel, clockAt, mergeEvents, boardAt, replayTimeline,
                delayBefore, replayMode, isCheckpoint, backoffMs, pollDelayMs, connectionMessage, describeError,
-               ROLE_COLUMNS, fmtPoints, boxScoreRows, provenanceLines};
+               ROLE_COLUMNS, fmtPoints, boxScoreRows, provenanceLines, fmtNominal, divisionPeriods};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NhlGame = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -49,6 +49,7 @@ from fantasy_sports.sports.football.models import (  # noqa: F401
     WeeklyRealTeamEpaTotal,
 )
 from fantasy_sports.sports.hockey.models import (  # noqa: F401
+    NhlStandingsSnapshot,
     Shot,
     ShotCredit,
 )
