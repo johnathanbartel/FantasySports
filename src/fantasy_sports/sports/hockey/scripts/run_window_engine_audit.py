@@ -162,6 +162,14 @@ def main() -> None:
                                      game_seconds=(event_period - 1) * 1200))
                 db.commit()
 
+        def schedule_api():
+            """What GET /leagues/{id}/series-schedule returns for this league (the scoreboard's only data source)."""
+            from fantasy_sports.api.routers import series_schedule as router
+            with SessionLocal() as db:
+                league = db.query(League).first()
+                out = router._out(league, router._league_series(db, league.id), db, None)
+                return [g for s in out.series for g in s.daily_games if g.window_index == 1][0]
+
         def sim_state():
             with SessionLocal() as db:
                 sim = service.get_sim(db, dg_id)
@@ -187,6 +195,10 @@ def main() -> None:
               "BOS players: Best Matchup at their Sunday 13:00 lock picks Tuesday v MTL (6 points) over Sunday v TOR (12)")
         check(sel[str(f2[1])]["source"] == "single" and str(f2[4]) not in sel, "a single-game player is decided at once; MTL's two-game players wait for their own lock (Sun 19:00)")
         check(prov["wall_clock"] is not None, "the clock is published from the first tick")
+
+        api_game = schedule_api()
+        check(api_game.window_index == 1 and api_game.calendar_date_end == TUE and api_game.status == "LIVE_SIMULATING",
+              "the schedule API serves the live window game (the scoreboard reads this; an error here shows 'No Live Games Scheduled')")
 
         # ---- Sunday evening -------------------------------------------------------------------------------------------------
         set_game("A", "final")
@@ -216,6 +228,9 @@ def main() -> None:
               and all(r["points"] == 0.0 for p in prov["division"]["periods"][1:] for r in p["rows"]),
               "after Period 1 the cumulative credit is exactly the credit of its 12 real periods (nothing from later periods)")
         check(digest1 != digest0, "the digest chains forward when a period is appended")
+        api_game = schedule_api()
+        check(api_game.current_period >= 1 and (api_game.home_score, api_game.away_score) == (events1[-1][4], events1[-1][5]),
+              "the schedule API mirrors the live clock and the published score")
         # Period 2 must wait: its last real periods end at 22:00 and B's third period is not final yet.
         tick(at(SUN, 21, 30))
         check(sim_state()[0] == 1, "Period 2 is not published before its real periods have nominally ended")
