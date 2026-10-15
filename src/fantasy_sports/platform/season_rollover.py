@@ -57,6 +57,12 @@ def final_standings(db: Session, league: League) -> list[dict]:
     return [{**r, "rank": i} for i, r in enumerate(rows, start=1)]
 
 
+def season_champion(standings: list[dict]) -> int | None:
+    """The team that won the season. These leagues have no playoffs yet, so it is the best record; when playoffs exist this is
+    the one place to read their winner instead. The champion picks last in the next draft."""
+    return standings[0]["team_id"] if standings else None
+
+
 def draft_order(db: Session, league: League) -> list[int] | None:
     """Team ids in pick order for the next draft, or None when the order is random on draft day. Read from the archived
     season's final standings: the live standings are cleared by the rollover."""
@@ -284,7 +290,7 @@ def process_keeper_deadline(db: Session, league: League, now: datetime.datetime 
 
 
 def roll_over(db: Session, league: League, offseason_rounds: int | None = None, refill_rounds: int | None = None,
-              today: datetime.date | None = None, champion_team_id: int | None = None) -> LeagueSeason:
+              today: datetime.date | None = None) -> LeagueSeason:
     """Archives the current season and opens the offseason. Flushes, does not commit."""
     if league.draft_type != "snake":
         raise RolloverError("Season rollover is only available for snake-draft leagues for now")
@@ -306,10 +312,8 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
     standings = final_standings(db, league)
     teams = db.query(Team).filter_by(league_id=league.id).order_by(Team.id).all()
     team_ids = [t.id for t in teams]
-    if champion_team_id is not None and champion_team_id not in team_ids:
-        raise RolloverError("The champion has to be a team in this league")
     archive = LeagueSeason(league_id=league.id, season_number=league.season_number, league_format=fmt,
-                           archived_at=datetime.datetime.utcnow(), champion_team_id=champion_team_id,
+                           archived_at=datetime.datetime.utcnow(), champion_team_id=season_champion(standings),
                            data=_snapshot(db, league, standings))
     db.add(archive)
     stats, ages = {}, {}

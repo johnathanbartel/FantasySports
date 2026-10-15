@@ -325,11 +325,14 @@ db.commit()
 picks_before = client.get(f"/leagues/{lid}/teams/{tids[1]}/future-picks").json()
 assert picks_before["order_set"] is False and len(picks_before["picks"]) == full and picks_before["picks"][0]["overall"] is None
 assert client.get(f"/leagues/{lid}/teams/{tids[1]}/future-picks").status_code == 200
-assert client.post(f"/leagues/{lid}/rollover", json={"champion_team_id": 999999}, headers=H).status_code == 409, "champion must be in the league"
-assert client.post(f"/leagues/{lid}/rollover", json={"champion_team_id": tids[1]}, headers=H).status_code == 200
+assert client.post(f"/leagues/{lid}/rollover", json={}, headers=H).status_code == 200
 season1 = client.get(f"/leagues/{lid}/seasons/1").json()
-assert season1["champion_team_id"] == tids[1] and [r["team_id"] for r in season1["standings"]] == [tids[2], tids[1], tids[0], tids[3]] \
-    or [r["team_id"] for r in season1["standings"]][:3] == [tids[2], tids[1], tids[0]], season1["standings"]
+assert [r["team_id"] for r in season1["standings"]][:3] == [tids[2], tids[1], tids[0]], season1["standings"]
+assert season1["champion_team_id"] == tids[2], "the champion is worked out automatically: the best record, until the league has playoffs"
+# A champion that is not the top seed (what a playoff would produce) picks last whatever the standings say.
+from fantasy_sports.platform.db.models.core import LeagueSeason
+db.query(LeagueSeason).filter_by(league_id=lid, season_number=1).one().champion_team_id = tids[1]
+db.commit()
 # Reverse standings is t3, t0, t1, t2 - but the champion (t1) picks last: t3, t0, t2, t1. Snake: round 2 reverses.
 picks_after = {t: client.get(f"/leagues/{lid}/teams/{t}/future-picks").json() for t in tids}
 assert picks_after[tids[1]]["order_set"] is True

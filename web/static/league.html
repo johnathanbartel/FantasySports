@@ -1984,7 +1984,6 @@ async function renderLeagueSettings() {
       + (keepsRosters ? `<p><label>Rookie draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"></label>
            ${needsRefill ? `<label> Refill rounds <input id="rollover-refill" type="number" min="1" max="60" value="${lg.offseason_refill_rounds || 3}" style="width:4em"></label>` : ''}
          </p>${isKeeper && !lg.keeper_deadline ? '<p class="muted">Set the keeper deadline in Keeper Settings above before rolling over.</p>' : ''}` : '')
-      + `<p><label>Champion (picks last in the next draft) <select id="rollover-champion"><option value="">None - standings only</option>${ov.teams.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</select></label></p>`
       + `<button id="rollover-btn">Roll over to season ${lg.season_number + 1}</button>`;
   }
   html += `</div><div id="keeper-pick-card"></div>`;
@@ -2009,8 +2008,7 @@ async function renderLeagueSettings() {
   on('rollover-btn', () => {
     if (!confirm(`Archive season ${lg.season_number} and open the offseason? This clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
     const num = (id) => $(id) ? parseInt($(id).value, 10) : null;
-    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill'),
-      champion_team_id: $('rollover-champion') && $('rollover-champion').value ? parseInt($('rollover-champion').value, 10) : null})),
+    call(() => api(`/leagues/${LEAGUE_ID}/rollover`, jsonOpts('POST', {offseason_draft_rounds: num('rollover-rounds'), refill_rounds: num('rollover-refill')})),
       `Season ${lg.season_number} archived. The league is in the offseason.`);
   });
 
