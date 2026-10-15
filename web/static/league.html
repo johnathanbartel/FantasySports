@@ -123,7 +123,7 @@ const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || 
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
               ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
-const tabList = () => ALL_TABS.filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))));
+const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : label]).filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))));
 
 let me = null, ov = null, canActForAi = false, isCommissioner = false;
 let tab = 'home';
@@ -1838,6 +1838,7 @@ async function renderStandings() {
 // ---- STATS -------------------------------------------------------------------------------------------------
 async function renderStats() {
   await refreshOverview();
+  if (isHockey()) return renderLeaders();
   cache.stats = await api(`/leagues/${LEAGUE_ID}/stats`);
   cache.weeks = [...new Set(cache.stats.flatMap(r => Object.keys(r.weekly).map(Number)))].sort((a, b) => a - b);
   $('content').innerHTML = `
@@ -1851,6 +1852,41 @@ async function renderStats() {
   $('st-q').oninput = () => { view.stats.q = $('st-q').value; drawStats(); };
   $('st-who').onchange = () => { view.stats.who = $('st-who').value; drawStats(); };
   drawStats();
+}
+
+// ---- NHL league leaders: what players did in this league's simulated games (never real-life stats) ----------------
+const LEADER_COLS = [['display_name', 'Player'], ['position', 'Pos'], ['real_team', 'NHL Team'], ['team', 'Team'], ['games_played', 'GP'], ['goals', 'G'], ['assists', 'A'],
+  ['points', 'PTS'], ['saves', 'SV'], ['shutouts', 'SO']];
+async function renderLeaders() {
+  cache.leaders = await api(`/leagues/${LEAGUE_ID}/leaders`);
+  const L = cache.leaders;
+  view.leaders = view.leaders || {q: '', pos: '', sort: 'points', dir: -1};
+  $('content').innerHTML = `
+    <p class="muted" style="margin:0 0 var(--space-3);font-size:13px">What players have done in this league's <strong>simulated</strong> games, not real life. GP = games started; saves are the shots a goalie's side faced minus the goals it allowed; SO = a game where the goalie's side allowed none. A game counts once it is final and you have watched it (or skipped to its score); games between two AI teams always count.
+      ${L.games_hidden ? ` <strong>${L.games_hidden} finished game${L.games_hidden === 1 ? ' is' : 's are'} not counted yet</strong> because you haven't opened ${L.games_hidden === 1 ? 'it' : 'them'}.` : ''} ${L.games_counted} game${L.games_counted === 1 ? '' : 's'} counted. Click a column to sort.</p>
+    <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;margin-bottom:var(--space-2)"><input id="ll-q" class="inp" placeholder="Search players, NHL teams or fantasy teams..." style="flex:1;min-width:200px" value="${esc(view.leaders.q)}"></div>
+    <div id="ll-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:var(--space-3)"></div>
+    <div class="card elev-sm" style="padding:var(--space-2) var(--space-4);overflow-x:auto"><table class="table" style="min-width:640px"><thead id="ll-head"></thead><tbody id="ll-body"></tbody></table></div>
+    <p class="muted" id="ll-count" style="font-size:12px;margin-top:var(--space-2)"></p>`;
+  $('ll-q').oninput = () => { view.leaders.q = $('ll-q').value; drawLeaders(); };
+  drawLeaders();
+}
+
+function drawLeaders() {
+  const v = view.leaders, q = v.q.trim().toLowerCase(), rows = cache.leaders.leaders;
+  const teamName = (r) => r.fantasy_team_id ? (teamsById[r.fantasy_team_id]?.name || '') : 'Free agent';
+  $('ll-chips').innerHTML = [['', 'All', rows.length]].concat(POSITIONS.map(p => [p, POS_LABEL[p] || p, rows.filter(x => x.position === p).length])).map(([val, l, n]) =>
+    `<button class="chip${v.pos === val ? ' on' : ''}" data-pos="${val}">${l}<span class="n">${n}</span></button>`).join('');
+  $('ll-chips').querySelectorAll('.chip').forEach(b => b.onclick = () => { v.pos = b.dataset.pos; drawLeaders(); });
+  const val = (r, k) => k === 'display_name' ? r.display_name.toLowerCase() : k === 'position' ? r.position || '' : k === 'real_team' ? r.real_team || '' : k === 'team' ? teamName(r).toLowerCase() : r[k];
+  const list = rows.filter(r => (!v.pos || r.position === v.pos) && (!q || r.display_name.toLowerCase().includes(q) || (r.real_team || '').toLowerCase().includes(q) || teamName(r).toLowerCase().includes(q)));
+  list.sort((a, b) => { const x = val(a, v.sort), y = val(b, v.sort); return (x < y ? -1 : x > y ? 1 : 0) * v.dir || b.points - a.points || a.display_name.localeCompare(b.display_name); });
+  $('ll-head').innerHTML = '<tr>' + LEADER_COLS.map(([k, l]) => `<th class="sort" data-k="${k}">${l}${v.sort === k ? (v.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
+  $('ll-head').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = ['display_name', 'position', 'real_team', 'team'].includes(k) ? 1 : -1; } drawLeaders(); });
+  $('ll-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${esc(r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
+    <td>${r.fantasy_team_id ? esc(teamName(r)) : '<span class="muted">Free agent</span>'}</td><td>${r.games_played}</td><td>${r.goals}</td><td>${r.assists}</td><td><strong>${r.points}</strong></td><td>${r.saves}</td><td>${r.shutouts}</td></tr>`).join('')
+    || `<tr><td colspan="10" class="muted">No simulated games to count yet.</td></tr>`;
+  $('ll-count').textContent = `Showing ${Math.min(100, list.length)} of ${list.length} players.`;
 }
 
 function drawStats() {

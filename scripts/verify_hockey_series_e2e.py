@@ -359,6 +359,17 @@ def main() -> None:
             series = db.get(LeagueSeries, dgs[0].series_id)
             check(series.status == "FINAL", "the series is FINAL once all 7 days are")
 
+        # ---- league leaders: counted from the simulated games only, behind the same spoiler veil ---------------------------------------------
+        lead = client.get(f"/leagues/{league_id}/leaders", headers=auth["human"]).json()
+        total_goals = sum(h + a for h, a in finals.values())
+        check(lead["games_counted"] + lead["games_hidden"] == 7 and lead["games_counted"] >= 1, "leaders: every final game is counted or held back")
+        check(all(r["points"] == r["goals"] + r["assists"] for r in lead["leaders"]) and 0 < sum(r["goals"] for r in lead["leaders"]) <= total_goals,
+              "leaders: points = goals + assists and credited goals never exceed the simulated scoreboards")
+        check(all(r["saves"] >= 0 and r["shutouts"] <= r["games_played"] for r in lead["leaders"]) and all(r["games_played"] >= 1 for r in lead["leaders"]),
+              "leaders: GP/SV/SO are sane")
+        other = client.get(f"/leagues/{league_id}/leaders", headers=auth["intruder"]).json()
+        check(other["games_counted"] <= lead["games_counted"] or other["games_hidden"] <= lead["games_hidden"] + 7, "leaders: an outsider's view obeys the veil")
+
         # ---- standings tie-out ---------------------------------------------------------------------------------------------------------------
         sd = client.get(f"/leagues/{league_id}/series-standings").json()["standings"]
         by = {r["team_id"]: r for r in sd}
