@@ -17,6 +17,19 @@
 .sort-btn{all:unset;cursor:pointer;font-weight:600;font-size:12px;letter-spacing:.03em}
 .sort-btn:hover{color:var(--color-accent)}
 .sort-btn:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
+.grid-wrap{overflow:auto;max-height:calc(100vh - 220px);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)}
+.dg{display:grid;gap:3px;padding:3px;width:max-content;min-width:100%}
+.dg-head{position:sticky;top:0;z-index:2;background:var(--color-surface);padding:6px 6px;font-size:12px;font-weight:700;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dg-head.mine{color:var(--color-accent)}
+.dg-cell{position:relative;min-height:50px;padding:5px 7px;border-radius:4px;color:#10151a;overflow:hidden;box-sizing:border-box}
+.dg-cell .n{font-weight:700;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:30px}
+.dg-cell .m{font-size:11px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dg-cell .k{position:absolute;top:4px;right:6px;font-size:10px;opacity:.65;font-variant-numeric:tabular-nums}
+.dg-cell.empty{background:var(--color-bg);color:var(--color-neutral-600);border:1px dashed var(--color-divider)}
+.dg-cell.clock{outline:3px solid var(--color-accent);outline-offset:-3px;background:color-mix(in srgb, var(--color-accent) 14%, var(--color-bg));color:var(--color-text)}
+.dg-cell.mine-col{box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent)}
+.dg-legend{display:flex;flex-wrap:wrap;gap:var(--space-3);font-size:12px;margin:var(--space-3) 0}
+.dg-legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 </style>
 </head>
 <body>
@@ -50,11 +63,22 @@
       <div style="text-align:right" id="on-clock-panel"></div>
     </div>
 
+    <div role="tablist" aria-label="Draft view" style="display:flex;gap:var(--space-2);margin-bottom:var(--space-4)">
+      <button class="btn btn-secondary" id="view-grid" role="tab" aria-selected="false">Draft board</button>
+      <button class="btn btn-secondary" id="view-room" role="tab" aria-selected="false">Draft room</button>
+    </div>
+
     <div id="setup-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)"></div>
 
     <div id="error-banner" style="display:none;background:var(--color-accent-2-100);color:var(--color-accent-2-800);padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4)"></div>
 
-    <div style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
+    <div id="grid-view" style="display:none">
+      <div id="grid-legend" class="dg-legend"></div>
+      <div id="grid-board" class="grid-wrap"></div>
+      <p class="text-muted" id="grid-empty" style="display:none">The draft board fills in as picks are made.</p>
+    </div>
+
+    <div id="room-view" style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
 
       <div>
         <input id="search" type="search" placeholder="Search players" style="width:100%;box-sizing:border-box;padding:var(--space-2) var(--space-3);margin-bottom:var(--space-3)">
@@ -407,6 +431,7 @@ const runAi = () => act(async () => {
 });
 
 let draftCompleteRedirectTimer = null;
+let sawDraftInProgress = false; // only a draft that finishes while this page is open redirects; a finished draft stays viewable
 
 function renderPresence() {
   const pill = document.getElementById('draft-presence-pill');
@@ -424,18 +449,19 @@ function renderClock() {
   if (!DRAFT_ID) return;
   renderPresence();
   const next = onClockPick();
+  if (next) sawDraftInProgress = true;
 
   if (!next) {
     kicker.textContent = 'DRAFT COMPLETE';
     panel.innerHTML = `<a class="btn btn-primary" href="${leagueHref()}">Go to league</a>`;
-    if (!draftCompleteRedirectTimer && picks.length > 0) {
+    if (sawDraftInProgress && !draftCompleteRedirectTimer && picks.length > 0) {
       showError('');
       const banner = document.getElementById('error-banner');
       banner.style.display = 'block';
       banner.style.background = 'color-mix(in srgb, var(--color-accent) 20%, var(--color-surface))';
       banner.style.color = 'var(--color-accent)';
       banner.style.fontWeight = '700';
-      banner.innerHTML = '🎉 Draft Complete! Redirecting to League Dashboard...';
+      banner.innerHTML = '🎉 Draft Complete! Taking you to the league dashboard (the draft board stays available from the league page)...';
       draftCompleteRedirectTimer = setTimeout(() => {
         location.href = leagueHref();
       }, 1500);
@@ -930,12 +956,85 @@ function renderPicks() {
   });
 }
 
+
+// ---- draft board grid: rounds down, teams across, like Sleeper/Fantrax. Works after the draft ends too ----
+const POS_COLORS = {
+  QB: '#e58bb4', RB: '#8fd3b2', WR: '#7db8ec', TE: '#f0b35c', K: '#c3a5e6', DL: '#e8a08a', LB: '#d9c46f', DB: '#9ccbd6',
+  C: '#7db8ec', W: '#8fd3b2', LW: '#8fd3b2', RW: '#8fd3b2', D: '#f0b35c', G: '#e58bb4',
+};
+const posColor = pos => POS_COLORS[pos] || '#c8c8c8';
+let gridView = null; // 'grid' | 'room'; null until the first render picks the default
+
+function shortName(p) {
+  const n = p.display_name || '';
+  if (p.team === null && /\s(DL|LB|DB)$/.test(n)) return n; // a defense group keeps its full label
+  const parts = n.trim().split(/\s+/);
+  return parts.length < 2 ? n : `${parts[0][0]}. ${parts.slice(1).join(' ')}`;
+}
+
+function renderGrid() {
+  const el = document.getElementById('grid-board');
+  const legend = document.getElementById('grid-legend');
+  const emptyMsg = document.getElementById('grid-empty');
+  if (!picks.length) { el.innerHTML = ''; legend.innerHTML = ''; emptyMsg.style.display = 'block'; return; }
+  emptyMsg.style.display = 'none';
+  const order = picks.filter(p => p.round === 1).sort((a, b) => a.pick_number - b.pick_number).map(p => p.team_id);
+  const rounds = Math.max(...picks.map(p => p.round));
+  const byKey = new Map(picks.map(p => [`${p.round}:${p.team_id}`, p]));
+  const clockPick = onClockPick();
+  const mineId = Object.values(teamsById).find(t => isMyTeam(t))?.id;
+
+  let html = `<div class="dg" style="grid-template-columns:repeat(${order.length},minmax(118px,1fr))">`;
+  for (const tid of order) {
+    const t = teamsById[tid];
+    html += `<div class="dg-head${tid === mineId ? ' mine' : ''}" title="${esc(t ? t.name : tid)}">${esc(t ? t.name : `Team ${tid}`)}${tid === mineId ? ' (you)' : ''}</div>`;
+  }
+  const used = new Set();
+  for (let r = 1; r <= rounds; r++) {
+    for (const tid of order) {
+      const p = byKey.get(`${r}:${tid}`);
+      if (!p) { html += '<div></div>'; continue; }
+      const label = `${r}.${String(((p.pick_number - 1) % order.length) + 1).padStart(2, '0')}`;
+      const mine = tid === mineId ? ' mine-col' : '';
+      if (p.draftable_asset_id === null) {
+        const onClock = clockPick && clockPick.id === p.id;
+        html += `<div class="dg-cell empty${onClock ? ' clock' : ''}${mine}" title="Pick ${p.pick_number}"><span class="k">${label}</span><div class="m">${onClock ? 'On the clock' : ''}</div></div>`;
+      } else {
+        used.add(p.position);
+        const meta = [p.position, p.team].filter(Boolean).join(' - ');
+        html += `<div class="dg-cell${mine}" style="background:${posColor(p.position)}" title="${esc(p.display_name)} (pick ${p.pick_number}${p.is_autopick ? ', auto' : ''})"><span class="k">${label}</span><div class="n">${esc(shortName(p))}</div><div class="m">${esc(meta)}${p.is_autopick ? ' · auto' : ''}</div></div>`;
+      }
+    }
+  }
+  el.innerHTML = html + '</div>';
+  legend.innerHTML = [...used].filter(Boolean).sort().map(pos => `<span><i style="background:${posColor(pos)}"></i>${esc(pos)}</span>`).join('');
+}
+
+function setView(which) {
+  gridView = which;
+  document.getElementById('grid-view').style.display = which === 'grid' ? 'block' : 'none';
+  document.getElementById('room-view').style.display = which === 'room' ? 'grid' : 'none';
+  for (const [id, key] of [['view-grid', 'grid'], ['view-room', 'room']]) {
+    const b = document.getElementById(id);
+    b.className = key === which ? 'btn btn-primary' : 'btn btn-secondary';
+    b.setAttribute('aria-selected', key === which ? 'true' : 'false');
+  }
+  const u = new URL(location.href); u.searchParams.set('view', which); history.replaceState(null, '', u);
+}
+document.getElementById('view-grid').onclick = () => setView('grid');
+document.getElementById('view-room').onclick = () => setView('room');
+
 function render() {
+  if (gridView === null) {
+    // Default: the grid for a finished draft (nothing left to pick), the draft room while picks are still open.
+    setView(params.get('view') || (picks.length && !onClockPick() ? 'grid' : 'room'));
+  }
   pruneQueue();
   renderClock();
   renderFilters();
   renderBoard();
   renderPicks();
+  renderGrid();
   updateQueueBadge();
   if (rosterTab === 'queue') renderQueue();
   renderRosterTab();
