@@ -970,7 +970,7 @@ async function renderHockeyScoreboard() {
             ${dgId ? `
               <a href="/static/nhl-game.html?daily_game_id=${dgId}" class="btn btn-primary" style="font-size:11px;padding:4px 10px">Highlights</a>
               ${isVeiled ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
-              <a href="/static/nhl-game.html?daily_game_id=${dgId}#boxscore" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
+              <a href="/static/nhl-box.html?daily_game_id=${dgId}" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
             ` : ''}
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
