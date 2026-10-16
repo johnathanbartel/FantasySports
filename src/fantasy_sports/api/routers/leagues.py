@@ -340,6 +340,22 @@ def update_league_settings(
         league.league_format = payload.league_format
     if payload.keeper_draft_style is not None:
         league.keeper_draft_style = payload.keeper_draft_style
+    hockey_fields = (payload.standings_mode is not None or payload.points_per_win is not None
+                     or payload.points_per_tie is not None or "playoff_teams" in sent)
+    if hockey_fields and league.series_length_days is None:
+        raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
+    if payload.standings_mode is not None:
+        league.standings_mode = payload.standings_mode
+    if payload.points_per_win is not None:
+        league.points_per_win = payload.points_per_win
+    if payload.points_per_tie is not None:
+        league.points_per_tie = payload.points_per_tie
+    if "playoff_teams" in sent:
+        if payload.playoff_teams is not None:
+            teams = db.query(Team).filter_by(league_id=league.id).count()
+            if payload.playoff_teams > max(teams, league.size):
+                raise HTTPException(400, f"A {max(teams, league.size)}-team league can't have {payload.playoff_teams} playoff teams")
+        league.playoff_teams = payload.playoff_teams
     if payload.pick_trade_seasons is not None:
         league.pick_trade_seasons = payload.pick_trade_seasons
     if "keeper_limit" in sent:

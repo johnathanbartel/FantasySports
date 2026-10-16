@@ -93,6 +93,7 @@ class League(Base):
             name="ck_league_series_length_days",
         ),
         CheckConstraint("league_mode IN ('standard', 'weekly_redraft')", name="ck_league_mode"),
+        CheckConstraint("standings_mode IN ('points', 'win_pct')", name="ck_league_standings_mode"),
         CheckConstraint(
             "keeper_draft_style IN ('rookie_resign', 'combined', 'separate')", name="ck_league_keeper_draft_style"
         ),
@@ -154,6 +155,12 @@ class League(Base):
     offseason_refill_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Pick trading (platform/pick_trading.py): how many upcoming drafts' picks Keeper / Dynasty teams can trade.
     pick_trade_seasons: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # Hockey standings (platform/series_standings.py): sorted by points (points_per_win / points_per_tie) or win percentage.
+    standings_mode: Mapped[str] = mapped_column(String(10), default="points", server_default="points")
+    points_per_win: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    points_per_tie: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    # How many teams make the playoffs; NULL = the default (33% of the teams, rounded), see platform/playoffs.py.
+    playoff_teams: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
