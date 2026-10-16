@@ -221,10 +221,17 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
     if not new_periods:
         fresh["window_state"] = state | {"selections": selections}
         fresh["wall_clock"] = division.wall_clock().to_dict() if n else prov.get("wall_clock")
+    fresh["ticked_at"] = now_utc.isoformat(timespec="seconds")
+    fresh.pop("engine_error", None)
     if n:
-        fresh["live_shots"] = _live_shots(db, daily_game, home, away, assets, side_of, counting, selections, state, division,
-                                          published, seed)
-        fresh["sim_progress"] = _sim_progress(db, games, division, published, now)
+        # The read-outs are conveniences: a failure here is recorded (live box score) and must never stop a period publishing.
+        try:
+            fresh["live_shots"] = _live_shots(db, daily_game, home, away, assets, side_of, counting, selections, state, division,
+                                              published, seed)
+            fresh["sim_progress"] = _sim_progress(db, games, division, published, now)
+        except Exception as e:
+            fresh["engine_error"] = f"{type(e).__name__}: {e}"[:300]
+            fresh.setdefault("live_shots", [])
     if fresh != prov:
         service.update_provenance(db, sim, fresh)
     service.sync(db, sim, now_utc)

@@ -199,6 +199,32 @@ def main() -> None:
         check([p["phase"] for p in v.period_phases] == ["in_progress", "upcoming", "upcoming"], "Period 1 is in progress, the others not started")
         check(not v.can_skip and events_for(at(SUN, 13, 30))[1] == 0, "nothing can be skipped to or fetched while no period is published")
 
+        # ---- the engine's read-outs can fail without stopping the game, and it says so ---------------------------------------------
+        def prov_now():
+            with SessionLocal() as db:
+                return dict(service.get_sim(db, dg_id).provenance)
+
+        real_live_shots = window_engine._live_shots
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        window_engine._live_shots = boom
+        r = tick(at(SUN, 13, 31))
+        check(r.status in ("idle", "opened") and "boom" in prov_now().get("engine_error", ""), "a failing read-out is recorded and does not stop the tick")
+        window_engine._live_shots = real_live_shots
+        tick(at(SUN, 13, 32))
+        check("engine_error" not in prov_now() and prov_now()["ticked_at"], "the next good tick clears it and stamps when the engine ran")
+
+        # ---- a game page drives only its own window (offline: no feed is fetched) ---------------------------------------------------
+        from fantasy_sports.platform import nhl_daily_sync as sync_module
+        sync_module._fetch_json = lambda *a, **k: None
+        sync_module.current_eastern_date = lambda: SUN
+        service.utcnow = lambda: at(SUN, 13, 40)
+        with SessionLocal() as db:
+            sync_module.sync_window_game(db, db.get(SeriesDailyGame, dg_id))
+        check(prov_now()["ticked_at"].startswith(at(SUN, 13, 40).isoformat(timespec="seconds")[:16]), "sync_window_game ticks the game it was given")
+
         # ---- the real periods are over, the simulation has not run: the intermission -------------------------------------------
         set_game("A", "final")
         set_game("B", "live")

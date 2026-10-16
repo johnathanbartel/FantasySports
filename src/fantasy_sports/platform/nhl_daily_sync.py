@@ -661,7 +661,30 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
     return activated_count
 
 
-def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: datetime.date) -> None:
+def _record_tick_error(db: Session, dg: SeriesDailyGame, error: Exception) -> None:
+    """Keep what went wrong in the game's provenance (shown on the live box score) instead of only in a log nobody reads."""
+    try:
+        with db.begin_nested():
+            sim = service.get_sim(db, dg.id)
+            if sim is not None:
+                prov = dict(sim.provenance or {})
+                prov["engine_error"] = f"{type(error).__name__}: {error}"[:300]
+                service.update_provenance(db, sim, prov)
+    except Exception:
+        pass
+
+
+def sync_window_game(db: Session, dg: SeriesDailyGame) -> None:
+    """Ingest and tick ONE window game (what an open game page needs), without the league-wide work of
+    auto_sync_league_scoreboard (schedule seeding, roster call-ups for every team, every other window)."""
+    league_id = dg.series.league_id
+    nhl = db.query(Universe).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id).filter(
+        LeagueUniverse.league_id == league_id, Universe.code == "nhl").first()
+    if nhl is not None:
+        _sync_window_rows(db, league_id, nhl, current_eastern_date(), only_game_id=dg.id)
+
+
+def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: datetime.date, only_game_id: int | None = None) -> None:
     """Window games (docs/hockey_spec.md 6.5): ingest every day of each open window up to today, then let the window
     engine do whatever is due - open the game at the first kickoff, select counting games, publish the periods that
     have ended. Each window is isolated: a failure in one never stops the others or the legacy daily games."""
@@ -676,6 +699,8 @@ def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: date
                 SeriesDailyGame.status != "FINAL", SeriesDailyGame.calendar_date <= today_et)
         .order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all()
     )
+    if only_game_id is not None:
+        rows = [r for r in rows if r.id == only_game_id]
     now_utc = service.utcnow()
     ingested: set[datetime.date] = set()
     for dg in rows:
@@ -696,8 +721,9 @@ def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: date
         try:
             with db.begin_nested():
                 window_engine.tick(db, dg, now_utc)
-        except Exception:
+        except Exception as e:
             logging.getLogger(__name__).exception("window tick failed for game %s", dg.id)
+            _record_tick_error(db, dg, e)
     db.commit()
 
 

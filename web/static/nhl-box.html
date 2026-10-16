@@ -117,6 +117,7 @@ function render(d) {
       <div><span class="muted">Earned credit</span><br><b>${esc(n.away)} ${pts(d.side_credit.away)} · ${esc(n.home)} ${pts(d.side_credit.home)}</b></div>
     </div>
     <p class="muted" style="margin:0">${d.counting_games} counting games → ${d.real_periods_pooled} real periods pooled (3 per game), cut into 3 fantasy periods of ${d.chunk_size} in order of nominal start. ${d.real_periods_begun} have nominally begun. Lineup ${d.lineup_frozen ? 'frozen at first kickoff' : 'is a projection (not frozen until ' + esc(dt(d.first_kickoff)) + ')'}. Local time now ${esc(dt(d.now_local))}.</p>
+    <p class="muted" style="margin:var(--space-2) 0 0">Simulation engine last ran ${d.engine.last_ran_utc ? esc(d.engine.last_ran_utc.replace('T', ' ')) + ' UTC' : 'never (not since this feature was added)'}. ${d.engine.error ? '<strong>Last error: ' + esc(d.engine.error) + '</strong>' : 'No errors recorded.'} ${d.engine.estimated_shots_stored} upcoming shots are lined up for periods not yet published.</p>
     <ul class="muted" style="margin:var(--space-2) 0 0">${d.notes.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
   </section>
   <section class="card sec"><h2>Starters by fantasy period</h2>${playersHtml(d)}</section>
