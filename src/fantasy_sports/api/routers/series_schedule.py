@@ -31,6 +31,7 @@ def _league_series(db: Session, league_id: int) -> list[LeagueSeries]:
 
 def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, viewer_user_id: int | None = None) -> SeriesScheduleOut:
     watched_map = {}
+    ready_map: dict[int, bool] = {}
     slate_summary = None
     real_total = 0
     real_final = 0
@@ -113,6 +114,7 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                         if mine is not None:
                             cursor = len(sim_evs) if (mine.mode == st.SKIPPED and sim.status == "FINAL") else min(mine.cursor_seq, len(sim_evs))
                         watched_map[g.id] = cursor > 0
+                        ready_map[g.id] = service.period_marks(sim_evs).get(sim.published_periods or 0, 0) > cursor
                         shown = st.totals_through(sim_evs, cursor)
                         g.home_score, g.away_score = shown.home_score, shown.away_score
 
@@ -143,6 +145,7 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
         s.daily_games.sort(key=lambda g: g.calendar_date)
         for g in s.daily_games:
             g.owner_watched = watched_map.get(g.id, False)
+            g.highlights_ready = ready_map.get(g.id, False)
     return SeriesScheduleOut(
         league_id=league.id,
         series_length_days=league.series_length_days,

@@ -176,6 +176,13 @@ def main() -> None:
                 return e.code
             return None
 
+        def schedule_ready():
+            from fantasy_sports.api.routers import series_schedule as router
+            with SessionLocal() as db:
+                league = db.query(League).first()
+                out = router._out(league, router._league_series(db, league.id), db, viewer)
+                return [g for s in out.series for g in s.daily_games if g.window_index == 1][0].highlights_ready
+
         def schedule_score():
             """What the league scoreboard shows this viewer for the window game: (home, away, owner_watched)."""
             from fantasy_sports.api.routers import series_schedule as router
@@ -199,6 +206,7 @@ def main() -> None:
         check(v.period == 1 and v.seconds_remaining is not None and 0 < v.seconds_remaining < 1200, "the live clock is public before the viewer has watched anything")
         check(v.home_score is None and v.away_score is None, "...but the score is hidden")
         check(v.home_shots is not None and v.away_shots is not None, "...while shots on goal are public")
+        check(schedule_ready() is False, "the Highlights button does not flash while nothing has been simulated")
         early = v.home_shots + v.away_shots
         check([p["phase"] for p in v.period_phases] == ["in_progress", "upcoming", "upcoming"], "Period 1 is in progress, the others not started")
         check(not v.can_skip and events_for(at(SUN, 13, 30))[1] == 0, "nothing can be skipped to or fetched while no period is published")
@@ -262,6 +270,7 @@ def main() -> None:
         check(v.period_phases[0]["phase"] == "ready" and v.home_score is None, "Period 1 is ready to watch and the score is still hidden")
         check((v.home_shots, v.away_shots) == before_sides, "publishing a period leaves the scoreboard's shot count exactly as it was: the estimate IS the highlights")
         check(v.can_skip, "...and the viewer may reveal what has been simulated")
+        check(schedule_ready() is True, "the Highlights button flashes: a simulated period is waiting to be watched")
         check(events_for(at(SUN, 20, 5)) == ([], 0) or events_for(at(SUN, 20, 5))[1] == 0, "without watching, no events are served")
         check(refuses(service.progress, at(SUN, 20, 5), 1) == "NOT_WATCHING", "progress needs a watch first")
         act(service.watch, at(SUN, 20, 5))
@@ -280,12 +289,14 @@ def main() -> None:
         check(v.period_phases[0]["phase"] == "watched" and (v.home_score, v.away_score) == (at_end.home_score, at_end.away_score),
               "after watching period 1 the score is the score at the end of period 1")
         check(schedule_score()[:2] == (at_end.home_score, at_end.away_score) and schedule_score()[2], "the league scoreboard agrees")
+        check(schedule_ready() is False, "...and stops flashing once the period is watched")
 
         # ---- period 2 published: only one period at a time ---------------------------------------------------------------------
         set_game("B", "final")
         tick(at(SUN, 22, 30))
         v = view(at(SUN, 22, 30))
         check([p["phase"] for p in v.period_phases][:2] == ["watched", "ready"], "period 2 is ready")
+        check(schedule_ready() is True, "...and the button flashes again for it")
         check((v.home_score, v.away_score) == (at_end.home_score, at_end.away_score), "publishing period 2 does not change what the viewer sees")
         hidden = schedule_score()
         check(hidden[:2] == (at_end.home_score, at_end.away_score), "nor does it change the league scoreboard")
@@ -307,6 +318,7 @@ def main() -> None:
         act(service.skip, at(TUE, 22, 30))
         v = view(at(TUE, 22, 30))
         check(v.is_complete and v.provenance and v.home_score is not None, "skipping to the box score completes the game")
+        check(schedule_ready() is False, "nothing left to watch, nothing flashes")
 
         # ---- filler shots: realism only ----------------------------------------------------------------------------------------
         with SessionLocal() as db:
