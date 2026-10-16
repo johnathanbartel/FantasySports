@@ -1399,8 +1399,10 @@ async function renderTrades() {
   }
 
   const picksTrade = !!ov.pick_trading_on;
-  const [tradeList, myRoster, oppRoster, myPicks, oppPicks] = await Promise.all([
+  const [tradeList, hub, blockList, myRoster, oppRoster, myPicks, oppPicks] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/trades`),
+    api(`/leagues/${LEAGUE_ID}/trade-hub`),
+    api(`/leagues/${LEAGUE_ID}/trade-block`),
     api(`/teams/${t.id}/roster`),
     tradeSelectedOppId ? api(`/teams/${tradeSelectedOppId}/roster`).catch(() => []) : Promise.resolve([]),
     picksTrade ? api(`/leagues/${LEAGUE_ID}/teams/${t.id}/tradeable-picks`).catch(() => []) : Promise.resolve([]),
@@ -1465,6 +1467,59 @@ async function renderTrades() {
       <div style="font-size:13px" class="muted">
         Trades with AI teams require <strong>league majority approval</strong> (&gt;50% of league teams) before executing.
       </div>
+    </div>
+
+    <!-- Trade Hub: the deadline and every team's plan -->
+    <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-4)">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);flex-wrap:wrap">
+        <h3 style="margin:0">Trade Hub</h3>
+        <span style="font-size:13px">Trade deadline: <strong>${hub.trade_deadline ? esc(fmtUtc(hub.trade_deadline)) : 'none set'}</strong>${hub.deadline_passed ? ' <span class="tag tag-neutral">passed - trading is closed</span>' : ''}</span>
+      </div>
+      <p class="muted" style="font-size:12px;margin:var(--space-2) 0">
+        Pick <strong>Win Now</strong> to say you are buying for this season or <strong>Rebuilding</strong> to say you are selling for the future. Everyone starts Win Now.
+        An AI team is Win Now until it is mathematically eliminated from the playoffs, then it is Rebuilding.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${hub.teams.map(h => {
+          const mine = h.team_id === t.id;
+          const rebuilding = h.plan === 'rebuilding';
+          const planTag = `<span class="tag ${rebuilding ? 'tag-neutral' : 'tag-accent'}" style="font-size:12px">${rebuilding ? 'Rebuilding' : 'Win Now'}</span>`;
+          const picker = (mine && can && !h.is_ai_owned) ? `
+            <span style="display:inline-flex;gap:4px">
+              <button type="button" class="btn btn-sm ${rebuilding ? 'btn-secondary' : 'btn-primary'}" data-trade-plan="win_now">Win Now</button>
+              <button type="button" class="btn btn-sm ${rebuilding ? 'btn-primary' : 'btn-secondary'}" data-trade-plan="rebuilding">Rebuilding</button>
+            </span>` : planTag;
+          return `<div style="display:flex;align-items:center;gap:var(--space-3);padding:6px 8px;border-radius:var(--radius-sm);${mine ? 'background:var(--panel-2)' : ''}">
+            <span style="flex:1;font-size:13px"><strong>${esc(h.team_name)}</strong>${h.is_ai_owned ? ' <span class="muted">(AI)</span>' : ''}${mine ? ' <span class="muted">(you)</span>' : ''}
+              ${h.eliminated ? '<span class="muted" style="font-size:11px"> - eliminated from the playoffs</span>' : ''}</span>
+            ${h.on_block ? `<span class="muted" style="font-size:11px">${h.on_block} on the block</span>` : ''}
+            ${picker}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Trade Block: players their managers have put up for offers -->
+    <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-4)">
+      <h3 style="margin:0 0 var(--space-2)">Trade Block</h3>
+      <p class="muted" style="font-size:12px;margin:0 0 var(--space-3)">Players their managers are open to moving. Putting a player here commits you to nothing; you still propose and approve every trade below.</p>
+      ${blockList.length ? blockList.map(b => `
+        <div style="margin-bottom:var(--space-3)">
+          <h4 style="margin:0 0 4px;font-size:14px">${esc(b.team_name)} <span class="muted" style="font-size:11px;font-weight:400">${b.plan === 'rebuilding' ? 'Rebuilding' : 'Win Now'}</span></h4>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+            ${b.players.map(p => `${assetPill(p)}${(b.team_id === t.id && can) ? `<button type="button" class="btn btn-ghost btn-sm" data-block-remove="${p.draftable_asset_id}" style="font-size:11px">Remove</button>` : ''}`).join('')}
+            ${b.team_id !== t.id ? `<button type="button" class="btn btn-secondary btn-sm" data-block-offer="${b.team_id}" style="margin-left:auto">Make an offer</button>` : ''}
+          </div>
+        </div>`).join('') : '<p class="muted" style="margin:0 0 var(--space-3)">Nobody has put a player on the block yet.</p>'}
+      ${can ? `
+        <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap;border-top:1px solid var(--color-divider);padding-top:var(--space-3)">
+          <label for="block-add-pick" style="font-size:13px;font-weight:600">Put a player on your block:</label>
+          <select id="block-add-pick" class="inp" style="flex:1;min-width:200px">
+            ${sortRoster(myRoster).filter(p => !(blockList.find(b => b.team_id === t.id)?.players || []).some(x => x.draftable_asset_id === p.draftable_asset_id))
+              .map(p => `<option value="${p.draftable_asset_id}">${esc(p.display_name)} (${esc(p.position || '')})</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-primary btn-sm" id="block-add-btn">Add to block</button>
+        </div>` : ''}
     </div>
 
     <!-- Active Trades Requiring Majority Approval -->
@@ -1648,6 +1703,42 @@ async function renderTrades() {
   `;
 
   if ($('team-pick')) $('team-pick').onchange = () => { activeTeamId = Number($('team-pick').value); go('trades'); };
+
+  document.querySelectorAll('[data-trade-plan]').forEach(btn => {
+    btn.onclick = async () => {
+      showError('');
+      try {
+        await api(`/teams/${t.id}/trade-plan`, jsonOpts('PUT', {plan: btn.dataset.tradePlan}));
+        showResult(btn.dataset.tradePlan === 'rebuilding' ? 'Your team is now Rebuilding.' : 'Your team is now Win Now.');
+        await renderTrades();
+      } catch (e) { showError(e.message); }
+    };
+  });
+  if ($('block-add-btn')) $('block-add-btn').onclick = async () => {
+    const id = Number($('block-add-pick').value);
+    if (!id) return;
+    showError('');
+    try {
+      await api(`/teams/${t.id}/trade-block`, jsonOpts('POST', {draftable_asset_id: id}));
+      await renderTrades();
+    } catch (e) { showError(e.message); }
+  };
+  document.querySelectorAll('[data-block-remove]').forEach(btn => {
+    btn.onclick = async () => {
+      showError('');
+      try {
+        await api(`/teams/${t.id}/trade-block/${Number(btn.dataset.blockRemove)}`, {method: 'DELETE'});
+        await renderTrades();
+      } catch (e) { showError(e.message); }
+    };
+  });
+  document.querySelectorAll('[data-block-offer]').forEach(btn => {
+    btn.onclick = async () => {
+      tradeSelectedOppId = Number(btn.dataset.blockOffer);
+      await renderTrades();
+      $('trade-opp')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    };
+  });
 
   $('trade-opp').onchange = () => {
     tradeSelectedOppId = Number($('trade-opp').value);

@@ -60,6 +60,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_nfl_defense_smoke_test.py` | Offline synthetic-play checks of NFL individual/group/team defense credit, tie-outs, baselines | `.venv` | No | No |
 | `scripts/seed_nfl_smoke_test.py` | Offline in-memory NFL universe, league-creation, roster-slot, and snake-draft smoke test for group, team and individual defense modes | `.venv-api` | No | No (in-memory only) |
 | `scripts/seed_nfl_universe.py` | Idempotently adds the `nfl` universe and v1 roster slot definitions to the configured database | `.venv-api` | No | Yes (`DATABASE_URL`; additive-only, safe to re-run) |
+| `scripts/seed_trade_hub_smoke_test.py` | Trade Hub and Trade Block: deadline, manager plans, AI teams Win Now until mathematically eliminated, block add/remove | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_trade_eligibility_smoke_test.py` | CFG-06 paid/free league trade eligibility: dues, eliminated teams, majority + commissioner approval, deadline, execution rechecks, franchise continuity | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_smoke_test.py` | Smoke test round-tripping schema and API endpoints via TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/serve_demo.py` | Runs FastAPI server via Uvicorn against local demo dataset | `.venv-api` | No (unverified in docstring) | Yes (copies demo DB) |
@@ -72,6 +73,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_hockey_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_eligibility_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_hub_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/run_mock_e2e.py`
 - Path verification: run `Test-Path` in PowerShell for referenced repository file paths.
 
@@ -113,7 +115,7 @@ Sandbox note: Codex cannot read the global git ignore file, so a stray file that
 
 - **Integration branch**: `docs/architecture.md` and `README.md` name master as the integration branch; the only active repository branches are main and feature/timed-auction-draft-mock-run (plus handoff branches). The master branch does not exist in git.
 - **Starter slots vs roster count**: `src/fantasy_sports/sports/football/README.md` documents 10 starters, but `docs/data_contract.md` and schema add an 11th starter slot (kicker), requiring 21 roster slots (11 starters + 10 bench) while drafts remain 20 rounds until bench sizing is finalized.
-- **Alembic has a single head** (`c1f7a3e9d5b2`, CFG-06 trade eligibility, on top of `b6e3d8a2f1c4` pick trading toggle). The two earlier branches were merged by `f1a9c4d7e2b6_merge_heads`, so a bare `alembic upgrade head` works. Older local databases (`fantasy.db`, `user_run.db`) and the production Neon database are not upgraded automatically: after any change that adds a migration, run `alembic upgrade head` against each database before using or deploying the new code, or league creation fails with a 500 (missing column). `mock_draft_demo.db` predates Alembic stamping and can only be rebuilt with `scripts/seed_demo_league.py`.
+- **Alembic has a single head** (`d3a9e5c1b7f4`, trade hub and block, on top of `c1f7a3e9d5b2` CFG-06 trade eligibility). The two earlier branches were merged by `f1a9c4d7e2b6_merge_heads`, so a bare `alembic upgrade head` works. Older local databases (`fantasy.db`, `user_run.db`) and the production Neon database are not upgraded automatically: after any change that adds a migration, run `alembic upgrade head` against each database before using or deploying the new code, or league creation fails with a 500 (missing column). `mock_draft_demo.db` predates Alembic stamping and can only be rebuilt with `scripts/seed_demo_league.py`.
 
 ## Tickets
 - Handoff prompts live in handoff-prompts/ as <TICKET>.txt, for example handoff-prompts/FS-001.txt.

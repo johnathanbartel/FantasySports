@@ -335,6 +335,9 @@ class Team(Base):
     # The season_number in which this franchise was mathematically eliminated from championship contention (NULL = active).
     # Written only by the elimination calculation (platform/elimination.py); never accepted from a client.
     eliminated_season: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The Trade Hub plan a manager picks: "win_now" or "rebuilding" (platform/trade_hub.py). An AI team's plan is never read from
+    # here - it is Win Now until the team is mathematically eliminated, then Rebuilding.
+    trade_plan: Mapped[str] = mapped_column(String(12), default="win_now", server_default="win_now")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     league: Mapped["League"] = relationship(back_populates="teams")
@@ -1114,6 +1117,20 @@ class TradedPick(Base):
     round: Mapped[int] = mapped_column(Integer)
     original_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     owner_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+
+
+class TradeBlockEntry(Base):
+    """A player a manager has put on the trade block: shown league-wide as available. Only a listing - it commits nobody to a
+    trade. An entry whose player has left the team's roster is ignored (and replaced if the player ever returns)."""
+
+    __tablename__ = "trade_block_entries"
+    __table_args__ = (UniqueConstraint("team_id", "draftable_asset_id", name="uq_trade_block_team_asset"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
 
 
 class TradeApproval(Base):

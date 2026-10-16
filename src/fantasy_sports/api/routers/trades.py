@@ -13,8 +13,9 @@ from sqlalchemy.orm import Session
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.platform import dues, pick_trading, trade_eligibility, trades
+from fantasy_sports.platform import trade_hub as trade_hub_logic
 from fantasy_sports.platform.db.models.core import (
-    DraftableAsset, League, RealTeam, SeasonDues, Team, Trade, TradeVote, User,
+    DraftableAsset, League, RealTeam, RosterEntry, SeasonDues, Team, Trade, TradeBlockEntry, TradeVote, User,
 )
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.platform.draft_stats import stats_by_asset
@@ -134,36 +135,37 @@ class TradeOut(BaseModel):
     commissioner_decision: str | None = None
 
 
+def _asset_outs(db: Session, ids: list[int]) -> dict[int, TradeAssetOut]:
+    assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(ids or [0]))}
+    stats = stats_by_asset(db, ids)
+    rates = rates_by_asset(db, ids)
+    real_teams = {t.id: t.name for t in db.query(RealTeam)}
+    out: dict[int, TradeAssetOut] = {}
+    for aid in ids:
+        a = assets.get(aid)
+        if not a:
+            out[aid] = TradeAssetOut(draftable_asset_id=aid, display_name="Unknown Player", position=None, real_team=None)
+            continue
+        out[aid] = TradeAssetOut(
+            draftable_asset_id=aid,
+            display_name=draftable_asset_display_name(a),
+            position=draftable_asset_position(a),
+            real_team=real_teams.get(a.player.real_team_id if a.player else a.defense_group.real_team_id),
+            points=stats.get(aid, {}).get("points"),
+            points_per_game=rates.get(aid, {}).get("points_per_game"),
+        )
+    return out
+
+
 def _format_trade(db: Session, trade: Trade, active_user: User | None = None) -> TradeOut:
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
     p_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id and it.draftable_asset_id is not None]
     c_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == c_team.id and it.draftable_asset_id is not None]
 
-    all_ids = p_items + c_items
-    assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(all_ids or [0]))}
-    stats = stats_by_asset(db, all_ids)
-    rates = rates_by_asset(db, all_ids)
-    real_teams = {t.id: t.name for t in db.query(RealTeam)}
-
-    def asset_out(aid: int) -> TradeAssetOut:
-        a = assets.get(aid)
-        if not a:
-            return TradeAssetOut(draftable_asset_id=aid, display_name="Unknown Player", position=None, real_team=None)
-        r_team = real_teams.get(a.player.real_team_id if a.player else a.defense_group.real_team_id)
-        st = stats.get(aid, {})
-        rt = rates.get(aid, {})
-        return TradeAssetOut(
-            draftable_asset_id=aid,
-            display_name=draftable_asset_display_name(a),
-            position=draftable_asset_position(a),
-            real_team=r_team,
-            points=st.get("points"),
-            points_per_game=rt.get("points_per_game"),
-        )
-
-    send_assets = [asset_out(aid) for aid in p_items]
-    receive_assets = [asset_out(aid) for aid in c_items]
+    asset_by_id = _asset_outs(db, p_items + c_items)
+    send_assets = [asset_by_id[aid] for aid in p_items]
+    receive_assets = [asset_by_id[aid] for aid in c_items]
 
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=trade.league_id)}
     league = db.get(League, trade.league_id)
@@ -441,6 +443,122 @@ def commissioner_decision(
         db.rollback()
         raise HTTPException(400, str(e))
     return _format_trade(db, trade, user)
+
+
+class TradeHubTeamOut(BaseModel):
+    team_id: int
+    team_name: str
+    is_ai_owned: bool
+    plan: str                   # "win_now" | "rebuilding"
+    eliminated: bool            # mathematically out of the playoffs (what turns an AI team to Rebuilding)
+    on_block: int               # players on its trade block
+
+
+class TradeHubOut(BaseModel):
+    league_id: int
+    trade_deadline: datetime.datetime | None
+    deadline_passed: bool
+    teams: list[TradeHubTeamOut]
+
+
+class TradePlanRequest(BaseModel):
+    plan: str
+
+
+class TradeBlockAddRequest(BaseModel):
+    draftable_asset_id: int
+
+
+class TradeBlockTeamOut(BaseModel):
+    team_id: int
+    team_name: str
+    plan: str
+    players: list[TradeAssetOut]
+
+
+def _block_entries(db: Session, league_id: int) -> dict[int, list[TradeBlockEntry]]:
+    """Block entries per team, leaving out a player who is no longer on the team's roster."""
+    on_roster = {(r.team_id, r.draftable_asset_id) for r in
+                 db.query(RosterEntry).join(Team, Team.id == RosterEntry.team_id).filter(Team.league_id == league_id)}
+    out: dict[int, list[TradeBlockEntry]] = {}
+    for e in db.query(TradeBlockEntry).filter_by(league_id=league_id).order_by(TradeBlockEntry.id):
+        if (e.team_id, e.draftable_asset_id) in on_roster:
+            out.setdefault(e.team_id, []).append(e)
+    return out
+
+
+@router.get("/leagues/{league_id}/trade-hub", response_model=TradeHubOut)
+def trade_hub(league_id: int, db: Session = Depends(get_db)):
+    """The trade deadline and every team's trading plan. A manager's plan is their own pick; an AI team is Win Now until it is
+    mathematically eliminated, then Rebuilding."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    eliminated = trade_hub_logic.eliminated_team_ids(db, league)
+    block = _block_entries(db, league_id)
+    teams = db.query(Team).filter_by(league_id=league_id).order_by(Team.id).all()
+    deadline = league.trade_deadline
+    return TradeHubOut(
+        league_id=league_id, trade_deadline=deadline,
+        deadline_passed=deadline is not None and datetime.datetime.utcnow() > deadline,
+        teams=[TradeHubTeamOut(team_id=t.id, team_name=t.name, is_ai_owned=t.is_ai_owned,
+                               plan=trade_hub_logic.plan_of(t, eliminated), eliminated=t.id in eliminated,
+                               on_block=len(block.get(t.id, []))) for t in teams])
+
+
+@router.put("/teams/{team_id}/trade-plan", response_model=TradeHubTeamOut)
+def set_trade_plan(team_id: int, payload: TradePlanRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """A manager chooses Win Now or Rebuilding for their team. An AI team's plan cannot be set: it follows elimination."""
+    team = assert_can_manage_team(db, user, team_id)
+    if team.is_ai_owned:
+        raise HTTPException(400, "An AI team's plan follows its standing and can't be set")
+    if payload.plan not in trade_hub_logic.PLANS:
+        raise HTTPException(400, "Plan must be 'win_now' or 'rebuilding'")
+    team.trade_plan = payload.plan
+    db.commit()
+    league = db.get(League, team.league_id)
+    eliminated = trade_hub_logic.eliminated_team_ids(db, league)
+    return TradeHubTeamOut(team_id=team.id, team_name=team.name, is_ai_owned=False, plan=team.trade_plan,
+                           eliminated=team.id in eliminated, on_block=len(_block_entries(db, team.league_id).get(team.id, [])))
+
+
+@router.get("/leagues/{league_id}/trade-block", response_model=list[TradeBlockTeamOut])
+def trade_block(league_id: int, db: Session = Depends(get_db)):
+    """Every team that has players on its trade block, with those players."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    block = _block_entries(db, league_id)
+    if not block:
+        return []
+    eliminated = trade_hub_logic.eliminated_team_ids(db, league)
+    assets = _asset_outs(db, [e.draftable_asset_id for es in block.values() for e in es])
+    teams = {t.id: t for t in db.query(Team).filter(Team.id.in_(list(block)))}
+    return [TradeBlockTeamOut(team_id=tid, team_name=teams[tid].name, plan=trade_hub_logic.plan_of(teams[tid], eliminated),
+                              players=[assets[e.draftable_asset_id] for e in es])
+            for tid, es in sorted(block.items(), key=lambda kv: teams[kv[0]].name)]
+
+
+@router.post("/teams/{team_id}/trade-block", response_model=TradeAssetOut)
+def add_to_trade_block(team_id: int, payload: TradeBlockAddRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    team = assert_can_manage_team(db, user, team_id)
+    if team.is_ai_owned:
+        raise HTTPException(400, "AI teams don't use the trade block")
+    if not db.query(RosterEntry).filter_by(team_id=team.id, draftable_asset_id=payload.draftable_asset_id).first():
+        raise HTTPException(400, "That player is not on your roster")
+    if not db.query(TradeBlockEntry).filter_by(team_id=team.id, draftable_asset_id=payload.draftable_asset_id).first():
+        db.add(TradeBlockEntry(league_id=team.league_id, team_id=team.id, draftable_asset_id=payload.draftable_asset_id,
+                               created_at=datetime.datetime.utcnow()))
+        db.commit()
+    return _asset_outs(db, [payload.draftable_asset_id])[payload.draftable_asset_id]
+
+
+@router.delete("/teams/{team_id}/trade-block/{draftable_asset_id}")
+def remove_from_trade_block(team_id: int, draftable_asset_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    team = assert_can_manage_team(db, user, team_id)
+    db.query(TradeBlockEntry).filter_by(team_id=team.id, draftable_asset_id=draftable_asset_id).delete()
+    db.commit()
+    return {"ok": True}
 
 
 def _dues_out(r: SeasonDues) -> DuesOut:
