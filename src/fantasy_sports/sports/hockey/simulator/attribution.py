@@ -100,3 +100,62 @@ def tie_out_ledger(inputs: HockeyGameInputs, ledger: Ledger, tol: float = 1e-9) 
     total_out = sum(ledger.offense.values())
     if abs(total_in - total_out) > 1e-8:
         raise TieOutError("inversion did not conserve total value")
+
+
+def build_value_ledger(inputs: HockeyGameInputs) -> Ledger:
+    """The value model's accounting (docs/hockey_simulator_scoring.md "Value model").
+
+    C = value a side's skaters created (shots, assists, blocks, hits, takeaways); G = value its goalie took away (xGSA, the xG of the
+    shots he stopped). A goalie's saves are taken off the OPPONENT'S created value, never below zero; what a goalie saved beyond
+    everything the opponent created is added to his own team, so the net differential stays true:
+
+        x = C_home - G_away      y = G_home - C_away
+        V_home = max(0, x) + max(0, y)        V_away = max(0, -x) + max(0, -y)        V_home - V_away = x + y = S_home - S_away
+
+    V feeds the simulation (ledger.offense); the box score keeps the signed lines. Nothing here is random."""
+    raw = {"home": 0.0, "away": 0.0}
+    created = {"home": 0.0, "away": 0.0}
+    saved = {"home": 0.0, "away": 0.0}
+    items: dict[str, list[Contribution]] = {"home": [], "away": []}
+    for side in ("home", "away"):
+        groups: dict[str, list[CreditLine]] = defaultdict(list)
+        for line in inputs.side(side).lines:
+            raw[side] += line.points
+            if line.role == "goalie":
+                saved[side] += line.points
+                if line.points > EPS:
+                    items[side].append(Contribution(line.line_id, side, "save", line.points, line.real_second, (line,)))
+                continue
+            created[side] += line.points
+            if line.role in SKATER_GOAL_ROLES:
+                groups[line.group_id].append(line)
+            elif line.role == "blocker" and line.points > EPS:
+                items[side].append(Contribution(line.line_id, side, "block", line.points, line.real_second, (line,)))
+        for group_id, lines in sorted(groups.items()):
+            value = sum(l.points for l in lines)
+            if value > EPS:
+                lines = sorted(lines, key=lambda l: l.line_id)
+                items[side].append(Contribution(f"goal:{group_id}", side, "goal_credit", value,
+                                                min(l.real_second for l in lines), tuple(lines)))
+    x = created["home"] - saved["away"]
+    y = saved["home"] - created["away"]
+    offense = {"home": max(0.0, x) + max(0.0, y), "away": max(0.0, -x) + max(0.0, -y)}
+    for side in items:
+        items[side].sort(key=lambda c: c.item_id)
+    return Ledger(raw=raw, positive=dict(raw), negative={"home": 0.0, "away": 0.0}, offense=offense, items=items,
+                  created=created, saved=saved)
+
+
+def tie_out_value_ledger(inputs: HockeyGameInputs, ledger: Ledger, tol: float = 1e-8) -> None:
+    """Raises TieOutError unless the value model's identities hold."""
+    scores = box_score(inputs)
+    for side in ("home", "away"):
+        by_player = sum(p["points"] for p in scores[side])
+        if abs(by_player - ledger.raw[side]) > 1e-5:
+            raise TieOutError(f"{side}: player points {by_player} != team total {ledger.raw[side]}")
+        if abs(ledger.created[side] + ledger.saved[side] - ledger.raw[side]) > tol:
+            raise TieOutError(f"{side}: created + saved != team total")
+        if ledger.offense[side] < -tol:
+            raise TieOutError(f"{side}: negative net value")
+    if abs((ledger.offense["home"] - ledger.offense["away"]) - (ledger.raw["home"] - ledger.raw["away"])) > tol:
+        raise TieOutError("net value differential differs from the credit differential")

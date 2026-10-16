@@ -33,13 +33,14 @@ from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimEven
 from fantasy_sports.sports.hockey import pipeline
 from fantasy_sports.sports.hockey.models import GameEvent, NhlStandingsSnapshot
 from fantasy_sports.sports.hockey.simulator import loader, model, progressive
-from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger
+from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger, build_value_ledger
 from fantasy_sports.sports.hockey.simulator.division import CLOCK_TIMEZONE, REAL_PERIOD, Division, division_table
 from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
 from fantasy_sports.sports.hockey.simulator.timeline import filler_shots, place as timeline_place
 from fantasy_sports.sports.hockey.simulator.model import (
     MAX_SHOT_EVENTS_PER_SIDE,
-    ADAPTER_ID, ADAPTER_VERSION, DEFAULT_WINDOW_SECONDS, NOISE_CAP, PERIOD_SECONDS, PERIODS, CountingGame, HockeyGameInputs,
+    ADAPTER_ID, ADAPTER_VERSION, NOISE_CAP, WINDOW_ADAPTER_VERSION, DEFAULT_WINDOW_SECONDS, VALUE_NOISE_CAP, PERIOD_SECONDS, PERIODS,
+    CountingGame, HockeyGameInputs,
     SideInput,
 )
 from fantasy_sports.sports.hockey.simulator.progressive import restrict
@@ -176,7 +177,7 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         lineup = {"home": freeze_lineup(db, home, window_real), "away": freeze_lineup(db, away, window_real)}
         state = {"lineup": lineup, "selections": {}, "locked_at": first_kickoff.isoformat(), "schedule_verified": True}
         opening = SimEventInput(1, "period_start", 1, 0, None, 0, 0, 0, 0, "Period 1 begins", {})
-        base = {"adapter": ADAPTER_ID, "adapter_version": ADAPTER_VERSION, "seed": seed, "published": "by_period",
+        base = {"adapter": ADAPTER_ID, "adapter_version": WINDOW_ADAPTER_VERSION, "model": "value", "seed": seed, "published": "by_period",
                 "teams": {"home": {"team_id": home.id, "name": home.name}, "away": {"team_id": away.id, "name": away.name}},
                 "window": {"window_index": daily_game.window_index, "start": daily_game.calendar_date.isoformat(),
                            "end": daily_game.calendar_date_end.isoformat()},
@@ -187,6 +188,9 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         opened = True
     prov = dict(sim.provenance or {})
     state = prov["window_state"]
+    # Windows are simulated by the value model (docs/hockey_simulator_scoring.md). A game that already published periods under the
+    # earlier fixed-total model keeps that model to its last period, so one game never mixes the two.
+    use_value = (sim.published_periods or 0) == 0 or prov.get("model") == "value"
 
     # ---- a lineup frozen before the whole schedule was known (older games) is resolved again, once, while nothing is published ----
     if (sim.published_periods or 0) == 0 and schedule_verified and not state.get("schedule_verified"):
@@ -239,11 +243,11 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
             break
         if not all(real_period_complete(db, games[s.game_id], s.period) for s in chunk):
             break
-        inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state)
+        inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state, use_value)
         prev = _last_totals(db, sim)
-        events, norm, summary = progressive.build_period(inputs, division, k, seed, daily_game.id, prev)
+        events, norm, summary = progressive.build_period(inputs, division, k, seed, daily_game.id, prev, value_model=use_value)
         through = restrict(inputs, division, set(range(1, k + 1)))
-        new_prov = _provenance(prov, state | {"selections": selections}, division, counting, through, summary, norm, k)
+        new_prov = _provenance(prov, state | {"selections": selections}, division, counting, through, summary, norm, k, use_value)
         service.append_period(db, sim, k, events, new_prov)
         prov, published = new_prov, k
         new_periods.append(k)
@@ -261,7 +265,7 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         # The read-outs are conveniences: a failure here is recorded (live box score) and must never stop a period publishing.
         try:
             fresh["live_shots"] = _live_shots(db, daily_game, home, away, assets, side_of, counting, selections, state, division,
-                                              published, seed)
+                                              published, seed, use_value)
             fresh["sim_progress"] = _sim_progress(db, games, division, published, now)
         except Exception as e:
             fresh["engine_error"] = f"{type(e).__name__}: {e}"[:300]
@@ -287,7 +291,7 @@ def _sim_progress(db: Session, games: dict, division: Division, published: int, 
 
 def _live_shots(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team, assets: dict, side_of: dict,
                 counting: list[CountingGame], selections: dict, state: dict, division: Division, published: int,
-                seed: int) -> list[list]:
+                seed: int, use_value: bool = True) -> list[list]:
     """Shots the simulator WILL publish for the periods it has not published yet, as [side, fantasy game second]: real
     shot attempts, the shots behind earned goal credit, and the filler shots (their own seeded stream, so identical to
     what the publish adds). Goals the scoreboard invents (inverted errors, team goals, the tie-break) are the only
@@ -295,11 +299,11 @@ def _live_shots(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team
     the real periods are played, long before the simulation runs. Pure read: nothing here is a score."""
     if published >= PERIODS or not selections:
         return []
-    inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state)
+    inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state, use_value)
     out: list[list] = []
     for k in range(published + 1, PERIODS + 1):
         only = restrict(inputs, division, {k})
-        ledger = build_ledger(only)
+        ledger = (build_value_ledger if use_value else build_ledger)(only)
         for side in ("home", "away"):
             attempts = sorted(only.side(side).attempts, key=lambda a: (-a.xg, a.attempt_id))[:MAX_SHOT_EVENTS_PER_SIDE]
             for a in attempts:
@@ -315,11 +319,12 @@ def _live_shots(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team
 
 
 def _inputs(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team, assets: dict, side_of: dict,
-            counting: list[CountingGame], selections: dict, state: dict) -> HockeyGameInputs:
+            counting: list[CountingGame], selections: dict, state: dict, use_value: bool = True) -> HockeyGameInputs:
     """The credit of every starter's counting game, tagged and split by side. Credit of real periods that have not
     been published yet is filtered out later by `restrict`; credit of games other than the counting game never enters."""
     chosen = {a: s["game_id"] for a, s in ((int(k), v) for k, v in selections.items())}
-    lines, attempts = loader._credits_for(db, {a: assets[a] for a in chosen}, sorted(set(chosen.values())), tag_games=True)
+    credits_for = loader._value_lines_for if use_value else loader._credits_for
+    lines, attempts = credits_for(db, {a: assets[a] for a in chosen}, sorted(set(chosen.values())), tag_games=True)
     lines = [l for l in lines if chosen.get(l.asset_id) == l.game_id]
     attempts = [a for a in attempts if chosen.get(a.asset_id) == a.game_id]
     sides = {}
@@ -333,8 +338,10 @@ def _inputs(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team, as
 
 
 def _provenance(prov: dict, state: dict, division: Division, counting: list[CountingGame], through: HockeyGameInputs,
-                summary: dict, norm: progressive.PeriodNorm, k: int) -> dict:
+                summary: dict, norm: progressive.PeriodNorm, k: int, use_value: bool = True) -> dict:
     out = dict(prov)
+    if use_value:
+        out["model"], out["adapter_version"] = "value", WINDOW_ADAPTER_VERSION
     out["window_state"] = state
     out["wall_clock"] = division.wall_clock().to_dict()
     out["division"] = division_table(
@@ -349,7 +356,7 @@ def _provenance(prov: dict, state: dict, division: Division, counting: list[Coun
     winner = "home" if norm.home_goals > norm.away_goals else "away" if norm.away_goals > norm.home_goals else None
     out["normalization"] = {
         "home_goals": norm.home_goals, "away_goals": norm.away_goals, "expected_margin": round(norm.expected_margin, 6),
-        "noise": round(norm.noise, 6), "cap": NOISE_CAP, "tiebreak_side": norm.tiebreak_side,
+        "noise": round(norm.noise, 6), "cap": 2 * VALUE_NOISE_CAP if use_value else NOISE_CAP, "tiebreak_side": norm.tiebreak_side,
         "upset": bool(k == PERIODS and raw_leader and winner and raw_leader != winner), "periods": history}
     out["periods_published"] = k
     out["inputs_digest"] = _digest(state, counting)

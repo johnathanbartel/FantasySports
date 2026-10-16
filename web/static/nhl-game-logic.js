@@ -132,7 +132,7 @@
   }
 
   const ROLE_COLUMNS = [
-    ['shooter', 'Goals'], ['primary_assist', 'A1'], ['secondary_assist', 'A2'], ['blocker', 'Blocks'], ['goalie', 'Goalie'],
+    ['shooter', 'Shots'], ['primary_assist', 'A1'], ['secondary_assist', 'A2'], ['blocker', 'Blocks'], ['hitter', 'Hits'], ['takeaway', 'Take'], ['goalie', 'Saves'],
   ];
 
   function fmtPoints(v) {
@@ -181,7 +181,12 @@
     const n = p.normalization || {};
     const lines = [`Built by ${p.adapter || 'unknown adapter'} v${p.adapter_version || '?'} with seed ${p.seed == null ? '?' : p.seed}.`];
     if (p.raw) lines.push(`Raw credit: home ${fmtPoints(p.raw.home)}, away ${fmtPoints(p.raw.away)} (margin ${fmtPoints(p.raw.margin)}).`);
-    if (p.offense) lines.push(`After turning opponent errors into chances: home ${p.offense.home.toFixed(2)}, away ${p.offense.away.toFixed(2)}.`);
+    if (p.value) {
+      const v = p.value;
+      lines.push(`Value created: home ${v.created.home.toFixed(2)}, away ${v.created.away.toFixed(2)}. Saved by goalies: home ${v.saved.home.toFixed(2)}, away ${v.saved.away.toFixed(2)}.`);
+      lines.push(`Net value after saves (any excess a goalie saved goes to his own team): home ${v.net.home.toFixed(2)}, away ${v.net.away.toFixed(2)} → expected goals home ${v.expected_goals.home.toFixed(2)}, away ${v.expected_goals.away.toFixed(2)}.`);
+    }
+    if (p.offense && !p.value) lines.push(`After turning opponent errors into chances: home ${p.offense.home.toFixed(2)}, away ${p.offense.away.toFixed(2)}.`);
     if (n.expected_margin != null) lines.push(`Expected goal margin ${n.expected_margin.toFixed(2)}; bounded variation ${fmtPoints(n.noise)} goals (limit ±${n.cap}).`);
     if (n.upset) lines.push('This result was an upset: the scoreboard winner trailed on raw credit, within the allowed window.');
     if (n.tiebreak_side) lines.push(`The rounded score was level; a deciding goal went to ${n.tiebreak_side}.`);

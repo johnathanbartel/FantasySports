@@ -219,8 +219,10 @@ def main() -> None:
                 code = module.main([str(x) for x in argv])
             return code, buf.getvalue()
 
-        code, out = run(audit_hockey_lineups, "--league", league_id)
+        code, out = run(audit_hockey_lineups, "--league", league_id, "--all")
         check(code == 0 and "3 window games" in out and "[frozen, differs]" in out, "the audit script prints every window game with its status")
+        code, out = run(audit_hockey_lineups, "--league", league_id, "--since", "2026-01-01")
+        check("1 window games" in out and "not started" not in out, "by default only games with a simulation are audited, not the unplayed rest of the season's schedule")
         code, out = run(audit_hockey_lineups, "--league", league_id + 999)
         check(code == 2 and f"{league_id}:" in out, "a wrong league id is refused and the real league ids are listed (a game id is not a league id)")
 
@@ -234,18 +236,38 @@ def main() -> None:
             sim.published_periods = 1
             db.commit()
         check(audit()["status"] == "locked, differs", "(the audit now calls it locked and wrong)")
-        code, out = run(resimulate_hockey_games, "--league", league_id)
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01")
         with SessionLocal() as db:
             check(code == 0 and "DRY RUN" in out and service.get_sim(db, dg_id) is not None, "without --yes the re-simulation only reports and changes nothing")
-        code, out = run(resimulate_hockey_games, "--league", league_id, "--game", dg_id + 1000, "--yes")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--game", dg_id + 1000, "--yes")
         with SessionLocal() as db:
             check("Nothing to do" in out and service.get_sim(db, dg_id) is not None, "another game id is left alone, even with --yes")
-        code, out = run(resimulate_hockey_games, "--league", league_id, "--yes")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--yes")
         with SessionLocal() as db:
             check("Voided 1 game" in out and service.get_sim(db, dg_id) is None and db.get(SeriesDailyGame, dg_id).status == "SCHEDULED",
                   "with --yes the flagged game is voided, ready to be simulated again")
-        code, out = run(resimulate_hockey_games, "--league", league_id, "--yes")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--yes")
         check("Nothing to do" in out, "a game that is not flagged is never touched")
+
+        # ---- a game published under the earlier fixed-total scoring is only voided when asked ------------------------------------------------------
+        tick(at(SUN, 13, 40))                           # simulate it again (value model), then make it look like an old-model game with a period out
+        with SessionLocal() as db:
+            sim = service.get_sim(db, dg_id)
+            check(sim is not None and sim.provenance["window_state"]["schedule_verified"] is True, "(the voided game was created again on the next tick)")
+            prov = dict(sim.provenance)
+            prov.pop("model", None)
+            service.update_provenance(db, sim, prov)
+            sim.published_periods = 1
+            db.commit()
+        check(audit()["status"] == "old scoring model", "the audit calls a game published before the value model 'old scoring model'")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--yes")
+        with SessionLocal() as db:
+            check("Nothing to do" in out and service.get_sim(db, dg_id) is not None, "without --old-model such a game is left alone")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--old-model")
+        check("DRY RUN" in out and "would be voided" in out, "with --old-model a dry run lists it")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--old-model", "--yes")
+        with SessionLocal() as db:
+            check("Voided 1 game" in out and service.get_sim(db, dg_id) is None, "with --old-model --yes it is voided, to be simulated again by the value model")
         print("lineup freeze checks passed")
 
 

@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT / "src"))
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--league", type=int, required=True, help="league id (not a game id)")
+    parser.add_argument("--since", help="only windows ending on or after this date (YYYY-MM-DD); default: the last 7 days")
+    parser.add_argument("--all", action="store_true", help="every window game of the league, including the whole unplayed season (slow on a remote database)")
     args = parser.parse_args(argv)
 
     from sqlalchemy import text
@@ -42,7 +44,11 @@ def main(argv: list[str] | None = None) -> int:
             for league_id, name in rows:
                 print(f"  {league_id}: {name}")
             return 2
-        games = lineup_audit.lineup_audit(db, args.league)
+        import datetime
+        since = None if args.all else (datetime.date.fromisoformat(args.since) if args.since else datetime.date.today() - datetime.timedelta(days=7))
+        print(f"Auditing started games in windows ending on or after {since}..." if since else "Auditing every window game, played or not (this can take a long time)...", flush=True)
+        games = lineup_audit.lineup_audit(db, args.league, since=since, started_only=not args.all,
+                                          progress=lambda done, total, gid: print(f"  {done}/{total} (game #{gid})", flush=True))
         db.rollback()
 
     counts: dict[str, int] = {}

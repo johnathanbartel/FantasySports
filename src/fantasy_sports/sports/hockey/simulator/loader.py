@@ -103,6 +103,68 @@ def _credits_for(db: Session, assets: dict, game_ids: list[int], tag_games: bool
     return lines, attempts
 
 
+def _value_lines_for(db: Session, assets: dict, game_ids: list[int], tag_games: bool = False):
+    """(credit lines, no attempts) of the VALUE model for `assets` (asset id -> Player) in the real games, built straight from the
+    stored shots and play-by-play. Every action creates value:
+
+      * a shot on goal (saved or scored) is worth its xG: the shooter keeps the part the assists do not take; a goal's assists share
+        ASSIST_SHARE of the xG (primary 2/3, secondary 1/3; one assist takes it all). Who assisted is read from the stored goal credit.
+      * a block is worth the xG it prevented (the stored block credit); a hit HIT_VALUE; a takeaway TAKEAWAY_VALUE.
+      * a goalie's save is worth the xG of the shot he stopped (xGSA); a goal against costs him nothing here: the shot's value already
+        counts for the shooter, and a save is what takes that value away (attribution.build_value_ledger).
+
+    Every shot is a line group, so the shots themselves are the shot count and no separate attempts are returned."""
+    from collections import defaultdict
+    from fantasy_sports.sports.hockey.simulator.model import ASSIST_SHARE, HIT_VALUE, TAKEAWAY_VALUE
+
+    lines: list[CreditLine] = []
+    if not (assets and game_ids):
+        return lines, []
+    ids = set(assets)
+
+    def line(line_id, group_id, asset_id, role, points, second, shot=None, game_id=None):
+        player = assets[asset_id]
+        lines.append(CreditLine(
+            line_id=line_id, group_id=group_id, asset_id=asset_id, player_name=player.full_name,
+            position=po.GROUP_BY_POSITION.get(player.position, player.position), role=role, points=points,
+            real_second=second, xg=None if shot is None else shot.pre_shot_xg, is_goal=bool(shot is not None and shot.is_goal),
+            empty_net=bool(shot is not None and shot.is_empty_net), game_id=game_id if tag_games else None))
+
+    assists: dict[int, dict[str, int]] = defaultdict(dict)
+    for credit in (db.query(ShotCredit).join(Shot, Shot.id == ShotCredit.shot_id)
+                   .filter(Shot.game_id.in_(game_ids), ShotCredit.role.in_(("primary_assist", "secondary_assist")))):
+        assists[credit.shot_id][credit.role] = credit.draftable_asset_id
+    for shot in db.query(Shot).filter(Shot.game_id.in_(game_ids)).order_by(Shot.id):
+        xg = max(shot.pre_shot_xg or 0.0, 0.0)
+        second, group = _second(shot.clock), f"shot:{shot.id}"
+        given = [(role, assists[shot.id][role]) for role in ("primary_assist", "secondary_assist") if role in assists.get(shot.id, {})]
+        shares = {}
+        if given:
+            pool = xg * ASSIST_SHARE
+            parts = (pool,) if len(given) == 1 else (pool * 2 / 3, pool / 3)
+            shares = {role: part for (role, _), part in zip(given, parts)}
+        shooter_value = xg - sum(shares.values())
+        if shot.shooter_asset_id in ids and shooter_value > EPS:
+            line(f"v:{shot.id}:shooter", group, shot.shooter_asset_id, "shooter", shooter_value, second, shot, shot.game_id)
+        for role, asset_id in given:
+            if asset_id in ids and shares[role] > EPS:
+                line(f"v:{shot.id}:{role}", group, asset_id, role, shares[role], second, shot, shot.game_id)
+        if shot.goalie_asset_id in ids and not shot.is_goal and not shot.is_empty_net and xg > EPS:
+            line(f"v:{shot.id}:goalie", group, shot.goalie_asset_id, "goalie", xg, second, shot, shot.game_id)
+    for credit, event in (db.query(EventCredit, GameEvent).join(GameEvent, GameEvent.id == EventCredit.event_id)
+                          .filter(GameEvent.game_id.in_(game_ids), EventCredit.role == "blocker",
+                                  EventCredit.draftable_asset_id.in_(list(ids))).order_by(EventCredit.id)):
+        if credit.credit_points > EPS:
+            line(f"v:ec:{credit.id}", f"event:{event.id}", credit.draftable_asset_id, "blocker", credit.credit_points,
+                 _second(event.game_seconds), None, event.game_id)
+    for event in (db.query(GameEvent).filter(GameEvent.game_id.in_(game_ids), GameEvent.event_type.in_(("hit", "takeaway")),
+                                             GameEvent.actor_asset_id.in_(list(ids))).order_by(GameEvent.id)):
+        role, value = ("hitter", HIT_VALUE) if event.event_type == "hit" else ("takeaway", TAKEAWAY_VALUE)
+        if value > EPS:
+            line(f"v:ev:{event.id}", f"event:{event.id}", event.actor_asset_id, role, value, _second(event.game_seconds), None, event.game_id)
+    return lines, []
+
+
 def _side(db: Session, team: Team, game_ids: list[int]) -> tuple[SideInput, dict[int, int | None]]:
     """(the side's inputs, starter asset id -> his real team id)."""
     roster = po.roster_players(db, team.id)

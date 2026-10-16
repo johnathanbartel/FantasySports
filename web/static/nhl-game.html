@@ -759,7 +759,7 @@ async function finalScreen() {
     const head = G.ROLE_COLUMNS.map(([, l]) => `<th class="num" scope="col">${l}</th>`).join('');
     const rows = bs.rows.map(r => `<tr><th scope="row">${esc(r.name)} <span class="muted">${esc(r.position)}</span></th>${r.cells.map(v => `<td class="num ${v != null && v < 0 ? 'neg' : ''}">${v == null ? '' : G.fmtPoints(v)}</td>`).join('')}<td class="num ${r.total < 0 ? 'neg' : ''}"><strong>${G.fmtPoints(r.total)}</strong></td></tr>`).join('');
     return `<div class="tbl-wrap"><table class="table"><caption style="text-align:left;font-weight:600;padding:6px 0">${esc(n[side])} · credit ${G.fmtPoints(bs.total)}${bs.tiesOut ? '' : ' (does not tie out)'}</caption>
-      <thead><tr><th scope="col">Player</th>${head}<th class="num" scope="col">Total</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="muted">No credited players.</td></tr>'}</tbody></table></div>`;
+      <thead><tr><th scope="col">Player</th>${head}<th class="num" scope="col">Total</th></tr></thead><tbody>${rows || '<tr><td colspan="9" class="muted">No credited players.</td></tr>'}</tbody></table></div>`;
   }).join('');
   $('screen').innerHTML = boardHtml(b, {status: 'FINAL'}, {clock: 'Final', fraction: 1}) +
     `<div class="cols"><section class="card elev-sm" style="padding:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2>${tickerHtml(events)}</section>
