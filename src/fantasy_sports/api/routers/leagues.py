@@ -23,8 +23,8 @@ from fantasy_sports.platform import calendar, game_lock, lineups, scoring, seaso
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
     AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
-    RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition,
-    Team, Universe, User, Week, WeeklyMatchup,
+    RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition, SeasonDues,
+    Team, Trade, Universe, User, Week, WeeklyMatchup,
 )
 from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_spots
@@ -101,6 +101,8 @@ def create_league(
 
     if payload.draft_type not in ("recruit", "snake"):
         raise HTTPException(400, f"Invalid draft_type '{payload.draft_type}'")
+    if payload.league_type == "PAID" and not payload.annual_dues_cents:
+        raise HTTPException(400, "A paid league needs an annual dues amount")
 
     hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
                                or payload.points_per_tie != 1 or payload.playoff_teams is not None)
@@ -132,6 +134,9 @@ def create_league(
         keeper_deadline=payload.keeper_deadline if payload.league_format == "keeper" else None,
         pick_trade_seasons=payload.pick_trade_seasons,
         pick_trading_enabled=payload.pick_trading_enabled,
+        league_type=payload.league_type,
+        annual_dues_cents=payload.annual_dues_cents,
+        trade_deadline=payload.trade_deadline,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -375,6 +380,20 @@ def update_league_settings(
         league.playoff_teams = payload.playoff_teams
     if payload.pick_trading_enabled is not None:
         league.pick_trading_enabled = payload.pick_trading_enabled
+    if payload.league_type is not None and payload.league_type != league.league_type:
+        # Unsafe midseason: open trades were judged under the old rules and dues records are obligations to keep.
+        open_trades = db.query(Trade).filter(Trade.league_id == league.id, Trade.status.in_(("proposed", "voting"))).count()
+        has_dues = db.query(SeasonDues).filter_by(league_id=league.id).count()
+        if not league.offseason and (open_trades or has_dues):
+            raise HTTPException(409, "The league type can't change midseason while trades are pending or dues have been "
+                                     "recorded. Wait for the offseason.")
+        league.league_type = payload.league_type          # existing dues records and picks are never touched
+    if "annual_dues_cents" in sent:
+        league.annual_dues_cents = payload.annual_dues_cents
+    if "trade_deadline" in sent:
+        league.trade_deadline = payload.trade_deadline
+    if league.league_type == "PAID" and not league.annual_dues_cents:
+        raise HTTPException(400, "A paid league needs an annual dues amount")
     if payload.pick_trade_seasons is not None:
         league.pick_trade_seasons = payload.pick_trade_seasons
     if "keeper_limit" in sent:

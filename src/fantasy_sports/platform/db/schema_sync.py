@@ -28,6 +28,16 @@ def ensure_latest_schema(engine):
             if "league_mode" not in cols:
                 conn.execute(text("ALTER TABLE leagues ADD COLUMN league_mode VARCHAR(20) DEFAULT 'standard' NOT NULL"))
 
+            for name, ddl in (("league_type", "VARCHAR(4) DEFAULT 'FREE' NOT NULL"), ("annual_dues_cents", "INTEGER"),
+                              ("trade_deadline", "DATETIME")):
+                if name not in cols:
+                    conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
+
+        if "trades" in tables:
+            cols = {c["name"] for c in insp.get_columns("trades")}
+            if "failure_reason" not in cols:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN failure_reason VARCHAR(500)"))
+
         if "simulator_games" in tables:
             cols = {c["name"] for c in insp.get_columns("simulator_games")}
             if "published_periods" not in cols:
@@ -54,6 +64,8 @@ def ensure_latest_schema(engine):
 
         if "teams" in tables:
             cols = {c["name"] for c in insp.get_columns("teams")}
+            if "eliminated_season" not in cols:
+                conn.execute(text("ALTER TABLE teams ADD COLUMN eliminated_season INTEGER"))
             if "division_id" not in cols:
                 conn.execute(text("ALTER TABLE teams ADD COLUMN division_id INTEGER REFERENCES divisions(id)"))
 

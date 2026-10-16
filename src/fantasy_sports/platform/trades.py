@@ -13,7 +13,9 @@ import datetime
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import game_lock, pecking_order, pick_trading
+import logging
+
+from fantasy_sports.platform import game_lock, pecking_order, pick_trading, trade_eligibility
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
@@ -24,10 +26,13 @@ from fantasy_sports.platform.db.models.core import (
     Team,
     Trade,
     TradeItem,
+    TradeApproval,
     TradeVote,
 )
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import roster_limit
+
+log = logging.getLogger(__name__)
 
 
 PickRef = tuple[int, int, int]      # (season_number of the draft, round, original team id)
@@ -115,8 +120,12 @@ def check_majority_vote(db: Session, trade: Trade, now: datetime.datetime) -> bo
     rejections = db.query(TradeVote).filter_by(trade_id=trade.id, vote="reject").count()
 
     if approvals >= majority_needed:
+        # A trade that also needs a sign-off (or dues) waits; execute_trade rechecks everything and records a refusal.
+        if trade_eligibility.evaluate_trade(db, trade, now).status in (
+                trade_eligibility.AWAITING_PAYMENT, trade_eligibility.AWAITING_COMMISSIONER_APPROVAL):
+            return False
         execute_trade(db, trade, now)
-        return True
+        return trade.status == "accepted"
     elif rejections > (total_teams - majority_needed):
         trade.status = "rejected"
         trade.resolved_at = now
@@ -182,8 +191,16 @@ def propose_trade(
     if c_post_count > limit:
         raise ValueError(f"{counterparty_team.name} would exceed roster limit ({limit})")
 
+    # CFG-06: deadline, eliminated teams, dues and special approvals (platform/trade_eligibility.py).
+    eligibility = trade_eligibility.evaluate_proposal(db, league, proposer_team, counterparty_team, send_asset_ids,
+                                                      receive_asset_ids, send_picks, receive_picks, now)
+    if not eligibility.executable:
+        raise ValueError(eligibility.message())
+    special = trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE in eligibility.approval_requirements
+
     has_ai = proposer_team.is_ai_owned or counterparty_team.is_ai_owned
-    status = "voting" if has_ai else "proposed"
+    voting = has_ai or special       # a special trade is put to the league whoever owns the teams
+    status = "voting" if voting else "proposed"
 
     trade = Trade(
         league_id=league.id,
@@ -207,7 +224,8 @@ def propose_trade(
                          pick_original_team_id=original))
     db.flush()
 
-    if has_ai:
+    log.info("trade %s proposed league=%s status=%s requirements=%s", trade.id, league.id, status, eligibility.approval_requirements)
+    if voting:
         # Proposer automatically votes approve
         db.add(TradeVote(trade_id=trade.id, team_id=proposer_team.id, user_id=user_id, vote="approve", created_at=now))
         db.flush()
@@ -261,6 +279,42 @@ def vote_trade(
     return trade
 
 
+def commissioner_decide(
+    db: Session, trade: Trade, user_id: int, decision: str, now: datetime.datetime | None = None
+) -> Trade:
+    """The commissioner's sign-off (or rejection) on a free-league trade involving an eliminated team.
+
+    Only the league's commissioner may; it cannot stand in for the league vote (execution still needs the majority), and a
+    commissioner who manages a team in the trade cannot decide it (the conflict-of-interest policy is still open)."""
+    now = now or datetime.datetime.utcnow()
+    league = db.get(League, trade.league_id)
+    if league is None or league.commissioner_user_id != user_id:
+        raise PermissionError("Only the league commissioner can do that")
+    if decision not in ("approve", "reject"):
+        raise ValueError("Decision must be 'approve' or 'reject'")
+    if trade.status != "voting":
+        raise ValueError(f"Trade is not awaiting approval (current status: {trade.status})")
+    res = trade_eligibility.evaluate_trade(db, trade, now)
+    if trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE not in res.approval_requirements:
+        raise ValueError("This trade doesn't need commissioner sign-off")
+    if any(t.owner_user_id == user_id for t in (trade.proposer_team, trade.counterparty_team)):
+        raise ValueError("The commissioner manages a team in this trade, so can't sign it off - the league hasn't set a "
+                         "conflict-of-interest policy yet")
+    if trade_eligibility.commissioner_approval(db, trade.id) is not None:
+        raise ValueError("The commissioner has already decided this trade")
+    db.add(TradeApproval(trade_id=trade.id, approval_type=trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE,
+                         user_id=user_id, decision=decision, created_at=now))
+    db.flush()
+    log.info("trade %s commissioner %s by user %s", trade.id, decision, user_id)
+    if decision == "reject":
+        trade.status = "rejected"
+        trade.resolved_at = now
+        db.flush()
+    else:
+        check_majority_vote(db, trade, now)
+    return trade
+
+
 def cancel_trade(
     db: Session, trade: Trade, team: Team, now: datetime.datetime | None = None
 ) -> Trade:
@@ -280,6 +334,20 @@ def cancel_trade(
 def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = None) -> None:
     """Executes an approved trade: transfers roster entries, updates pecking order/lineups, logs transactions."""
     now = now or datetime.datetime.utcnow()
+    db.refresh(trade, with_for_update=True)       # serialises concurrent executions of the same trade
+    if trade.status not in ("proposed", "voting"):
+        raise ValueError(f"Trade is already {trade.status}")
+    # CFG-06: recheck the deadline, ownership, elimination, dues, votes and sign-off right before anything moves.
+    eligibility = trade_eligibility.evaluate_trade(db, trade, now)
+    if eligibility.status == trade_eligibility.BLOCKED:
+        trade.status = "blocked"
+        trade.failure_reason = eligibility.message()[:500]
+        trade.resolved_at = now
+        db.flush()
+        log.warning("trade %s blocked at execution: %s", trade.id, eligibility.blocking_codes)
+        return
+    if not eligibility.executable:
+        raise ValueError(eligibility.message() or "This trade still needs approval")
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
     p_items = _players(trade, p_team.id)
@@ -353,6 +421,7 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     trade.status = "accepted"
     trade.resolved_at = now
     db.flush()
+    log.info("trade %s executed league=%s", trade.id, trade.league_id)
 
     if p_team.is_ai_owned:
         ai_roster.set_lines(db, p_team, now)

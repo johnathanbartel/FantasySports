@@ -63,13 +63,16 @@ class LeagueCreateRequest(BaseModel):
     keeper_deadline: datetime.datetime | None = None
     pick_trade_seasons: int = Field(default=2, ge=1, le=10)
     pick_trading_enabled: bool = True
+    league_type: Literal["FREE", "PAID"] = "FREE"
+    annual_dues_cents: int | None = Field(default=None, ge=1, le=10_000_000)
+    trade_deadline: datetime.datetime | None = None
     # Hockey only (rejected for other sports when changed from the defaults).
     standings_mode: Literal["points", "win_pct"] = "points"
     points_per_win: int = Field(default=3, ge=0, le=20)
     points_per_tie: int = Field(default=1, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # None = 33% of the teams, rounded
 
-    _keeper_deadline = field_validator("keeper_deadline")(_naive_utc)
+    _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
 
 class LeagueRenameRequest(BaseModel):
@@ -86,13 +89,16 @@ class LeagueSettingsRequest(BaseModel):
     keeper_limit: int | None = Field(default=None, ge=0, le=100)
     pick_trade_seasons: int | None = Field(default=None, ge=1, le=10)
     pick_trading_enabled: bool | None = None
+    league_type: Literal["FREE", "PAID"] | None = None
+    annual_dues_cents: int | None = Field(default=None, ge=1, le=10_000_000)    # send null to clear
+    trade_deadline: datetime.datetime | None = None                          # send null to clear
     standings_mode: Literal["points", "win_pct"] | None = None
     points_per_win: int | None = Field(default=None, ge=0, le=20)
     points_per_tie: int | None = Field(default=None, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # send null to go back to the default
     keeper_deadline: datetime.datetime | None = None
 
-    _deadline = field_validator("keeper_deadline")(_naive_utc)
+    _deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
 
 class TeamSetupItem(BaseModel):
@@ -175,6 +181,9 @@ class LeagueOut(ORMModel):
     keepers_finalized: bool
     pick_trade_seasons: int
     pick_trading_enabled: bool
+    league_type: str
+    annual_dues_cents: int | None
+    trade_deadline: datetime.datetime | None
     standings_mode: str
     points_per_win: int
     points_per_tie: int
