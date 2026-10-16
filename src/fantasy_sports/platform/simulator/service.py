@@ -219,6 +219,60 @@ class StateView:
     is_complete: bool = False
     can_skip: bool = False
     provenance: dict | None = None
+    # Games published period by period (the NHL windows): the viewer is never veiled; the clock is public and the score is
+    # whatever the viewer has watched. `period_phases` has one entry per period (see period_phases()).
+    progressive: bool = False
+    published_periods: int | None = None
+    period_phases: list | None = None
+
+
+def is_progressive(sim: SimulatorGame) -> bool:
+    """Published period by period (the NHL windows). Such a game has no spoiler veil: the clock is public, the score is
+    only what the viewer has watched, and highlights are watched one published period at a time, in order."""
+    return sim.published_periods is not None
+
+
+def period_marks(events: list[SimulatorEvent]) -> dict[int, int]:
+    """period -> seq of the last event whose period it is (its period_end, or game_end for the last). The opening
+    period_start of the next period is published with the previous one but belongs to the next period."""
+    marks: dict[int, int] = {}
+    for e in events:
+        marks[e.period] = max(marks.get(e.period, 0), e.seq)
+    return marks
+
+
+def watch_bound(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int) -> int:
+    """The highest seq a viewer of a progressive game may fetch: the end of the first published period they have not yet
+    watched (so they can watch it, and replay every earlier one), or everything published when all are watched."""
+    marks = period_marks(events)
+    for k in range(1, (sim.published_periods or 0) + 1):
+        if marks.get(k, 0) > cursor:
+            return marks[k]
+    return len(events)
+
+
+def period_phases(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int, now: datetime.datetime) -> list[dict]:
+    """One entry per period: upcoming / in_progress (live, with the time left) / simulating (the real periods are over
+    and the simulation has not published it yet: the intermission) / ready (published, not watched) / watched."""
+    shape = shape_of(sim)
+    marks = period_marks(events)
+    published = sim.published_periods or 0
+    clock = shape.wall_clock
+    local = clock.local(now) if clock is not None and sim.status == st.LIVE else None
+    out = []
+    for k in range(1, shape.periods + 1):
+        if k <= published:
+            last = marks.get(k, 0)
+            out.append({"period": k, "phase": "watched" if cursor >= last else "ready", "seconds_remaining": 0, "last_seq": last})
+            continue
+        progress = clock.progress(k, local) if local is not None else (1.0 if sim.status == st.FINAL else 0.0)
+        if progress >= 1.0:
+            out.append({"period": k, "phase": "simulating", "seconds_remaining": 0, "last_seq": 0})
+        elif progress > 0.0:
+            out.append({"period": k, "phase": "in_progress", "seconds_remaining": int(round(shape.period_seconds * (1.0 - progress))), "last_seq": 0})
+        else:
+            out.append({"period": k, "phase": "upcoming", "seconds_remaining": shape.period_seconds, "last_seq": 0})
+    return out
 
 
 def _public_seq(sim: SimulatorGame, events: list[SimulatorEvent], now: datetime.datetime) -> int:
@@ -235,6 +289,37 @@ def unpublished_state(daily_game: SeriesDailyGame) -> StateView:
                      status=st.SCHEDULED, veiled=True)
 
 
+def _progressive_state(sim: SimulatorGame, shape: st.GameShape, events: list[SimulatorEvent], reveal: SimulatorReveal | None,
+                       now: datetime.datetime) -> StateView:
+    total = len(events)
+    cursor = min(reveal.cursor_seq, total) if reveal else 0
+    if reveal is not None and reveal.mode == st.SKIPPED and sim.status == st.FINAL:
+        cursor = total
+    phases = period_phases(sim, events, cursor, now)
+    view = StateView(
+        daily_game_id=sim.daily_game_id, published=True, contract_version=sim.contract_version, status=sim.status,
+        veiled=False, reveal_mode=reveal.mode if reveal else None, periods=shape.periods, period_seconds=shape.period_seconds,
+        window_seconds=shape.window_seconds, progressive=True, published_periods=sim.published_periods, period_phases=phases)
+    if sim.status == st.FINAL:
+        view.period, view.seconds_remaining = shape.periods, 0
+    elif shape.wall_clock is not None:
+        view.period, view.seconds_remaining = shape.wall_clock.clock(shape.wall_clock.local(now), shape.period_seconds)
+    else:
+        view.period, view.seconds_remaining = st.clock_at(shape, st.public_elapsed(shape, sim.status, sim.started_at, now))
+    view.shown_seq = cursor
+    view.cursor_seq = reveal.cursor_seq if reveal else 0
+    if cursor > 0:                     # nothing is shown (the client prints "?") until a period has been watched
+        totals = st.totals_through(events, cursor)
+        view.home_score, view.away_score = totals.home_score, totals.away_score
+        view.home_shots, view.away_shots = totals.home_shots, totals.away_shots
+    view.can_skip = any(p["phase"] == "ready" for p in phases) or (sim.status == st.FINAL and cursor < total)
+    view.has_more = sim.status == st.LIVE or cursor < total
+    view.is_complete = sim.status == st.FINAL and cursor == total
+    if view.is_complete:
+        view.provenance = dict(sim.provenance)
+    return view
+
+
 def view_state(db: Session, sim: SimulatorGame, user_id: int, now: datetime.datetime) -> StateView:
     """The viewer's scoreboard. Read-only apart from the idempotent sync."""
     events = _events(db, sim)
@@ -244,6 +329,8 @@ def view_state(db: Session, sim: SimulatorGame, user_id: int, now: datetime.date
     mode = reveal.mode if reveal else None
     total = len(events)
     public = _public_seq(sim, events, now)
+    if is_progressive(sim) and sim.status != st.SCHEDULED:
+        return _progressive_state(sim, shape, events, reveal, now)
     if reveal is not None and mode == st.WATCHING and sim.status == st.LIVE and public > reveal.cursor_seq:
         reveal.cursor_seq = public  # a live viewer has now been shown everything so far; the cursor never rewinds
         db.flush()
@@ -287,10 +374,13 @@ def view_events(db: Session, sim: SimulatorGame, user_id: int, now: datetime.dat
     sync(db, sim, now, events)
     reveal = get_reveal(db, sim, user_id)
     bound = st.reveal_bound(sim.status, reveal.mode if reveal else None, _public_seq(sim, events, now), len(events))
+    if is_progressive(sim) and bound:
+        bound = min(bound, watch_bound(sim, events, reveal.cursor_seq if reveal else 0))
     limit = max(1, min(limit, MAX_EVENT_PAGE))
     page = [e for e in events if after_seq < e.seq <= bound][:limit]
     more = bool(page) and page[-1].seq < bound
-    if page and reveal is not None and reveal.mode == st.WATCHING and sim.status == st.LIVE             and page[-1].seq > reveal.cursor_seq:
+    if (page and reveal is not None and reveal.mode == st.WATCHING and sim.status == st.LIVE and not is_progressive(sim)
+            and page[-1].seq > reveal.cursor_seq):
         reveal.cursor_seq = page[-1].seq  # live events handed out count as shown
         db.flush()
     return page, bound, more
@@ -318,6 +408,8 @@ def progress(db: Session, sim: SimulatorGame, user_id: int, now: datetime.dateti
     if reveal is None:
         raise SimulatorError("Watch the game before reporting progress", "NOT_WATCHING")
     ceiling = st.reveal_bound(sim.status, reveal.mode, _public_seq(sim, events, now), len(events))
+    if is_progressive(sim) and ceiling:
+        ceiling = min(ceiling, watch_bound(sim, events, reveal.cursor_seq))
     if seq > ceiling:
         raise SimulatorError("That event is not available to you yet", "AHEAD_OF_GAME")
     if seq > reveal.cursor_seq:
@@ -331,6 +423,19 @@ def skip(db: Session, sim: SimulatorGame, user_id: int, now: datetime.datetime) 
     events = _events(db, sim)
     sync(db, sim, now, events)
     shape = shape_of(sim)
+    if is_progressive(sim) and sim.status == st.LIVE:
+        # Reveal every period published so far (not a box score: the game is not over). The viewer stays in follow mode.
+        target_seq = period_marks(events).get(sim.published_periods or 0, 0)
+        if target_seq <= 0:
+            raise SimulatorError("No period has been simulated yet", "NOT_FINAL")
+        reveal = get_reveal(db, sim, user_id)
+        if reveal is None:
+            reveal = SimulatorReveal(simulator_game_id=sim.id, user_id=user_id, mode=st.WATCHING, cursor_seq=target_seq)
+            db.add(reveal)
+        elif target_seq > reveal.cursor_seq:
+            reveal.cursor_seq = target_seq
+        db.flush()
+        return reveal
     if sim.status == st.FINAL:
         target_seq = len(events)
     elif sim.status == st.LIVE:

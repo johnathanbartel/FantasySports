@@ -11,6 +11,8 @@
   function screenFor(state) {
     if (!state || !state.published) return 'unpublished';
     if (state.status === 'SCHEDULED') return 'scheduled';
+    // Games published period by period (the NHL windows) have no veil: a game centre until the viewer has watched it all.
+    if (state.progressive) return state.is_complete || (state.status === 'FINAL' && state.reveal_mode === 'SKIPPED') ? 'final' : 'hub';
     if (state.veiled) return state.status === 'LIVE' ? 'live-veiled' : 'final-veiled';
     if (state.reveal_mode === 'SKIPPED') return 'final';
     if (state.status === 'LIVE') return 'live';
@@ -187,7 +189,39 @@
     return lines;
   }
 
-  const api = {REPLAY_MS, MIN_GAP_MS, screenFor, controlsFor, clockLabel, clockAt, mergeEvents, boardAt, replayTimeline,
+  // ---- game centre (period-by-period games) ----------------------------------------------------------------------------
+  // phases: upcoming / in_progress / simulating / ready / watched (see platform/simulator/service.period_phases).
+  function mmss(seconds) { const s = Math.max(0, Math.round(seconds)); return `${Math.floor(s / 60)}:${pad2(s % 60)}`; }
+
+  // The live clock line. It is public: it never hints at what happened.
+  function liveClockLabel(state, elapsedSinceReadSeconds) {
+    if (!state || state.period == null || state.seconds_remaining == null) return '—';
+    if (state.status === 'FINAL') return 'Final';
+    const left = Math.max(0, state.seconds_remaining - (elapsedSinceReadSeconds || 0));
+    return left === 0 ? `End of period ${state.period}` : `Period ${state.period} — ${mmss(left)} left`;
+  }
+
+  // What one period's tile says: {title, detail, tone, action}. `action` is 'watch' | 'replay' | null.
+  function phaseTile(p, firstReady, elapsedSinceReadSeconds) {
+    const n = p.period;
+    switch (p.phase) {
+      case 'upcoming': return {title: `Period ${n}`, detail: 'Not started', tone: 'idle', action: null};
+      case 'in_progress': return {title: `Period ${n} in progress`, detail: `${mmss(Math.max(0, p.seconds_remaining - (elapsedSinceReadSeconds || 0)))} left`, tone: 'live', action: null};
+      case 'simulating': return {title: `Intermission`, detail: `Period ${n} is being simulated…`, tone: 'sim', action: null};
+      case 'ready': return {title: firstReady === n ? `Watch period ${n} now!` : `Period ${n} ready`, detail: firstReady === n ? 'Highlights are ready. Watching updates the score.' : `Watch period ${firstReady} first.`, tone: firstReady === n ? 'ready' : 'idle', action: firstReady === n ? 'watch' : null};
+      default: return {title: `Period ${n}`, detail: 'Watched', tone: 'done', action: 'replay'};
+    }
+  }
+
+  function firstReadyPeriod(phases) { const p = (phases || []).find(x => x.phase === 'ready'); return p ? p.period : null; }
+
+  // Everything the hub needs to decide whether to redraw (not just refresh the clock).
+  function phaseSignature(state) { return (state.period_phases || []).map(p => p.phase).join('|') + '#' + (state.shown_seq || 0) + '#' + state.status; }
+
+  // The events of one period (its period_start through its period_end / game_end).
+  function periodEvents(events, period) { return (events || []).filter(e => e.period === period); }
+
+  const api = {mmss, liveClockLabel, phaseTile, firstReadyPeriod, phaseSignature, periodEvents, REPLAY_MS, MIN_GAP_MS, screenFor, controlsFor, clockLabel, clockAt, mergeEvents, boardAt, replayTimeline,
                delayBefore, replayMode, isCheckpoint, backoffMs, pollDelayMs, connectionMessage, describeError,
                ROLE_COLUMNS, fmtPoints, boxScoreRows, provenanceLines, fmtNominal, divisionPeriods};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
