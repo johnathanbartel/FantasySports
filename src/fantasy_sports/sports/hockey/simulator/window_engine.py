@@ -5,7 +5,10 @@ The live engine for NHL window games (docs/hockey_spec.md sections 5, 6.1 and 6.
 `tick(db, daily_game, now_utc)` is idempotent and safe to call as often as you like; each call does whatever is due:
 
   1. LOCK. At the window's first real kickoff the lineup is frozen: each side's starters from the pecking order, where
-     every scheduled goalie counts as confirmed (there is no start evidence before the games). Nothing changes after.
+     every scheduled goalie counts as confirmed (there is no start evidence before the games). Nothing changes after, except
+     that a starter who got NO ice time in his counting game is replaced by the next player on the pecking order
+     (`apply_substitutions`): before any period is published the replacement simply takes his place; once periods are
+     published they cannot change, so the replacement's game is added to the last period (which then waits for it).
   2. SELECT. Each starter's counting game is chosen at HIS lock - the kickoff of his earliest game in the window - by
      Best Matchup (fewer NHL standings points, read from the stored snapshot). The choice is stored and never redone.
   3. DIVIDE. The chronological division is built from the counting games (a still-undecided player is projected on his
@@ -20,7 +23,7 @@ Pure with respect to the clock: `now_utc` is a parameter. Only the database is t
 from __future__ import annotations
 
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
@@ -31,7 +34,7 @@ from fantasy_sports.platform.db.models.core import (
 from fantasy_sports.platform.simulator import service, wallclock
 from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimEventInput, SimScript
 from fantasy_sports.sports.hockey import pipeline
-from fantasy_sports.sports.hockey.models import GameEvent, NhlStandingsSnapshot
+from fantasy_sports.sports.hockey.models import GameEvent, NhlStandingsSnapshot, PlayerGameToi
 from fantasy_sports.sports.hockey.simulator import loader, model, progressive
 from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger, build_value_ledger
 from fantasy_sports.sports.hockey.simulator.division import CLOCK_TIMEZONE, REAL_PERIOD, Division, division_table
@@ -121,6 +124,136 @@ def frozen_player(db: Session, by_asset: dict, asset_id: int):
     return asset.player if asset is not None else None
 
 
+def sat_out(db: Session, game: Game, asset_id: int) -> bool:
+    """Whether the player got no ice time in this real game: the game is final, its boxscore ice times are stored, and he has no
+    positive time in them (a dressed backup goalie who never played is stored with 0; a healthy scratch has no row). A game whose
+    ice times were never stored tells us nothing, so nobody has sat out of it."""
+    if game.status != "final":
+        return False
+    times = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=game.id).all())
+    return bool(times) and times.get(asset_id, 0) <= 0
+
+
+def _counting_game_of(db: Session, universe_id: int, asset_id: int, player, relevant: list[Game], games: dict,
+                      selections: dict, now: datetime.datetime) -> Game | None:
+    """The real game that counts for a player: his stored choice, else the one decided at his lock; None before his lock."""
+    rec = selections.get(str(asset_id))
+    if rec is not None:
+        return games.get(rec["game_id"])
+    cands = [g for g in relevant if player.real_team_id in (g.home_team_id, g.away_team_id)]
+    if cands and (len(cands) == 1 or now >= min(g.kickoff_at for g in cands)):
+        return games[select_game(db, universe_id, asset_id, cands, player.real_team_id)["game_id"]]
+    return None
+
+
+def find_replacement(db: Session, universe_id: int, team: Team, out_asset: int, taken: set[int], window_real: set[int],
+                     relevant: list[Game], games: dict, selections: dict, now: datetime.datetime) -> int | None:
+    """Asset id of the next player on the pecking order of the position group of `out_asset`: ranked, on the active roster, with a
+    game in the window, not already in the lineup (`taken`), and not known to have sat out his own counting game. His game
+    need not be final."""
+    roster = po.roster_players(db, team.id)
+    by_asset = {aid: (pid, pl) for pid, (aid, pl) in roster.items()}
+    out_player = frozen_player(db, {aid: pl for aid, (_, pl) in by_asset.items()}, out_asset)
+    if out_player is None:
+        return None
+    order = {g: [pid for pid in ids if pid in roster] for g, ids in po.load_order(db, team.id).items()}
+    group = next((g for g in po.GROUPS if out_player.id in order[g]), po.GROUP_BY_POSITION.get(out_player.position))
+    for pid in order.get(group, []):
+        asset_id, player = roster[pid]
+        if asset_id in taken or player.real_team_id not in window_real:
+            continue
+        game = _counting_game_of(db, universe_id, asset_id, player, relevant, games, selections, now)
+        if game is not None and sat_out(db, game, asset_id):
+            continue
+        return asset_id
+    return None
+
+
+def apply_substitutions(db: Session, universe_id: int, state: dict, teams: dict[str, Team], window_real: set[int],
+                        relevant: list[Game], games: dict, now: datetime.datetime, late: bool) -> dict:
+    """The window state after replacing every starter who got no ice time in his counting game (`sat_out`) with the next player
+    on his pecking order. Pure with respect to `state` (a new dict is returned; the same one when nobody sat out).
+
+      early (nothing published yet)  the replacement takes the starter's place in the lineup; his stored choice is dropped.
+      late (periods published)       published periods never change, so the starter stays and the replacement is ADDED, his
+                                     three real periods all going to the last fantasy period (Division.build `late`); that
+                                     period then waits until his game's periods are complete too.
+
+    A replacement who sits out in turn is replaced the same way on a later call ."""
+    lineup = {side: list(ids) for side, ids in state["lineup"].items()}
+    selections = dict(state["selections"])
+    subs = list(state.get("subs") or [])
+    late_ids = list(state.get("late") or [])
+    replaced = {s["out"] for s in subs}
+    before = len(subs)
+    for side, team in teams.items():
+        for asset_id in list(lineup[side]):
+            rec = selections.get(str(asset_id))
+            game = games.get(rec["game_id"]) if rec else None
+            if asset_id in replaced or game is None or not sat_out(db, game, asset_id):
+                continue
+            taken = set(lineup[side]) | replaced
+            sub = find_replacement(db, universe_id, team, asset_id, taken, window_real, relevant, games, selections, now)
+            if sub is None:
+                continue
+            replaced.add(asset_id)
+            subs.append({"out": asset_id, "in": sub, "side": side, "mode": "late" if late else "early", "game_id": game.id,
+                         "at": now.isoformat(timespec="seconds")})
+            if late:
+                lineup[side].append(sub)
+                late_ids.append(sub)
+            else:
+                lineup[side][lineup[side].index(asset_id)] = sub
+                selections.pop(str(asset_id), None)
+    if len(subs) == before:
+        return state
+    return state | {"lineup": lineup, "selections": selections, "subs": subs, "late": late_ids}
+
+
+@dataclass
+class _Frame:
+    """What the engine works from at one moment: the lineup's players, their counting games and the division built from them."""
+    side_of: dict = field(default_factory=dict)
+    assets: dict = field(default_factory=dict)
+    selections: dict = field(default_factory=dict)
+    counting: list = field(default_factory=list)
+    division: Division | None = None
+    n: int = 0                      # counting games pooled into the division (a late replacement is not)
+
+
+def _assemble(db: Session, universe_id: int, state: dict, rosters: dict, relevant: list[Game], games: dict, labels: dict,
+              now: datetime.datetime) -> _Frame:
+    """The starters, their candidate games and (when locked) counting games, and the division they make."""
+    frame = _Frame()
+    real_team_of = {}
+    for side in ("home", "away"):
+        by_asset = {aid: pl for _, (aid, pl) in rosters[side].items()}
+        for aid in state["lineup"][side]:
+            pl = frozen_player(db, by_asset, aid)
+            if pl is None:
+                continue
+            frame.side_of[aid], frame.assets[aid], real_team_of[aid] = side, pl, pl.real_team_id
+    selections = frame.selections = dict(state["selections"])
+    for aid in sorted(frame.assets):
+        cands = [g for g in relevant if real_team_of[aid] in (g.home_team_id, g.away_team_id)]
+        if not cands:
+            continue
+        lock_at = min(g.kickoff_at for g in cands)
+        rec = selections.get(str(aid))
+        if rec is None and (len(cands) == 1 or now >= lock_at):
+            rec = select_game(db, universe_id, aid, cands, real_team_of[aid])
+            selections[str(aid)] = rec
+        chosen = games[rec["game_id"]] if rec else min(cands, key=lambda g: (g.kickoff_at, g.id))   # projected until locked
+        at_home = real_team_of[aid] == chosen.home_team_id
+        frame.counting.append(CountingGame(aid, frame.assets[aid].full_name, frame.side_of[aid], chosen.id, chosen.kickoff_at,
+                                           f"vs {labels.get(chosen.away_team_id, '')}" if at_home else f"@ {labels.get(chosen.home_team_id, '')}",
+                                           frame.assets[aid].position or ""))
+    late = set(state.get("late") or [])
+    frame.division = Division.build(frame.counting, late=late)
+    frame.n = len(frame.counting) - sum(1 for c in frame.counting if c.asset_id in late)
+    return frame
+
+
 def real_period_complete(db: Session, game: Game, period: int) -> bool:
     """Whether the stored feed shows real period `period` of `game` complete: the game is final, or play from a later
     period exists. Overtime is part of period 3, so period 3 needs a final game."""
@@ -204,33 +337,17 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         prov["window_state"] = state
         service.update_provenance(db, sim, prov)
 
+    # ---- a starter who got no ice time is replaced; with nothing published yet the replacement simply takes his place ----------------------
+    teams = {"home": home, "away": away}
+    window_real = {t for g in relevant for t in (g.home_team_id, g.away_team_id)}
     # ---- the starters, their candidate games and (when locked) counting games ---------------------------------------
-    side_of, assets, real_team_of = {}, {}, {}
-    for side in ("home", "away"):
-        by_asset = {aid: pl for _, (aid, pl) in rosters[side].items()}
-        for aid in state["lineup"][side]:
-            pl = frozen_player(db, by_asset, aid)
-            if pl is None:
-                continue
-            side_of[aid], assets[aid], real_team_of[aid] = side, pl, pl.real_team_id
-    selections = dict(state["selections"])
-    counting: list[CountingGame] = []
-    for aid in sorted(assets):
-        cands = [g for g in relevant if real_team_of[aid] in (g.home_team_id, g.away_team_id)]
-        if not cands:
-            continue
-        lock_at = min(g.kickoff_at for g in cands)
-        rec = selections.get(str(aid))
-        if rec is None and (len(cands) == 1 or now >= lock_at):
-            rec = select_game(db, universe_id, aid, cands, real_team_of[aid])
-            selections[str(aid)] = rec
-        chosen = games[rec["game_id"]] if rec else min(cands, key=lambda g: (g.kickoff_at, g.id))   # projected until locked
-        at_home = real_team_of[aid] == chosen.home_team_id
-        counting.append(CountingGame(aid, assets[aid].full_name, side_of[aid], chosen.id, chosen.kickoff_at,
-                                     f"vs {labels.get(chosen.away_team_id, '')}" if at_home else f"@ {labels.get(chosen.home_team_id, '')}",
-                                     assets[aid].position or ""))
-    division = Division.build(counting)
-    n = len(counting)
+    frame = _assemble(db, universe_id, state, rosters, relevant, games, labels, now)
+    if (sim.published_periods or 0) == 0:
+        replaced = apply_substitutions(db, universe_id, state | {"selections": frame.selections}, teams, window_real, relevant, games, now, late=False)
+        if replaced.get("subs") != state.get("subs"):
+            state = replaced
+            frame = _assemble(db, universe_id, state, rosters, relevant, games, labels, now)
+    assets, side_of, selections, counting, division, n = frame.assets, frame.side_of, frame.selections, frame.counting, frame.division, frame.n
 
     # ---- publish every period that is due -----------------------------------------------------------------------------
     published = sim.published_periods or 0
@@ -243,6 +360,17 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
             break
         if not all(real_period_complete(db, games[s.game_id], s.period) for s in chunk):
             break
+        if k == PERIODS and published > 0:
+            # The last chance to replace a starter who sat out after periods were published: the replacement's game joins this period, which waits for it.
+            late_state = apply_substitutions(db, universe_id, state | {"selections": selections}, teams, window_real, relevant, games, now, late=True)
+            if late_state is not state and late_state.get("subs") != state.get("subs"):
+                state = late_state
+                frame = _assemble(db, universe_id, state, rosters, relevant, games, labels, now)
+                assets, side_of, selections, counting, division, n = (frame.assets, frame.side_of, frame.selections,
+                                                                       frame.counting, frame.division, frame.n)
+                chunk = division.chunks[k - 1]
+                if not all(real_period_complete(db, games[s.game_id], s.period) for s in chunk):
+                    break
         inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state, use_value)
         prev = _last_totals(db, sim)
         events, norm, summary = progressive.build_period(inputs, division, k, seed, daily_game.id, prev, value_model=use_value)
