@@ -91,6 +91,17 @@ def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     return _state_out(view, game)
 
 
+@router.get("/leagues/{league_id}/lineup-audit")
+def read_lineup_audit(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Every window game of the league: the lineup that was frozen against what the pecking order gives on the schedule stored
+    now. Read-only."""
+    from fantasy_sports.sports.hockey.simulator import lineup_audit
+    try:
+        return {"league_id": league_id, "games": lineup_audit.lineup_audit(db, league_id)}
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/games/{daily_game_id}/live-box")
 def read_live_box(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Transparency view of an NHL window matchup: which real periods fell in which fantasy period and the credit earned
