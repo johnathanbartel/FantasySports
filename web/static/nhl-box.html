@@ -100,6 +100,19 @@ function playersHtml(d) {
   return side('away') + side('home');
 }
 
+function lineupsHtml(d) {
+  return ['away', 'home'].map(s => {
+    const t = d.lineups[s];
+    const groups = t.groups.map(g => `<tr><th scope="row">${g.group} <span class="muted">(${g.need} dress, ranks 1–${g.depth})</span></th>
+      <td>${g.ranked.length ? g.ranked.map(r => `<div style="${r.has_game ? '' : 'opacity:.6;'}">${r.frozen_starter ? '★ ' : ''}<strong>${r.rank}.</strong> ${esc(r.player)} <span class="muted">${esc(r.position)} · ${esc(r.real_team)} · ${r.games.length ? r.games.map(x => esc(x.opponent + ' ' + x.date.slice(5))).join(', ') : 'no game this window'}${r.starter_now && !r.frozen_starter ? ' · would start now' : ''}${!r.starter_now && r.frozen_starter ? ' · started (frozen)' : ''}</span></div>`).join('') : '<span class="muted">Nobody ranked</span>'}
+      ${g.vacancies.length ? `<div class="pill2 warn" style="margin-top:4px">${g.vacancies.length} vacancy: ${esc(g.vacancies.join(', '))}</div>` : ''}</td></tr>`).join('');
+    return `<h3 style="font-size:16px;margin:var(--space-3) 0 4px">${esc(t.team)} · ${t.frozen_starters} starters · ${t.ranked_count} of ${t.roster_size} rostered players ranked</h3>
+      <div class="tbl-wrap"><table class="table"><tbody>${groups}</tbody></table></div>
+      ${t.dropped_from_matchup && t.dropped_from_matchup.length ? `<p style="margin:6px 0 0"><strong>Frozen starters the matchup is NOT counting:</strong> ${t.dropped_from_matchup.map(x => esc(x.player) + ' (' + esc(x.reason) + ')').join('; ')}</p>` : ''}
+      ${t.unranked.length ? `<p class="muted" style="margin:6px 0 0"><strong>Rostered but not ranked (cannot start):</strong> ${t.unranked.map(u => esc(u.player) + ' (' + esc(u.position) + ', ' + u.games + ' game' + (u.games === 1 ? '' : 's') + ')').join('; ')}</p>` : ''}`;
+  }).join('');
+}
+
 function render(d) {
   const n = d.teams;
   $('title').textContent = `${n.away} at ${n.home}`;
@@ -121,6 +134,9 @@ function render(d) {
     <ul class="muted" style="margin:var(--space-2) 0 0">${d.notes.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
   </section>
   <section class="card sec"><h2>Starters by fantasy period</h2>${playersHtml(d)}</section>
+  <section class="card sec"><h2>Pecking order and lineup</h2>
+    <p class="muted" style="margin:0">Each team ranks its players per position (C 3 deep, W and D 6 deep, G 3 deep). A player with no game in this window sits out, and the next ranked player with a game steps in; wings and defensemen are pooled, so the top two with a game dress. ★ = in the lineup frozen at first kickoff. A ranked slot with no game, or a short roster, leaves a vacancy.</p>
+    ${lineupsHtml(d)}</section>
   <section class="card sec"><h2>Which real periods are in which fantasy period</h2>
     <p class="muted" style="margin:0">Faded rows are projected on a player's earliest game because his counting game has not locked yet.</p>
     ${d.periods.map(p => periodHtml(p, n)).join('')}</section>

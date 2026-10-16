@@ -123,6 +123,28 @@ def main() -> None:
             dg_id = db.query(SeriesDailyGame).filter_by(window_index=1).first().id
             ids = {k: g.id for k, g in games.items()}
 
+        # A line-1 winger with no game this window, and a ranked backup who has one: the backup must dress, and the box score must say so.
+        with SessionLocal() as db:
+            nhl_u = db.query(Universe).filter_by(code="nhl").one()
+            sea = RealTeam(universe_id=nhl_u.id, name="SEA", external_ref="SEA")
+            db.add(sea)
+            db.flush()
+            lw = db.query(Player).filter_by(full_name="One LW2").one()
+            lw.real_team_id = sea.id
+            bos = db.query(RealTeam).filter_by(external_ref="BOS").one()
+            backup = Player(universe_id=nhl_u.id, real_team_id=bos.id, full_name="One Backup W", position="LW")
+            db.add(backup)
+            db.flush()
+            asset = DraftableAsset(universe_id=nhl_u.id, asset_type="player", player_id=backup.id)
+            db.add(asset)
+            db.flush()
+            fan1 = db.query(Team).filter_by(name="Fan1").one()
+            db.add(RosterEntry(team_id=fan1.id, draftable_asset_id=asset.id))
+            db.flush()
+            rw = db.query(Player).filter_by(full_name="One RW3").one()
+            po.replace_groups(db, fan1, {"W": [lw.id, rw.id, backup.id]})
+            db.commit()
+
         def tick(local: datetime.datetime):
             with SessionLocal() as db:
                 dg = db.get(SeriesDailyGame, dg_id)
@@ -165,6 +187,13 @@ def main() -> None:
         check(all(r["projected"] for p in d["periods"] for r in p["rows"] if r["asset_id"] in {pl["asset_id"] for pl in d["players"] if pl["selection"]["state"].startswith("projected")}),
               "undecided players are flagged as projected")
         tie(d)
+
+        w = next(g for g in d["lineups"]["home"]["groups"] if g["group"] == "W")
+        check([(r["player"], r["has_game"], r["starter_now"]) for r in w["ranked"]] == [("One LW2", False, False), ("One RW3", True, True), ("One Backup W", True, True)],
+              "the pecking order report shows the idle line-1 winger sitting out and his ranked backup stepping in")
+        check(not w["vacancies"] and d["lineups"]["home"]["ranked_count"] == 7 and all(len(t["groups"]) == 4 for t in d["lineups"].values()),
+              "...with no vacancy, and the report covers every group of both teams")
+        check(d["counting_games"] == 12, "the backup fills the slot, so the matchup still has 12 starters")
 
         # ---- after the lock ------------------------------------------------------------------------------------------------
         set_game("A", "live")
@@ -213,6 +242,16 @@ def main() -> None:
         check(d["published_periods"] == 3 and all(p["published"] and not p["waiting_on"] for p in d["periods"]), "after the last period all three are published, nothing waiting")
         check(all(p["ties_out"] for p in d["players"]), "the final box score ties out for every player")
         tie(d)
+        # ---- a frozen starter who leaves the active roster after the lock is named, not silently lost -----------------------------------
+        with SessionLocal() as db:
+            tuch = db.query(Player).filter_by(full_name="One D4").one()
+            fan1 = db.query(Team).filter_by(name="Fan1").one()
+            entry = [e for e in db.query(RosterEntry).filter_by(team_id=fan1.id) if e.draftable_asset.player_id == tuch.id][0]
+            entry.on_injured_list = True
+            db.commit()
+        d = box(at(TUE, 22, 30))
+        gone = d["lineups"]["home"]["dropped_from_matchup"]
+        check([g["player"] for g in gone] == ["One D4"] and d["counting_games"] == 11, "a frozen starter put on the injured list is named as not counted, and the matchup shrinks to 11")
         print("live box score checks passed")
 
 

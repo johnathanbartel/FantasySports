@@ -22,7 +22,7 @@ import types
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po
-from fantasy_sports.platform.db.models.core import SeriesDailyGame, Team
+from fantasy_sports.platform.db.models.core import DraftableAsset, SeriesDailyGame, Team
 from fantasy_sports.platform.simulator import service
 from fantasy_sports.sports.hockey.models import GameEvent
 from fantasy_sports.sports.hockey.simulator import loader, window_engine
@@ -44,6 +44,44 @@ def _feed_period(db: Session, game_id: int) -> int:
     """Highest real period that has any stored play-by-play (0 when the feed is empty)."""
     row = db.query(GameEvent.period).filter(GameEvent.game_id == game_id).order_by(GameEvent.period.desc()).first()
     return int(row[0]) if row and row[0] is not None else 0
+
+
+def _lineups(db: Session, teams: dict, rosters: dict, lineup: dict, games: dict, labels: dict, window_real: set) -> dict:
+    """How the pecking order turned into starters, per side: every ranked player with his games in the window and whether he
+    started (frozen lineup) or would start if the lineup were resolved right now, the vacancy reasons, and the rostered
+    players who are not ranked at all (they can never start). Read-only; the rule is po.resolve_starters, unchanged."""
+    out = {}
+    for side, team in teams.items():
+        roster = rosters[side]
+        order = {g: [pid for pid in ids if pid in roster] for g, ids in po.load_order(db, team.id).items()}
+        scheduled = frozenset(pid for pid, (_, pl) in roster.items() if pl.real_team_id in window_real)
+        now_res = po.resolve_starters(order, scheduled, scheduled)
+        frozen = set(lineup.get(side, []))
+
+        def games_of(pl):
+            return [{"date": g.kickoff_at.date().isoformat(),
+                     "opponent": ("vs " + labels.get(g.away_team_id, "")) if g.home_team_id == pl.real_team_id else ("@ " + labels.get(g.home_team_id, "")),
+                     "status": g.status}
+                    for g in sorted(games.values(), key=lambda g: (g.kickoff_at, g.id)) if pl.real_team_id in (g.home_team_id, g.away_team_id)]
+
+        ranked_ids = {pid for ids in order.values() for pid in ids}
+        groups = []
+        for group in po.GROUPS:
+            rows = []
+            for rank, pid in enumerate(order[group], start=1):
+                asset_id, pl = roster[pid]
+                rows.append({"rank": rank, "player": pl.full_name, "position": pl.position,
+                             "real_team": labels.get(pl.real_team_id, ""), "games": games_of(pl),
+                             "has_game": pid in scheduled, "frozen_starter": asset_id in frozen,
+                             "starter_now": pid in now_res.starters.get(group, [])})
+            groups.append({"group": group, "need": po.STARTERS[group], "depth": po.DEPTH[group], "ranked": rows,
+                           "vacancies": [v.reason for v in now_res.vacancies if v.position_group == group]})
+        out[side] = {
+            "team": team.name, "roster_size": len(roster), "ranked_count": len(ranked_ids), "groups": groups,
+            "frozen_starters": len(frozen),
+            "unranked": [{"player": pl.full_name, "position": pl.position, "real_team": labels.get(pl.real_team_id, ""),
+                          "games": len(games_of(pl))} for pid, (_, pl) in sorted(roster.items()) if pid not in ranked_ids]}
+    return out
 
 
 def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime) -> dict:
@@ -82,6 +120,8 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         lineup = {"home": window_engine.freeze_lineup(db, home, window_real), "away": window_engine.freeze_lineup(db, away, window_real)}
         stored_sel, frozen = {}, False
     out["lineup_frozen"] = frozen
+    out["lineups"] = _lineups(db, {"home": home, "away": away}, rosters, lineup, games, labels,
+                              {t for g in relevant for t in (g.home_team_id, g.away_team_id)})
     out["published_periods"] = (sim.published_periods or 0) if sim is not None else 0
     out["sim_status"] = sim.status if sim is not None else None
 
@@ -95,10 +135,21 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
     counting: list[CountingGame] = []
     chosen: dict[int, int] = {}
     pick: dict[int, dict] = {}
+    # Frozen starters the matchup no longer counts. window_engine.tick only counts a frozen starter who is still on the
+    # team's active roster and has a candidate game, so a starter who was dropped, traded or put on the injured list after the
+    # lock (or whose game left the stored schedule) silently shrinks the matchup. Say so, by name.
+    dropped: dict[str, list[dict]] = {"home": [], "away": []}
+    for side in ("home", "away"):
+        for aid in lineup[side]:
+            if aid not in assets:
+                asset = db.get(DraftableAsset, aid)
+                dropped[side].append({"player": asset.player.full_name if asset is not None and asset.player is not None else f"asset {aid}",
+                                      "reason": "no longer on the active roster (dropped, traded, or on the injured list since the lock)"})
     for aid in sorted(assets):
         cands = [g for g in relevant if real_team_of[aid] in (g.home_team_id, g.away_team_id)]
         if not cands:
             pick[aid] = {"candidates": [], "source": "no_games", "state": "no games in this window"}
+            dropped[side_of[aid]].append({"player": assets[aid].full_name, "reason": "no stored real game in this window"})
             continue
         lock_at = min(g.kickoff_at for g in cands)
         rec, state = stored_sel.get(str(aid)), "locked (stored)"
@@ -117,6 +168,8 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
             "candidates": [{"game_id": g.id, "kickoff": g.kickoff_at.isoformat(), "chosen": g.id == game.id,
                             "opponent": labels.get(g.away_team_id if real_team_of[aid] == g.home_team_id else g.home_team_id, "")}
                            for g in sorted(cands, key=lambda g: (g.kickoff_at, g.id))]}
+    for side in ("home", "away"):
+        out["lineups"][side]["dropped_from_matchup"] = dropped[side]
     if not counting:
         out.update(state="no_counting_games", note="No starter has a game in this window.", players=[], periods=[])
         return out
