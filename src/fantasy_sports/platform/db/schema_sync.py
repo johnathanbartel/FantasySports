@@ -66,6 +66,8 @@ def ensure_latest_schema(engine):
             cols = {c["name"] for c in insp.get_columns("teams")}
             if "eliminated_season" not in cols:
                 conn.execute(text("ALTER TABLE teams ADD COLUMN eliminated_season INTEGER"))
+            if "trade_plan" not in cols:
+                conn.execute(text("ALTER TABLE teams ADD COLUMN trade_plan VARCHAR(12) DEFAULT 'win_now' NOT NULL"))
             if "division_id" not in cols:
                 conn.execute(text("ALTER TABLE teams ADD COLUMN division_id INTEGER REFERENCES divisions(id)"))
 
