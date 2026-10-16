@@ -132,6 +132,44 @@ let failures = 0, pollTimer = null, stateTimer = null;
 let replay = {idx: 0, timeline: [], timer: null, playing: false, shown: 0};
 let reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 let tickTimer = null, hubTimer = null;
+
+// ---------- arena horn (highlight playback only) ----------
+// Synthesized with Web Audio, so there is no audio file. A goal is two long blasts, the end of a period one very long one.
+let hornOn = true, audioCtx = null;
+try { hornOn = localStorage.getItem('fsc_horn') !== 'off'; } catch (e) { /* storage unavailable: horn stays on */ }
+function setHorn(on) { hornOn = on; try { localStorage.setItem('fsc_horn', on ? 'on' : 'off'); } catch (e) { /* ignore */ } }
+function hornToggleHtml() { return `<label class="toggle"><input type="checkbox" ${hornOn ? 'checked' : ''} onchange="setHorn(this.checked)"> Arena horn</label>`; }
+function playHorn(blasts) {
+  if (!hornOn) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = audioCtx || new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    let t = audioCtx.currentTime + 0.02;
+    blasts.forEach(len => {
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.35, t + 0.05);
+      gain.gain.setValueAtTime(0.35, t + len - 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      gain.connect(audioCtx.destination);
+      [110, 113, 220, 331].forEach((f, i) => {
+        const o = audioCtx.createOscillator();
+        o.type = i < 2 ? 'sawtooth' : 'square';
+        o.frequency.value = f;
+        const g = audioCtx.createGain(); g.gain.value = i < 2 ? 0.5 : 0.15;
+        o.connect(g); g.connect(gain);
+        o.start(t); o.stop(t + len);
+      });
+      t += len + 0.15;
+    });
+  } catch (e) { /* audio is decoration; never break playback */ }
+}
+function hornFor(e) {
+  if (e.kind === 'score') playHorn([0.9, 1.3]);
+  else if (e.kind === 'period_end' || e.kind === 'game_end') playHorn([2.2]);
+}
 let hub = {readAt: 0, firstReady: null};
 let pr = null;      // the period highlights being watched: {k, evs, idx, timeline, timer, playing}
 let busy = false, token = 0;   // token invalidates timers from a previous screen
@@ -415,6 +453,7 @@ function renderReplay() {
          <button class="btn btn-secondary" type="button" data-act="reveal" ${done ? 'disabled' : ''}>Reveal everything</button>
          <button class="btn btn-secondary" type="button" data-act="skip">Skip to box score</button>
          <label class="toggle"><input type="checkbox" id="reduce" ${reduced ? 'checked' : ''}> Step manually (no animation)</label>
+         ${hornToggleHtml()}
        </div>
        <p class="muted" style="margin:0;font-size:13px">${reduced ? 'Manual mode: nothing moves until you press Next event.' : 'A full game replays in about 75 seconds.'} Your place is saved, so a reload resumes where you were.</p>
      </section>
@@ -448,6 +487,7 @@ function revealNext() {
   if (!e) return;
   replay.idx++;
   patchReplay();   // in place, so keyboard focus survives while the game plays
+  hornFor(e);
   if (e.kind === 'score') { announce(`${e.headline}. ${names().home} ${e.home_score}, ${names().away} ${e.away_score}.`); popScore(); }
   if (G.isCheckpoint(e)) saveProgress();
 }
@@ -625,6 +665,7 @@ function renderPR() {
          <button class="btn btn-secondary" type="button" data-pr="end" ${done ? 'disabled' : ''}>Show the whole period</button>
          <button class="btn btn-secondary" type="button" data-pr="back">Back to game centre</button>
          <label class="toggle"><input type="checkbox" id="reduce" ${reduced ? 'checked' : ''}> Step manually (no animation)</label>
+         ${hornToggleHtml()}
        </div>
        <p class="muted" style="margin:0;font-size:13px">${done ? 'Period over. Going back to the game centre updates your score.' : 'A period replays in about 25 seconds.'}</p>
      </section>
@@ -646,6 +687,7 @@ function revealPR() {
   if (!e) return;
   pr.idx++;
   patchPR();
+  hornFor(e);
   if (e.kind === 'score') { announce(`${e.headline}. ${names().home} ${e.home_score}, ${names().away} ${e.away_score}.`); popScore(); }
 }
 
