@@ -86,7 +86,23 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         state = sim.provenance["window_state"]
         print(f"Game #{dg.id} window {dg.calendar_date}..{dg.calendar_date_end}, published periods {sim.published_periods or 0}")
-        print(f"Replacements recorded: {state.get('subs') or 'none'}")
+        print(f"Replacements recorded: {len(state.get('subs') or [])}")
+        universe_id = window_engine._universe_id(db, dg.series.league_id)
+        window = window_engine.window_games(db, universe_id, dg.calendar_date, dg.calendar_date_end)
+
+        def label(asset_id):
+            a = db.get(DraftableAsset, asset_id)
+            return a.player.full_name if a is not None and a.player is not None else f"asset {asset_id}"
+
+        for sub in state.get("subs") or []:
+            out_asset = db.get(DraftableAsset, sub["out"])
+            team_id = out_asset.player.real_team_id if out_asset is not None and out_asset.player is not None else None
+            print(f"  {sub['side']}: {label(sub['out'])} OUT -> {label(sub['in'])} IN ({sub['mode']}, counting game {sub['game_id']}, at {sub['at']})")
+            for g in window:
+                if team_id in (g.home_team_id, g.away_team_id):
+                    rows = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=g.id).all())
+                    mark = "  <- counting game" if g.id == sub["game_id"] else ""
+                    print(f"      {label(sub['out'])} in game {g.id} ({g.kickoff_at:%m-%d %H:%M}, {g.status}): toi={rows.get(sub['out'])}{mark}")
         for side in ("home", "away"):
             print(f"\n{side}:")
             for aid in state["lineup"][side]:
