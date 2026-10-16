@@ -186,6 +186,10 @@
         </div>
       </div>
 
+      <div class="field" id="pick-trading-field" style="display:none">
+        <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="pick-trading-enabled" checked style="width:auto"> Allow teams to trade draft picks</label>
+        <span class="hint">Teams can trade picks for the next draft. Turn this off to keep picks with their original teams.</span>
+      </div>
       <div class="field" id="pick-trade-field" style="display:none">
         <label for="pick-trade-seasons">Seasons of draft picks that can be traded</label>
         <input type="number" id="pick-trade-seasons" min="1" max="10" value="2">
@@ -416,7 +420,10 @@ function updateSettingsFields() {
   const keeper = format === 'keeper', dynasty = format === 'dynasty';
   document.getElementById('league-format-hint').textContent = FORMAT_HINTS[format] || '';
   document.getElementById('keeper-settings-fields').style.display = keeper ? 'block' : 'none';
-  document.getElementById('pick-trade-field').style.display = (keeper || dynasty) ? 'flex' : 'none';
+  const picksFormat = format !== 'traditional_redraft';
+  const picksOn = document.getElementById('pick-trading-enabled').checked;
+  document.getElementById('pick-trading-field').style.display = picksFormat ? 'flex' : 'none';
+  document.getElementById('pick-trade-field').style.display = ((keeper || dynasty) && picksOn) ? 'flex' : 'none';
   document.getElementById('hockey-settings-fields').style.display = isNhl() ? 'block' : 'none';
   const size = Number(document.getElementById('league-size').value) || 0;
   const def = Math.max(1, Math.floor(size * 0.33 + 0.5));
@@ -425,6 +432,7 @@ function updateSettingsFields() {
     `Leave blank for the default: ${def} (33% of ${size} teams, rounded). Division winners take the top seeds and the rest of the field is seeded by rank (wild cards).`;
 }
 document.getElementById('league-format').onchange = updateSettingsFields;
+document.getElementById('pick-trading-enabled').onchange = updateSettingsFields;
 document.getElementById('league-size').oninput = updateSettingsFields;
 
 function leagueSettingsPayload() {
@@ -437,6 +445,7 @@ function leagueSettingsPayload() {
     const deadline = document.getElementById('keeper-deadline').value;
     out.keeper_deadline = deadline ? new Date(deadline).toISOString() : null;
   }
+  if (format !== 'traditional_redraft') out.pick_trading_enabled = document.getElementById('pick-trading-enabled').checked;
   if (format === 'keeper' || format === 'dynasty') out.pick_trade_seasons = num('pick-trade-seasons') || 2;
   if (isNhl()) {
     out.standings_mode = document.getElementById('standings-mode').value;

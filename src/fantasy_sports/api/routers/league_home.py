@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
-from fantasy_sports.platform import calendar, entitlements, free_agency, game_lock, rankings, season, waivers
+from fantasy_sports.platform import calendar, entitlements, free_agency, game_lock, pick_trading, rankings, season, waivers
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
@@ -110,6 +110,7 @@ class OverviewOut(BaseModel):
     has_rankings: bool = False          # College Football / College Basketball only, to start
     teams_set_schedule: bool = False    # likewise: only college teams negotiate their own schedules
     league_format: str = "traditional_redraft"
+    pick_trading_on: bool = False       # draft picks can be traded in this league (the Trades screen lists them)
     offseason: bool = False
     keepers_finalized: bool = True
     keeper_deadline: datetime.datetime | None = None    # naive UTC; Keeper leagues, shown on the roster page
@@ -182,7 +183,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
         is_college=college, draft_state=draft_state(db, league_id), draft_scheduled_at=league.draft_scheduled_at,
-        has_rankings=college, teams_set_schedule=college, league_format=league.league_format, offseason=league.offseason,
+        has_rankings=college, teams_set_schedule=college, league_format=league.league_format, pick_trading_on=pick_trading.enabled(league), offseason=league.offseason,
         keepers_finalized=league.keepers_finalized, keeper_deadline=league.keeper_deadline,
     )
 

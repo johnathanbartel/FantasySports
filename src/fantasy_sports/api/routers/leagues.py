@@ -131,6 +131,7 @@ def create_league(
         keeper_limit=payload.keeper_limit,
         keeper_deadline=payload.keeper_deadline if payload.league_format == "keeper" else None,
         pick_trade_seasons=payload.pick_trade_seasons,
+        pick_trading_enabled=payload.pick_trading_enabled,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -372,6 +373,8 @@ def update_league_settings(
             if payload.playoff_teams > max(teams, league.size):
                 raise HTTPException(400, f"A {max(teams, league.size)}-team league can't have {payload.playoff_teams} playoff teams")
         league.playoff_teams = payload.playoff_teams
+    if payload.pick_trading_enabled is not None:
+        league.pick_trading_enabled = payload.pick_trading_enabled
     if payload.pick_trade_seasons is not None:
         league.pick_trade_seasons = payload.pick_trade_seasons
     if "keeper_limit" in sent:

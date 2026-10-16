@@ -215,6 +215,22 @@ for fmt in ("keeper", "dynasty"):
     assert (4, 1, k1) in {key(p) for p in picks_of(lid_k, k0)} and (3, 2, k0) in {key(p) for p in picks_of(lid_k, k1)}
     assert propose(lid_k, k0, k1, send_picks=[(2, 4, k0)], receive_picks=[(2, 1, k1)]).status_code == 400, "only three rookie rounds"
 
+# The commissioner can switch pick trading off: nothing is tradeable, new trades with picks are refused, and a pick that has
+# already changed hands stays with its owner. Switching it back on restores everything.
+lid_o, (o0, o1, o2, o3) = make_league("Toggle", "keeper")
+run_draft(lid_o)
+assert propose(lid_o, o0, o1, send_picks=[(2, 1, o0)], receive_picks=[(2, 1, o1)]).status_code == 200
+assert client.get(f"/leagues/{lid_o}/overview").json()["pick_trading_on"] is True
+assert client.patch(f"/leagues/{lid_o}/settings", json={"pick_trading_enabled": False}, headers=H_OTHER).status_code == 403
+resp = client.patch(f"/leagues/{lid_o}/settings", json={"pick_trading_enabled": False}, headers=H)
+assert resp.status_code == 200 and resp.json()["pick_trading_enabled"] is False
+assert picks_of(lid_o, o0) == [], "nothing to trade while it is off"
+off = propose(lid_o, o0, o1, send_picks=[(2, 2, o0)], receive_picks=[(2, 2, o1)])
+assert off.status_code == 400 and "turned off" in off.json()["detail"], off.text
+assert client.get(f"/leagues/{lid_o}/overview").json()["pick_trading_on"] is False
+assert client.patch(f"/leagues/{lid_o}/settings", json={"pick_trading_enabled": True}, headers=H).json()["pick_trading_enabled"] is True
+assert len(picks_of(lid_o, o0)) == 6 and propose(lid_o, o0, o1, send_picks=[(2, 2, o0)], receive_picks=[(2, 2, o1)]).status_code == 200
+
 # Deleting a league clears its traded picks.
 assert client.delete(f"/leagues/{lid}", headers=H).status_code == 200
 db.expire_all()

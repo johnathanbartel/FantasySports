@@ -1398,7 +1398,7 @@ async function renderTrades() {
     tradeSelectedOppId = otherTeams[0]?.id || null;
   }
 
-  const picksTrade = ['future_pick_redraft', 'keeper', 'dynasty'].includes(ov.league_format);
+  const picksTrade = !!ov.pick_trading_on;
   const [tradeList, myRoster, oppRoster, myPicks, oppPicks] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/trades`),
     api(`/teams/${t.id}/roster`),
@@ -1988,11 +1988,14 @@ async function renderLeagueSettings() {
          <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}.</p>`)
       + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential. The division winners take the top seeds and the rest of the field is seeded by rank (wild cards).</p></div>`;
   }
-  if (isKeeper || isDynasty) {
+  if (lg.league_format !== 'traditional_redraft') {
+    const picksOn = lg.pick_trading_enabled;
     html += `<div class="card"><h3>Draft Pick Trading</h3>` + (isCommissioner
-      ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label> <button id="pick-trade-save">Save</button></p>`
-      : `<p>Picks for the next ${lg.pick_trade_seasons} draft${lg.pick_trade_seasons === 1 ? '' : 's'} can be traded.</p>`)
-      + `<p class="muted">Pick rounds follow the rookie rounds you set when rolling over (3 until then).</p></div>`;
+      ? `<p><label><input id="pick-trading-enabled" type="checkbox"${picksOn ? ' checked' : ''}> Allow teams to trade draft picks</label></p>`
+        + ((isKeeper || isDynasty) && picksOn ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label></p>` : '')
+        + `<p><button id="pick-trade-save">Save</button></p>`
+      : (picksOn ? `<p>Draft picks can be traded${(isKeeper || isDynasty) ? ' for the next ' + lg.pick_trade_seasons + ' draft' + (lg.pick_trade_seasons === 1 ? '' : 's') : ' for the next draft'}.</p>` : `<p>Draft pick trading is turned off in this league.</p>`))
+      + `<p class="muted">${isKeeper || isDynasty ? 'Pick rounds follow the rookie rounds you set when starting a new season (3 until then). ' : ''}Turning it off stops new pick trades; picks already traded stay with their new owners.</p></div>`;
   }
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
   if (lg.offseason) {
@@ -2028,7 +2031,8 @@ async function renderLeagueSettings() {
   on('standings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
     points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10)})), 'Standings and playoff settings saved.'));
-  on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)})), 'Pick trading saved.'));
+  on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', Object.assign(
+    {pick_trading_enabled: $('pick-trading-enabled').checked}, $('pick-trade-seasons') ? {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)} : {}))), 'Pick trading saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Start season ${lg.season_number + 1}? This archives season ${lg.season_number} and opens the offseason. It clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
