@@ -23,7 +23,7 @@ import datetime
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po
-from fantasy_sports.platform.db.models.core import DraftableAsset, LeagueSeries, SeriesDailyGame, Team
+from fantasy_sports.platform.db.models.core import DraftableAsset, LeagueSeries, SeriesDailyGame, SimulatorGame, Team
 from fantasy_sports.platform.simulator import service
 from fantasy_sports.sports.hockey.simulator import window_engine
 
@@ -37,9 +37,11 @@ def _names(db: Session, asset_ids) -> list[str]:
 
 
 def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None, since: datetime.date | None = None,
-                 progress=None) -> list[dict]:
+                 progress=None, started_only: bool = False) -> list[dict]:
     """One entry per window game of the league (or only `only_game_id`; or only windows ending on or after `since`). Read-only.
-    `progress(done, total, daily_game_id)` is called after each game: the audit reads a lot per game, which is slow on a remote database."""
+    `progress(done, total, daily_game_id)` is called after each game: the audit reads a lot per game, which is slow on a remote database.
+    A league's whole season of window rows exists from the day its schedule is generated; `started_only` keeps just the games that have a
+    simulation, the only ones whose frozen lineup can be wrong."""
     universe_id = window_engine._universe_id(db, league_id)
     rows = (db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
             .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.window_index.isnot(None))
@@ -48,6 +50,9 @@ def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None, s
         rows = [r for r in rows if r.id == only_game_id]
     if since is not None:
         rows = [r for r in rows if (r.calendar_date_end or r.calendar_date) >= since]
+    if started_only and rows:
+        have_sim = {r[0] for r in db.query(SimulatorGame.daily_game_id).filter(SimulatorGame.daily_game_id.in_([r.id for r in rows]))}
+        rows = [r for r in rows if r.id in have_sim]
     out = []
     for index, dg in enumerate(rows, start=1):
         home, away = db.get(Team, dg.home_team_id), db.get(Team, dg.away_team_id)
@@ -96,7 +101,7 @@ def resimulate_locked(db: Session, league_id: int, game_ids: list[int] | None = 
     window-engine sync simulates it again from the stored feed on a lineup resolved on the full schedule. A dry run (the default)
     only reports. Games in any other state are never touched. Flushes, does not commit. Returns what was (or would be) done."""
     out = []
-    for entry in lineup_audit(db, league_id, since=since, progress=progress):
+    for entry in lineup_audit(db, league_id, since=since, progress=progress, started_only=True):
         if game_ids is not None and entry["daily_game_id"] not in game_ids:
             continue
         if entry["status"] != "locked, differs":

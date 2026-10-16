@@ -221,6 +221,8 @@ def main() -> None:
 
         code, out = run(audit_hockey_lineups, "--league", league_id, "--all")
         check(code == 0 and "3 window games" in out and "[frozen, differs]" in out, "the audit script prints every window game with its status")
+        code, out = run(audit_hockey_lineups, "--league", league_id, "--since", "2026-01-01")
+        check("1 window games" in out and "not started" not in out, "by default only games with a simulation are audited, not the unplayed rest of the season's schedule")
         code, out = run(audit_hockey_lineups, "--league", league_id + 999)
         check(code == 2 and f"{league_id}:" in out, "a wrong league id is refused and the real league ids are listed (a game id is not a league id)")
 
