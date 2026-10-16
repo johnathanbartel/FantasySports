@@ -290,6 +290,14 @@ def process_keeper_deadline(db: Session, league: League, now: datetime.datetime 
     return False
 
 
+def championship_status(db: Session, league: League) -> tuple[bool, str]:
+    """(complete, why not). A new season can only start once the championship is complete. These leagues have no playoffs yet,
+    so there is no championship to complete and this stays False; when playoffs exist this is the one place that says when
+    they are done (their winner is what season_champion should then return)."""
+    return False, ("The championship isn't complete: the playoffs haven't been built yet, so a new season can't be started. "
+                   "Start New Season unlocks once the championship is complete.")
+
+
 def roll_over(db: Session, league: League, offseason_rounds: int | None = None, refill_rounds: int | None = None,
               today: datetime.date | None = None) -> LeagueSeason:
     """Archives the current season and opens the offseason. Flushes, does not commit."""
@@ -297,6 +305,9 @@ def roll_over(db: Session, league: League, offseason_rounds: int | None = None, 
         raise RolloverError("Season rollover is only available for snake-draft leagues for now")
     if league.offseason:
         raise RolloverError("This league is already in the offseason")
+    done, why = championship_status(db, league)
+    if not done:
+        raise RolloverError(why)
     if draft_state(db, league.id) != "complete":
         raise RolloverError("The league's draft has to finish before the season can roll over")
     fmt = league.league_format

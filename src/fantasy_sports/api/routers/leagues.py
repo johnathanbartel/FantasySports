@@ -470,6 +470,17 @@ def finalize_keepers(league_id: int, db: Session = Depends(get_db), user: User =
     return league
 
 
+@router.get("/{league_id}/season-status")
+def season_status(league_id: int, db: Session = Depends(get_db)):
+    """Whether Start New Season is available: only once the league's championship is complete."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    done, why = season_rollover.championship_status(db, league)
+    return {"season_number": league.season_number, "offseason": league.offseason, "championship_complete": done,
+            "reason": None if done else why}
+
+
 @router.get("/{league_id}/seasons", response_model=list[LeagueSeasonSummary])
 def list_seasons(league_id: int, db: Session = Depends(get_db)):
     """League history: every archived season, newest first, with its final standings."""
