@@ -316,7 +316,7 @@ def fa_add(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db)
     reason = free_agency.COMMISSIONER if team.is_ai_owned else free_agency.USER
     waivers.process(db, team.league_id)
     try:
-        game_lock.assert_moves_open(db, team.league_id)
+        game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
         txn = free_agency.add_player(db, team, payload.draftable_asset_id, reason)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -330,7 +330,7 @@ def fa_drop(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db
     team = assert_can_manage_team(db, user, team_id)
     reason = free_agency.COMMISSIONER if team.is_ai_owned else free_agency.USER
     try:
-        game_lock.assert_moves_open(db, team.league_id)
+        game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
         txn = free_agency.drop_player(db, team, payload.draftable_asset_id, reason)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -416,7 +416,7 @@ def waiver_claim(team_id: int, payload: FaActionRequest, db: Session = Depends(g
     among the teams that claimed him and still has a roster spot (and money, in a college league)."""
     team = assert_can_manage_team(db, user, team_id)
     try:
-        game_lock.assert_moves_open(db, team.league_id)
+        game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
         claim = waivers.place_claim(db, team, payload.draftable_asset_id)
     except ValueError as e:
         raise HTTPException(400, str(e))

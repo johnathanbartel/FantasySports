@@ -213,8 +213,6 @@ def process(db: Session, league_id: int, now: datetime.datetime | None = None) -
     from fantasy_sports.platform import free_agency, game_lock
 
     now = now or datetime.datetime.utcnow()
-    if game_lock.locked_week(db, league_id, now) is not None:
-        return 0        # claims wait: nobody moves players while games are under way
     due =db.query(WaiverClaim).filter(
         WaiverClaim.league_id == league_id, WaiverClaim.status == "pending", WaiverClaim.available_at <= now,
     ).order_by(WaiverClaim.available_at, WaiverClaim.id).all()
@@ -225,7 +223,10 @@ def process(db: Session, league_id: int, now: datetime.datetime | None = None) -
     for c in due:
         groups.setdefault((c.available_at, c.draftable_asset_id), []).append(c)
     signed = 0
+    locked = game_lock.locked_assets(db, league_id, now)
     for (at, asset_id), claims in groups.items():
+        if asset_id in locked:
+            continue        # his game has started: the claims wait, still pending, until his period ends
         rank = {t: i for i, t in enumerate(waiver_order(db, league_id, at).teams)}
         rostered = free_agency.rostered_ids(db, league_id)
         winner = None

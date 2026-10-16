@@ -47,6 +47,110 @@ results += [
     check("week over after midnight Eastern", gl.week_over(wk, D(2026, 10, 19, 5)), True),
 ]
 
+
+# ---- per-player lock, against an in-memory database -------------------------------------------------------------
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from fantasy_sports.platform.db.base import Base  # noqa: E402
+from fantasy_sports.platform.db.models.core import (  # noqa: E402
+    DraftableAsset, Game, League, LeagueUniverse, Player, RealTeam, Universe, User, Week,
+)
+from fantasy_sports.sports.football.models import Play, PlayCredit, WeeklyPlayerScore  # noqa: F401,E402
+
+engine = create_engine("sqlite://")
+Base.metadata.create_all(engine)
+db = sessionmaker(bind=engine)()
+
+
+def universe(code):
+    u = Universe(sport="x", level="pro", code=code, display_name=code)
+    db.add(u)
+    db.flush()
+    return u
+
+
+def team_and_asset(u, name):
+    t = RealTeam(universe_id=u.id, name=name)
+    db.add(t)
+    db.flush()
+    pl = Player(universe_id=u.id, real_team_id=t.id, full_name=name + " P", position="C")
+    db.add(pl)
+    db.flush()
+    a = DraftableAsset(universe_id=u.id, asset_type="player", player_id=pl.id)
+    db.add(a)
+    db.flush()
+    return t, a
+
+
+user = User(email="a@b.c", display_name="a")
+db.add(user)
+db.flush()
+league = League(name="L", commissioner_user_id=user.id, size=2, draft_rounds=1)
+db.add(league)
+db.flush()
+
+# Football: a Thursday game has started, the Sunday one has not
+nfl = universe("nfl")
+db.add(LeagueUniverse(league_id=league.id, universe_id=nfl.id, defense_mode="group"))
+t1, a_thu = team_and_asset(nfl, "Thu")
+t2, a_thu_opp = team_and_asset(nfl, "ThuOpp")
+t3, a_sun = team_and_asset(nfl, "Sun")
+t4, a_sun_opp = team_and_asset(nfl, "SunOpp")
+t5, a_bye = team_and_asset(nfl, "Bye")
+wk = Week(universe_id=nfl.id, season_year=2026, week_number=7, start_date=datetime.date(2026, 10, 15),
+          end_date=datetime.date(2026, 10, 19))
+db.add(wk)
+db.flush()
+db.add_all([Game(universe_id=nfl.id, week_id=wk.id, home_team_id=t1.id, away_team_id=t2.id, kickoff_at=D(2026, 10, 16, 0, 20)),
+            Game(universe_id=nfl.id, week_id=wk.id, home_team_id=t3.id, away_team_id=t4.id, kickoff_at=D(2026, 10, 18, 17, 0))])
+db.flush()
+now = D(2026, 10, 16, 3)       # Thursday 11pm Eastern: the Thursday game is under way
+locked = gl.locked_assets(db, league.id, now)
+results += [
+    check("football: the started game's players lock", {a_thu.id, a_thu_opp.id} <= locked, True),
+    check("football: a later game's players stay open", locked & {a_sun.id, a_sun_opp.id}, set()),
+    check("football: a bye player stays open", a_bye.id in locked, False),
+    check("football: all open before any kickoff", gl.locked_assets(db, league.id, D(2026, 10, 15, 12)), set()),
+    check("football: roster moves reopen after the week", gl.locked_assets(db, league.id, D(2026, 10, 21, 12)), set()),
+    check("football: lineups are locked for everyone once the week is over",
+          gl.locked_assets_for_week(db, wk, D(2026, 10, 21, 12)), None),
+]
+try:
+    gl.assert_unlocked(db, league.id, [a_sun.id], now)
+    gl.assert_unlocked(db, league.id, [a_thu.id], now)
+    results.append(check("assert_unlocked refuses a locked player", False, True))
+except ValueError as e:
+    results.append(check("assert_unlocked refuses a locked player", "locked" in str(e), True))
+
+# Hockey: window 2 is Wed-Thu. Player X has Wed and Thu games; Wed has started, so he is locked even though the
+# Thursday game is the one that would count. Player Y plays only Thursday and stays open.
+league2 = League(name="H", commissioner_user_id=user.id, size=2, draft_rounds=1)
+db.add(league2)
+db.flush()
+nhl = universe("nhl")
+db.add(LeagueUniverse(league_id=league2.id, universe_id=nhl.id, defense_mode="group"))
+hx, a_x = team_and_asset(nhl, "X")
+hy, a_y = team_and_asset(nhl, "Y")
+ho, _ = team_and_asset(nhl, "Opp")
+hw = Week(universe_id=nhl.id, season_year=2026, week_number=1, start_date=datetime.date(2026, 10, 11),
+          end_date=datetime.date(2026, 10, 17))
+db.add(hw)
+db.flush()
+db.add_all([
+    Game(universe_id=nhl.id, week_id=hw.id, home_team_id=hx.id, away_team_id=ho.id, kickoff_at=D(2026, 10, 14, 19, 0)),   # Wed 7pm ET
+    Game(universe_id=nhl.id, week_id=hw.id, home_team_id=ho.id, away_team_id=hx.id, kickoff_at=D(2026, 10, 15, 19, 0)),   # Thu 7pm ET
+    Game(universe_id=nhl.id, week_id=hw.id, home_team_id=hy.id, away_team_id=ho.id, kickoff_at=D(2026, 10, 15, 19, 30)),  # Thu
+])
+db.flush()
+results += [
+    check("hockey: first game of the window locks the player", gl.locked_assets(db, league2.id, D(2026, 10, 14, 23, 30)) >= {a_x.id}, True),
+    check("hockey: a player with only a later game stays open", a_y.id in gl.locked_assets(db, league2.id, D(2026, 10, 14, 23, 30)), False),
+    check("hockey: he stays locked after his second game", a_x.id in gl.locked_assets(db, league2.id, D(2026, 10, 15, 21, 0)), True),
+    check("hockey: nobody is locked the next window (Fri)", gl.locked_assets(db, league2.id, D(2026, 10, 16, 14, 0)), set()),
+    check("hockey: nor in the gap before Friday's games", a_x.id in gl.locked_assets(db, league2.id, D(2026, 10, 16, 12, 0)), False),
+]
+
 if not all(results):
     sys.exit("game-lock smoke test FAILED")
 print("game-lock smoke test passed")

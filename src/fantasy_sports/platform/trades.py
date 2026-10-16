@@ -144,8 +144,7 @@ def propose_trade(
     league = db.get(League, proposer_team.league_id)
     if league is None:
         raise ValueError("League not found")
-    if send_asset_ids or receive_asset_ids:      # a picks-only trade moves no players
-        game_lock.assert_moves_open(db, league.id, now)
+    game_lock.assert_unlocked(db, league.id, [*send_asset_ids, *receive_asset_ids], now)
     if proposer_team.league_id != counterparty_team.league_id:
         raise ValueError("Teams must belong to the same league")
     if proposer_team.id == counterparty_team.id:
@@ -286,8 +285,7 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     p_items = _players(trade, p_team.id)
     c_items = _players(trade, c_team.id)
     p_picks, c_picks = _picks(trade, p_team.id), _picks(trade, c_team.id)
-    if p_items or c_items:      # a trade proposed before the games started can't execute once they have
-        game_lock.assert_moves_open(db, trade.league_id, now)
+    game_lock.assert_unlocked(db, trade.league_id, [*p_items, *c_items], now)   # proposed before his game, accepted after
 
     p_roster ={r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=p_team.id)}
     c_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=c_team.id)}
