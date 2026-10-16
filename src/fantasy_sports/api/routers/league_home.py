@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
-from fantasy_sports.platform import calendar, entitlements, free_agency, rankings, season, waivers
+from fantasy_sports.platform import calendar, entitlements, free_agency, game_lock, rankings, season, waivers
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
@@ -316,6 +316,7 @@ def fa_add(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db)
     reason = free_agency.COMMISSIONER if team.is_ai_owned else free_agency.USER
     waivers.process(db, team.league_id)
     try:
+        game_lock.assert_moves_open(db, team.league_id)
         txn = free_agency.add_player(db, team, payload.draftable_asset_id, reason)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -329,6 +330,7 @@ def fa_drop(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db
     team = assert_can_manage_team(db, user, team_id)
     reason = free_agency.COMMISSIONER if team.is_ai_owned else free_agency.USER
     try:
+        game_lock.assert_moves_open(db, team.league_id)
         txn = free_agency.drop_player(db, team, payload.draftable_asset_id, reason)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -414,6 +416,7 @@ def waiver_claim(team_id: int, payload: FaActionRequest, db: Session = Depends(g
     among the teams that claimed him and still has a roster spot (and money, in a college league)."""
     team = assert_can_manage_team(db, user, team_id)
     try:
+        game_lock.assert_moves_open(db, team.league_id)
         claim = waivers.place_claim(db, team, payload.draftable_asset_id)
     except ValueError as e:
         raise HTTPException(400, str(e))

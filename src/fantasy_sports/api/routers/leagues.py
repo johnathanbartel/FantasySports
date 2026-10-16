@@ -19,7 +19,7 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import calendar, lineups, scoring, season_rollover
+from fantasy_sports.platform import calendar, game_lock, lineups, scoring, season_rollover
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
     AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
@@ -274,7 +274,7 @@ def league_weeks(league_id: int, db: Session = Depends(get_db)):
     weeks = scoring.season_weeks(db, league_id)
     scored = scoring.scored_week_ids(db, [w.id for w in weeks])
     return [WeekOut(id=w.id, season_year=w.season_year, week_number=w.week_number, start_date=w.start_date,
-                    locked=scoring.is_locked(w), scored=w.id in scored) for w in weeks]
+                    locked=game_lock.is_week_locked(db, w), scored=w.id in scored) for w in weeks]
 
 
 @router.post("/{league_id}/lineups/auto")

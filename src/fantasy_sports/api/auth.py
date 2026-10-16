@@ -123,8 +123,8 @@ def assert_can_manage_team(db: Session, user: User, team_id: int) -> Team:
 def assert_lineup_editable(db: Session, user: User, team: Team, week) -> None:
     """A week's lineups lock when it starts. After that only the league's commissioner, with
     commissioner mode, may change them (to correct history: results are derived live, so they update)."""
-    from fantasy_sports.platform import scoring
-    if not scoring.is_locked(week):
+    from fantasy_sports.platform import game_lock
+    if not game_lock.is_week_locked(db, week):
         return
     league = db.get(League, team.league_id)
     if league.commissioner_user_id == user.id and entitlements.has_feature(db, user, entitlements.COMMISSIONER_MODE):
