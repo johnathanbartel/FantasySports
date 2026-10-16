@@ -854,6 +854,9 @@ class SimStateOut(BaseModel):
     is_complete: bool
     can_skip: bool
     provenance: dict | None
+    progressive: bool = False
+    published_periods: int | None = None
+    period_phases: list[dict] | None = None
 
 
 class SimEventOut(ORMModel):

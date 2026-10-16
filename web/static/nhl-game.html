@@ -57,6 +57,20 @@
   details.prov{margin-top:var(--space-4)}
   details.prov summary{cursor:pointer;font-weight:600}
   .toggle{display:flex;gap:6px;align-items:center;font-size:13px}
+  .callout{padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);margin-top:var(--space-4);background:var(--color-neutral-100);font-weight:600}
+  .callout.ready{background:var(--color-accent-100);color:var(--color-accent-800);font-size:18px}
+  .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4);margin-top:var(--space-4)}
+  .tile{padding:var(--space-4);border-radius:var(--radius-md);border:2px solid var(--color-divider);background:var(--color-surface);display:flex;flex-direction:column;gap:6px;min-height:150px}
+  .tile.live{border-color:var(--color-accent-2)}
+  .tile.ready{border-color:var(--color-accent);background:var(--color-accent-100)}
+  .tile.done{opacity:.85}
+  .tile-h{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+  .tile-t{font-family:var(--font-heading);font-size:20px}
+  .rink{position:relative;height:44px;border-radius:8px;background:linear-gradient(#eaf6ff,#cfe9fb);overflow:hidden;border:1px solid var(--color-divider)}
+  .zam{position:absolute;left:0;bottom:2px;animation:zam-drive 5s ease-in-out infinite alternate}
+  @keyframes zam-drive{from{left:0}to{left:calc(100% - 64px)}}
+  @media (prefers-reduced-motion:reduce){.zam{animation:none;left:calc(50% - 32px)}}
+  .reduced .zam{animation:none;left:calc(50% - 32px)}
   button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,#board-h:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
   @media (max-width:720px){
     .wrap{padding:var(--space-4) 16px}
@@ -66,6 +80,7 @@
     .mid{grid-area:mid}
     .score{font-size:48px}
     .cols{grid-template-columns:1fr}
+    .tiles{grid-template-columns:1fr}
     .nav{flex-wrap:wrap;gap:var(--space-2)}
   }
 </style>
@@ -112,12 +127,15 @@ let state = null, events = [], finalSnap = null;
 let failures = 0, pollTimer = null, stateTimer = null;
 let replay = {idx: 0, timeline: [], timer: null, playing: false, shown: 0};
 let reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let tickTimer = null, hubTimer = null;
+let hub = {readAt: 0, firstReady: null};
+let pr = null;      // the period highlights being watched: {k, evs, idx, timeline, timer, playing}
 let busy = false, token = 0;   // token invalidates timers from a previous screen
 
 function showError(msg) { const el = $('error-banner'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
 function showConn(msg) { const el = $('conn-banner'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
 function announce(msg) { $('announce').textContent = ''; setTimeout(() => { $('announce').textContent = msg; }, 30); }
-function stopTimers() { token++; clearTimeout(pollTimer); clearTimeout(stateTimer); clearTimeout(replay.timer); replay.playing = false; }
+function stopTimers() { token++; clearTimeout(pollTimer); clearTimeout(stateTimer); clearTimeout(replay.timer); replay.playing = false; clearTimeout(hubTimer); clearInterval(tickTimer); if (pr) { clearTimeout(pr.timer); pr.playing = false; } }
 
 function names() {
   return {home: state && state.home_team ? state.home_team.name : 'Home', away: state && state.away_team ? state.away_team.name : 'Away'};
@@ -453,6 +471,219 @@ async function finishReplay() {
   } catch (e) { errorBanner(e); renderReplay(); }
 }
 
+
+// ---------- game centre (games published period by period) ----------
+// No veil: the clock is public and the score is what you have watched. Each period is simulated as the real ones end
+// (the Zamboni intermission), then "Watch period N now!" appears; highlights are never live, only published periods.
+function zamboniHtml() {
+  return `<div class="rink" aria-hidden="true"><svg class="zam" width="64" height="38" viewBox="0 0 64 38">
+    <rect x="4" y="14" width="40" height="14" rx="3" fill="#f2f4f7" stroke="#6b7684"/><rect x="34" y="6" width="20" height="22" rx="3" fill="#2f6fd6"/>
+    <rect x="38" y="9" width="12" height="9" rx="1" fill="#d6ecff"/><rect x="8" y="9" width="14" height="5" fill="#8a96a5"/>
+    <circle cx="14" cy="31" r="5" fill="#2b2f36"/><circle cx="44" cy="31" r="5" fill="#2b2f36"/><rect x="0" y="26" width="6" height="3" fill="#8a96a5"/></svg></div>`;
+}
+
+function hubSeconds() { return Math.floor((Date.now() - hub.readAt) / 1000); }
+
+function hubBoard() {
+  const hidden = state.home_score == null;
+  const v = (x) => hidden ? '?' : x;
+  return {home_score: v(state.home_score), away_score: v(state.away_score), home_shots: v(state.home_shots), away_shots: v(state.away_shots), period: state.period};
+}
+
+function hubFraction() { return state.status === 'FINAL' ? 1 : 1 - (state.seconds_remaining == null ? 1200 : state.seconds_remaining) / (state.period_seconds || 1200); }
+
+function calloutHtml() {
+  const phases = state.period_phases || [];
+  const first = G.firstReadyPeriod(phases);
+  if (first) return `<div class="callout ready" id="callout" role="status">Watch period ${first} now! Its highlights are ready, and watching updates the score.</div>`;
+  const sim = phases.find(p => p.phase === 'simulating');
+  if (sim) return `<div class="callout" id="callout" role="status">Intermission: period ${sim.period} is being simulated. You will be told when its highlights are ready.</div>`;
+  const live = phases.find(p => p.phase === 'in_progress');
+  if (live) return `<div class="callout" id="callout" role="status">Period ${live.period} in progress. Highlights appear here after each period has been simulated.</div>`;
+  if (state.status === 'FINAL') return `<div class="callout" id="callout" role="status">All periods are simulated. Watch the rest to see the final score and the box score.</div>`;
+  return `<div class="callout" id="callout" role="status">Nothing to watch yet. The score stays hidden until you watch a period's highlights.</div>`;
+}
+
+function tilesHtml() {
+  const phases = state.period_phases || [];
+  const first = G.firstReadyPeriod(phases);
+  const el = hubSeconds();
+  return `<div class="tiles">${phases.map(p => {
+    const t = G.phaseTile(p, first, el);
+    const btn = t.action === 'watch' ? `<button type="button" class="btn btn-primary" data-hub="watch" data-p="${p.period}">Watch period ${p.period}</button>`
+      : t.action === 'replay' ? `<button type="button" class="btn btn-secondary" data-hub="watch" data-p="${p.period}">Replay highlights</button>` : '';
+    return `<section class="tile ${t.tone}" aria-label="Period ${p.period}"><div class="tile-h">Period ${p.period}</div>
+      ${p.phase === 'simulating' ? zamboniHtml() : ''}
+      <div class="tile-t">${esc(t.title)}</div>
+      <div class="muted" ${p.phase === 'in_progress' ? `data-left="${p.seconds_remaining}"` : ''}>${esc(t.detail)}</div>${btn}</section>`;
+  }).join('')}</div>`;
+}
+
+function skipHtml() {
+  if (!state.can_skip) return '';
+  return `<p style="margin:var(--space-4) 0 0"><button type="button" class="btn btn-secondary" data-hub="skip">${state.status === 'FINAL' ? 'Skip to box score' : 'Reveal every period simulated so far'}</button></p>`;
+}
+
+function renderHub() {
+  $('screen').dataset.mode = 'hub';
+  hub.firstReady = G.firstReadyPeriod(state.period_phases);
+  $('screen').innerHTML = boardHtml(hubBoard(), state, {clock: G.liveClockLabel(state, hubSeconds()), fraction: hubFraction()}) + calloutHtml() + tilesHtml() + skipHtml() +
+    `<p class="muted" style="font-size:13px">The clock is live. Scores stay hidden until you watch a period's highlights, and a period can only be watched after the one before it.</p>`;
+  document.querySelectorAll('[data-hub]').forEach(b => {
+    b.onclick = () => b.dataset.hub === 'skip' ? hubSkip() : watchPeriod(Number(b.dataset.p));
+  });
+}
+
+function tickHub() {
+  const s = hubSeconds();
+  if ($('clock')) $('clock').textContent = G.liveClockLabel(state, s);
+  document.querySelectorAll('[data-left]').forEach(el => { el.textContent = G.mmss(Number(el.dataset.left) - s) + ' left'; });
+}
+
+async function hubScreen() {
+  const my = token;
+  hub.readAt = Date.now();
+  renderHub();
+  clearInterval(tickTimer);
+  tickTimer = setInterval(tickHub, 1000);
+  const poll = () => {
+    hubTimer = setTimeout(async () => {
+      if (my !== token) return;
+      try {
+        const before = hub.firstReady, sig = G.phaseSignature(state);
+        const st = await api(`${base}/state`);
+        if (my !== token) return;
+        failures = 0; showConn('');
+        state = st; hub.readAt = Date.now();
+        if (G.screenFor(state) !== 'hub') { stopTimers(); return enter(); }
+        if (G.phaseSignature(state) !== sig) {
+          renderHub();
+          const f = hub.firstReady;
+          if (f && f !== before) announce(`Period ${f} is ready. Watch period ${f} now!`);
+        }
+      } catch (e) {
+        if (my !== token) return;
+        if (e.status === 401 || e.status === 404) { stopTimers(); return errorPanel(e); }
+        failures++; showConn(G.connectionMessage(failures, G.pollDelayMs(failures)));
+      }
+      poll();
+    }, G.pollDelayMs(failures));
+  };
+  poll();
+}
+
+async function hubSkip() {
+  if (busy) return;
+  busy = true; showError('');
+  try { state = await FSC.post(`${base}/skip`); stopTimers(); await enter(); } catch (e) { errorBanner(e); }
+  busy = false;
+}
+
+async function watchPeriod(k) {
+  if (busy) return;
+  busy = true; showError('');
+  try {
+    if (state.reveal_mode == null) state = await FSC.post(`${base}/watch`);
+    events = G.mergeEvents([], await fetchAllEvents(0)).events;
+    const evs = G.periodEvents(events, k);
+    if (!evs.length) throw Object.assign(new Error(`Period ${k} has no highlights yet.`), {code: 'NOT_FINAL'});
+    stopTimers();
+    pr = {k, evs, idx: 0, timeline: [], timer: null, playing: false};
+    renderPR();
+    if (G.replayMode(reduced) === 'auto') startPR();
+  } catch (e) { errorBanner(e); }
+  busy = false;
+}
+
+// ---- watching one period's highlights ----
+function prBoard() {
+  const first = pr.evs[0];
+  if (!pr.idx) return Object.assign(G.boardAt(pr.evs, first.seq, shape()), {period: pr.k, secondsRemaining: state.period_seconds || 1200});
+  return G.boardAt(pr.evs, pr.evs[pr.idx - 1].seq, shape());
+}
+function prFraction(b) { return 1 - b.secondsRemaining / (state.period_seconds || 1200); }
+function prClock(b) { return !pr.idx ? `Period ${pr.k} — ready` : pr.idx >= pr.evs.length ? `End of period ${pr.k}` : G.clockLabel({period: b.period, seconds_remaining: b.secondsRemaining, periods: state.periods, status: 'LIVE'}); }
+
+function renderPR() {
+  $('screen').dataset.mode = 'pr';
+  const b = prBoard(), done = pr.idx >= pr.evs.length;
+  const pct = Math.round(pr.idx / pr.evs.length * 100);
+  $('screen').innerHTML = boardHtml(b, {status: 'REPLAY'}, {clock: prClock(b), fraction: prFraction(b)}) +
+    `<section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-label="Highlights controls">
+       <h2 style="font-size:20px;margin:0 0 var(--space-2)">Period ${pr.k} highlights</h2>
+       <div class="progress" role="progressbar" aria-label="Highlights progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
+       <div class="controls">
+         ${pr.playing ? '<button class="btn btn-secondary" type="button" data-pr="pause">Pause</button>' : `<button class="btn btn-primary" type="button" data-pr="play" ${done ? 'disabled' : ''}>${pr.idx ? 'Resume' : 'Play'}</button>`}
+         <button class="btn btn-secondary" type="button" data-pr="step" ${done ? 'disabled' : ''}>Next event</button>
+         <button class="btn btn-secondary" type="button" data-pr="end" ${done ? 'disabled' : ''}>Show the whole period</button>
+         <button class="btn btn-secondary" type="button" data-pr="back">Back to game centre</button>
+         <label class="toggle"><input type="checkbox" id="reduce" ${reduced ? 'checked' : ''}> Step manually (no animation)</label>
+       </div>
+       <p class="muted" style="margin:0;font-size:13px">${done ? 'Period over. Going back to the game centre updates your score.' : 'A period replays in about 25 seconds.'}</p>
+     </section>
+     <section class="card elev-sm" style="padding:var(--space-4);margin-top:var(--space-4)" aria-labelledby="tick-h"><h2 id="tick-h" style="font-size:20px">Play by play</h2><div id="ticker-host">${tickerHtml(pr.evs.slice(0, pr.idx))}</div></section>`;
+  document.querySelectorAll('[data-pr]').forEach(el => { el.onclick = () => prAct(el.dataset.pr); });
+  const r = $('reduce'); if (r) r.onchange = () => { reduced = r.checked; document.body.classList.toggle('reduced', reduced); if (reduced) { pausePR(); } else renderPR(); };
+}
+
+function patchPR() {
+  const b = prBoard();
+  patchBoard(b, prClock(b), prFraction(b));
+  const pct = Math.round(pr.idx / pr.evs.length * 100);
+  const pb = document.querySelector('.progress'); if (pb) { pb.setAttribute('aria-valuenow', pct); pb.firstElementChild.style.width = pct + '%'; }
+  $('ticker-host').innerHTML = tickerHtml(pr.evs.slice(0, pr.idx));
+}
+
+function revealPR() {
+  const e = pr.evs[pr.idx];
+  if (!e) return;
+  pr.idx++;
+  patchPR();
+  if (e.kind === 'score') { announce(`${e.headline}. ${names().home} ${e.home_score}, ${names().away} ${e.away_score}.`); popScore(); }
+}
+
+function startPR() {
+  if (pr.playing || pr.idx >= pr.evs.length) return;
+  pr.playing = true;
+  pr.timeline = G.replayTimeline(pr.evs.slice(pr.idx), G.REPLAY_MS / 3);
+  const my = token;
+  let i = 0;
+  const tick = () => {
+    if (my !== token || !pr.playing) return;
+    if (i >= pr.timeline.length) return donePR();
+    revealPR(); i++;
+    if (pr.idx >= pr.evs.length) return donePR();
+    pr.timer = setTimeout(tick, G.delayBefore(pr.timeline, i));
+  };
+  renderPR();
+  pr.timer = setTimeout(tick, 0);
+}
+
+function pausePR() { clearTimeout(pr.timer); pr.playing = false; renderPR(); }
+
+function donePR() { clearTimeout(pr.timer); pr.playing = false; renderPR(); }
+
+async function prAct(name) {
+  if (!pr) return;
+  if (name === 'play') startPR();
+  else if (name === 'pause') pausePR();
+  else if (name === 'step') { clearTimeout(pr.timer); pr.playing = false; revealPR(); if (pr.idx >= pr.evs.length) donePR(); }
+  else if (name === 'end') { clearTimeout(pr.timer); pr.playing = false; pr.idx = pr.evs.length; renderPR(); }
+  else if (name === 'back') await leavePR();
+}
+
+// Leaving saves how far you got only if you saw the whole period: a half-watched period is not watched.
+async function leavePR() {
+  const p = pr; pr = null;
+  clearTimeout(p.timer);
+  try {
+    if (p.idx >= p.evs.length) state = await FSC.post(`${base}/progress`, {cursor_seq: p.evs[p.evs.length - 1].seq});
+    else state = await api(`${base}/state`);
+    stopTimers();
+    await enter();
+  } catch (e) { errorBanner(e); }
+}
+
 // ---------- final ----------
 // The chronological division: which real periods make up each fantasy period (docs/hockey_spec.md 6.1).
 function divisionHtml(prov) {
@@ -502,6 +733,9 @@ async function enter() {
   $('screen').dataset.mode = '';
   setHeader();
   showConn('');
+  if (state && state.progressive && state.status === 'FINAL' && !state.is_complete && location.hash === '#boxscore') {
+    try { state = await FSC.post(`${base}/skip`); } catch (e) { /* fall through to the game centre */ }
+  }
   const screen = G.screenFor(state);
   if (screen === 'unpublished') {
     $('screen').innerHTML = `<div class="state-card card"><h2>No simulation yet</h2><p class="muted">This game has not been simulated. Nothing is shown until it is; no scores or plays are made up.</p><div class="actions"><button class="btn btn-secondary" type="button" id="reload">Check again</button></div></div>`;
@@ -509,6 +743,8 @@ async function enter() {
   } else if (screen === 'scheduled') {
     $('screen').innerHTML = `<div class="state-card card">${chip('SCHEDULED')}<h2>Scheduled</h2><p class="muted">This game has not started. This page checks again on its own.</p></div>`;
     schedulePollState();
+  } else if (screen === 'hub') {
+    await hubScreen();
   } else if (screen === 'live-veiled' || screen === 'final-veiled') {
     if (location.hash === '#boxscore' && screen === 'final-veiled') {
       try {
