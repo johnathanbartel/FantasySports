@@ -102,6 +102,7 @@
   </div>
 
   <main class="wrap">
+    <p style="margin:0 0 var(--space-3)"><a class="btn btn-secondary" id="back-board" href="#" onclick="if(this.getAttribute('href')==='#'){history.back();return false;}">&larr; Return to scoreboard</a></p>
     <div class="card-kicker" id="kicker">&nbsp;</div>
     <h1 id="title" style="margin:0 0 var(--space-4)">Game</h1>
 
@@ -151,6 +152,7 @@ function setHeader() {
   $('kicker').textContent = state && state.calendar_date ? `NHL · ${state.calendar_date}` : 'NHL';
   if (state && state.league_id) {
     $('nav-league').href = `/static/league.html?league_id=${state.league_id}`;
+    $('back-board').href = `/static/league.html?league_id=${state.league_id}&tab=scoreboard`;
     $('nav-schedule').href = `/static/league.html?league_id=${state.league_id}&tab=roster${params.get('team_id') ? '&team_id=' + params.get('team_id') : ''}`;
     $('nav-schedule').textContent = 'Roster & lines';
     $('nav-brand').textContent = 'NHL league';

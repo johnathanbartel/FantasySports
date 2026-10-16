@@ -40,6 +40,7 @@
     </div>
   </div>
   <main class="wrap">
+    <p style="margin:0 0 var(--space-3)"><a class="btn btn-secondary" id="back-board" href="#" onclick="if(this.getAttribute('href')==='#'){history.back();return false;}">&larr; Return to scoreboard</a></p>
     <div class="card-kicker" id="kicker">Live box score</div>
     <h1 id="title" style="margin:0 0 var(--space-2)">Box score</h1>
     <p class="muted" style="margin:0">Unveiled and read-only: shows every real NHL period, the fantasy period it was assigned to, and the credit earned in it so far. Refreshes every 15 seconds. <span id="updated"></span></p>
@@ -170,7 +171,7 @@ async function load() {
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString() + '.';
     if (d.state === 'live') { /* league/nav links need ids */ }
     const g = await FSC.api(`/simulator/games/${GAME_ID}/state`).catch(() => null);
-    if (g && g.league_id) { $('nav-league').href = `/static/league.html?league_id=${g.league_id}`; }
+    if (g && g.league_id) { $('nav-league').href = `/static/league.html?league_id=${g.league_id}`; $('back-board').href = `/static/league.html?league_id=${g.league_id}&tab=scoreboard`; }
     $('nav-game').href = `/static/nhl-game.html?daily_game_id=${GAME_ID}`;
   } catch (e) { $('err').textContent = (e && e.message) || 'Could not load the box score.'; $('err').style.display = 'block'; }
   timer = setTimeout(load, 15000);
