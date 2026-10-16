@@ -56,6 +56,19 @@ class LeagueCreateRequest(BaseModel):
     # NHL only: consecutive daily games against the same opponent.
     # None lets the API apply the NHL default without changing other sports.
     series_length_days: int | None = None
+    # League Settings, chosen in the wizard (the same ones the League Settings tab edits later).
+    league_format: Literal["traditional_redraft", "future_pick_redraft", "keeper", "dynasty"] = "traditional_redraft"
+    keeper_draft_style: Literal["rookie_resign", "combined", "separate"] = "rookie_resign"
+    keeper_limit: int | None = Field(default=None, ge=0, le=100)
+    keeper_deadline: datetime.datetime | None = None
+    pick_trade_seasons: int = Field(default=2, ge=1, le=10)
+    # Hockey only (rejected for other sports when changed from the defaults).
+    standings_mode: Literal["points", "win_pct"] = "points"
+    points_per_win: int = Field(default=3, ge=0, le=20)
+    points_per_tie: int = Field(default=1, ge=0, le=20)
+    playoff_teams: int | None = Field(default=None, ge=1, le=64)       # None = 33% of the teams, rounded
+
+    _keeper_deadline = field_validator("keeper_deadline")(_naive_utc)
 
 
 class LeagueRenameRequest(BaseModel):

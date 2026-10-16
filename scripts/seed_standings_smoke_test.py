@@ -170,5 +170,32 @@ winners = [r["team_id"] for r in seeded if r["division_winner"]]
 assert len(seeded) == 4 and set(winners) == {tids[0], tids[4]}, (winners, seeded)
 assert {r["seed"] for r in seeded if r["division_winner"]} == {1, 2}, "division winners hold seeds 1 and 2"
 
+# ---- the league set up wizard sends the same settings when it creates the league -----------------------------------
+def create(**extra):
+    return client.post("/leagues", json={"name": "Wizard", "commissioner_user_id": commissioner.id, "universe_codes": ["nhl"],
+                                         "size": 12, **extra}, headers=H)
+
+
+resp = create(league_format="keeper", keeper_draft_style="separate", keeper_limit=14, keeper_deadline="2099-06-01T12:00:00Z",
+              pick_trade_seasons=3, standings_mode="win_pct", points_per_win=2, points_per_tie=1, playoff_teams=6)
+assert resp.status_code == 200, resp.text
+made = resp.json()
+assert (made["league_format"], made["keeper_draft_style"], made["keeper_limit"], made["pick_trade_seasons"]) == ("keeper", "separate", 14, 3)
+assert (made["standings_mode"], made["points_per_win"], made["points_per_tie"], made["playoff_teams"]) == ("win_pct", 2, 1, 6)
+assert made["keeper_deadline"].startswith("2099-06-01T12:00:00"), made["keeper_deadline"]
+plain = create().json()
+assert (plain["league_format"], plain["standings_mode"], plain["points_per_win"], plain["points_per_tie"], plain["playoff_teams"])     == ("traditional_redraft", "points", 3, 1, None), plain
+assert create(playoff_teams=13).status_code == 400, "more playoff teams than the league has"
+assert create(standings_mode="bogus").status_code == 422
+assert create(league_format="bogus").status_code == 422
+# A non-keeper league ignores a stray keeper deadline; hockey settings are rejected for other sports.
+assert create(league_format="dynasty", keeper_deadline="2099-06-01T12:00:00Z").json()["keeper_deadline"] is None
+nfl = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"], "size": 8,
+                                    "standings_mode": "win_pct"}, headers=H)
+assert nfl.status_code == 400, nfl.text
+nfl_ok = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"], "size": 8,
+                                       "league_format": "dynasty", "pick_trade_seasons": 4}, headers=H)
+assert nfl_ok.status_code == 200 and nfl_ok.json()["league_format"] == "dynasty" and nfl_ok.json()["pick_trade_seasons"] == 4, nfl_ok.text
+
 # Draft order uses the league's standings mode (and shows the points kept in the archive).
-print("Standings smoke test passed: points and win %, tiebreaks, settings API, series standings with seeds, division winners.")
+print("Standings smoke test passed: points and win %, tiebreaks, settings API, series standings with seeds, division winners, wizard settings.")

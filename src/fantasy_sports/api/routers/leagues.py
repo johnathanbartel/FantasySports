@@ -102,6 +102,13 @@ def create_league(
     if payload.draft_type not in ("recruit", "snake"):
         raise HTTPException(400, f"Invalid draft_type '{payload.draft_type}'")
 
+    hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
+                               or payload.points_per_tie != 1 or payload.playoff_teams is not None)
+    if hockey_settings_changed and not has_nhl:
+        raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
+    if payload.playoff_teams is not None and payload.playoff_teams > payload.size:
+        raise HTTPException(400, f"A {payload.size}-team league can't have {payload.playoff_teams} playoff teams")
+
     first = universes[0]
     draft_rounds = payload.draft_rounds
     spots = roster_size(db, first.id, payload.defense_modes.get(first.code, "group"))
@@ -119,6 +126,15 @@ def create_league(
         draft_type=payload.draft_type,
         draft_scheduled_at=payload.draft_scheduled_at,
         series_length_days=series_length_days,
+        league_format=payload.league_format,
+        keeper_draft_style=payload.keeper_draft_style,
+        keeper_limit=payload.keeper_limit,
+        keeper_deadline=payload.keeper_deadline if payload.league_format == "keeper" else None,
+        pick_trade_seasons=payload.pick_trade_seasons,
+        standings_mode=payload.standings_mode,
+        points_per_win=payload.points_per_win,
+        points_per_tie=payload.points_per_tie,
+        playoff_teams=payload.playoff_teams,
     )
     db.add(league)
     db.flush()  # assigns league.id without committing yet
