@@ -13,7 +13,7 @@ import datetime
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import pecking_order, pick_trading
+from fantasy_sports.platform import game_lock, pecking_order, pick_trading
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
@@ -144,6 +144,7 @@ def propose_trade(
     league = db.get(League, proposer_team.league_id)
     if league is None:
         raise ValueError("League not found")
+    game_lock.assert_unlocked(db, league.id, [*send_asset_ids, *receive_asset_ids], now)
     if proposer_team.league_id != counterparty_team.league_id:
         raise ValueError("Teams must belong to the same league")
     if proposer_team.id == counterparty_team.id:
@@ -284,8 +285,9 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     p_items = _players(trade, p_team.id)
     c_items = _players(trade, c_team.id)
     p_picks, c_picks = _picks(trade, p_team.id), _picks(trade, c_team.id)
+    game_lock.assert_unlocked(db, trade.league_id, [*p_items, *c_items], now)   # proposed before his game, accepted after
 
-    p_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=p_team.id)}
+    p_roster ={r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=p_team.id)}
     c_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=c_team.id)}
 
     for aid in p_items:

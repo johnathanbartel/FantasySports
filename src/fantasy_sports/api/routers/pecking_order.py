@@ -9,16 +9,16 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_can_manage_team, current_user
+from fantasy_sports.api.auth import assert_can_manage_team, can_override_game_lock, current_user
 from fantasy_sports.api.schemas import (
     InjuredListRequest, InjuryAlertOut, PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
 )
-from fantasy_sports.platform import injuries, pecking_order as po
+from fantasy_sports.platform import game_lock, injuries, pecking_order as po
 from fantasy_sports.platform.league_features import roster_limit
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.player_rates import rates_by_asset
-from fantasy_sports.platform.db.models.core import InjuryAlert, League, RealTeam, Team, Universe, User
+from fantasy_sports.platform.db.models.core import InjuryAlert, League, RealTeam, Team, TeamPeckingOrder, Universe, User
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(prefix="/teams", tags=["pecking-order"])
@@ -184,6 +184,22 @@ def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
     return _read(db, team)
 
 
+def _spots(db: Session, team: Team, asset_ids) -> dict[int, tuple[str, int] | None]:
+    rows = {r.draftable_asset_id: (r.position_group, r.priority)
+            for r in db.query(TeamPeckingOrder).filter_by(team_id=team.id)}
+    return {a: rows.get(a) for a in asset_ids}
+
+
+def _assert_locked_spots_unchanged(db: Session, user: User, team: Team, before: dict, locked: set[int]) -> None:
+    """A player whose game has started keeps his exact line spot (or stays off the lines) until his window ends."""
+    if can_override_game_lock(db, user, team):
+        return
+    after = _spots(db, team, locked)
+    for asset_id in sorted(locked):
+        if before.get(asset_id) != after.get(asset_id):
+            raise ValueError(game_lock.lock_message(db, asset_id))
+
+
 @router.put("/{team_id}/pecking-order", response_model=PeckingOrderOut)
 def set_pecking_order(team_id: int, payload: PeckingOrderSetRequest, db: Session = Depends(get_db),
                       user: User = Depends(current_user)):
@@ -191,7 +207,11 @@ def set_pecking_order(team_id: int, payload: PeckingOrderSetRequest, db: Session
     the team's owner, or the commissioner (with commissioner mode) for an AI-owned team."""
     team = assert_can_manage_team(db, user, team_id)
     try:
+        locked = game_lock.locked_assets(db, team.league_id)
+        before = _spots(db, team, locked)
         po.replace_groups(db, team, payload.assignments)
+        db.flush()
+        _assert_locked_spots_unchanged(db, user, team, before, locked)
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -206,6 +226,8 @@ def set_injured_list(team_id: int, payload: InjuredListRequest, db: Session = De
     the lines. Only injured players can go on; the list holds a fixed number (platform/injuries.py)."""
     team = assert_can_manage_team(db, user, team_id)
     try:
+        if not can_override_game_lock(db, user, team):
+            game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
         if payload.on:
             injuries.place_on_injured_list(db, team, payload.draftable_asset_id)
         else:
