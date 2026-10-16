@@ -100,6 +100,15 @@ function playersHtml(d) {
   return side('away') + side('home');
 }
 
+function realGamesHtml(d) {
+  const rows = d.real_games.map(g => `<tr><td>${esc(g.matchup)}</td><td>${esc(dt(g.kickoff))}</td><td><span class="pill2 ${g.status === 'final' ? 'ok' : g.status === 'live' ? 'live' : ''}">${esc(g.status)}</span></td><td class="num">${g.events_stored}</td><td class="num">${g.shots_stored}</td><td class="num">${g.feed_period || '–'}</td></tr>`).join('');
+  const ingest = Object.entries(d.ingest || {}).sort().map(([day, r]) => `<div style="margin-top:8px"><strong>Ingest of ${esc(day)}</strong> <span class="muted">at ${esc((r.at || '').replace('T', ' '))} UTC</span>
+      <div>${r.error ? '<strong>Error: ' + esc(r.error) + '</strong>' : esc(r.schedule || '')}</div>
+      ${(r.games || []).map(x => `<div class="muted" style="font-size:12px">${esc(x.matchup)} (${esc(x.state)}): ${x.error ? '<strong>' + esc(x.error) + '</strong>' : esc(x.pbp || '')}</div>`).join('')}</div>`).join('');
+  return `<div class="tbl-wrap"><table class="table"><thead><tr><th scope="col">Game</th><th scope="col">Kickoff</th><th scope="col">Status</th><th class="num" scope="col">Events stored</th><th class="num" scope="col">Shots stored</th><th class="num" scope="col">Feed at period</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${ingest || '<p class="muted" style="margin:8px 0 0">No feed ingest has been recorded for this game yet.</p>'}`;
+}
+
 function lineupsHtml(d) {
   return ['away', 'home'].map(s => {
     const t = d.lineups[s];
@@ -135,6 +144,9 @@ function render(d) {
     <ul class="muted" style="margin:var(--space-2) 0 0">${d.notes.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
   </section>
   <section class="card sec"><h2>Starters by fantasy period</h2>${playersHtml(d)}</section>
+  <section class="card sec"><h2>Real games and the stored feed</h2>
+    <p class="muted" style="margin:0">A fantasy period can only be simulated once every real period in it has ended <em>and</em> its play-by-play is stored. A game that has started but shows 0 events here has not been ingested yet.</p>
+    ${realGamesHtml(d)}</section>
   <section class="card sec"><h2>Pecking order and lineup</h2>
     <p class="muted" style="margin:0">Each team ranks its players per position (C 3 deep, W and D 6 deep, G 3 deep). A player with no game in this window sits out, and the next ranked player with a game steps in; wings and defensemen are pooled, so the top two with a game dress. ★ = in the lineup frozen at first kickoff. A ranked slot with no game, or a short roster, leaves a vacancy.</p>
     ${lineupsHtml(d)}</section>

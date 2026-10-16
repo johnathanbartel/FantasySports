@@ -141,8 +141,10 @@ def _last_totals(db: Session, sim) -> dict[str, int]:
     return {"home_score": last.home_score, "away_score": last.away_score, "home_shots": last.home_shots, "away_shots": last.away_shots}
 
 
-def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, seed: int | None = None) -> TickResult:
-    """Do whatever is due for this window game at `now_utc`. Flushes; the caller commits."""
+def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, seed: int | None = None,
+         ingest: dict | None = None) -> TickResult:
+    """Do whatever is due for this window game at `now_utc`. Flushes; the caller commits. `ingest` (day -> what the feed
+    ingest just did, see nhl_daily_sync.ingest_daily_slate_if_needed) is kept in the provenance for the live box score."""
     if daily_game.window_index is None or daily_game.calendar_date_end is None:
         raise model.InputError("window_engine works on window rows only")
     if daily_game.status == "FINAL":
@@ -236,6 +238,8 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         fresh["window_state"] = state | {"selections": selections}
         fresh["wall_clock"] = division.wall_clock().to_dict() if n else prov.get("wall_clock")
     fresh["ticked_at"] = now_utc.isoformat(timespec="seconds")
+    if ingest:
+        fresh["ingest"] = {**(prov.get("ingest") or {}), **ingest}
     fresh.pop("engine_error", None)
     if n:
         # The read-outs are conveniences: a failure here is recorded (live box score) and must never stop a period publishing.
