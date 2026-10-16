@@ -258,7 +258,7 @@ def main() -> None:
         again = tick(at(TUE, 23, 0))
         check(again.status == "idle" and sim_state()[2] == digest3 and sim_state()[3] == events3, "ticking again changes nothing (idempotent)")
 
-        # ---- the final matches the whole-game normalization (same credit, same seed) ------------------------------------------
+        # ---- the final is the value model applied to all the credit (same credit, same seed) -------------------------------------
         with SessionLocal() as db:
             dg = db.get(SeriesDailyGame, dg_id)
             sim = service.get_sim(db, dg_id)
@@ -275,16 +275,23 @@ def main() -> None:
                 g = db.get(Game, rec["game_id"])
                 counting.append(CountingGame(int(a), by_asset[int(a)].full_name, side_of[int(a)], g.id, g.kickoff_at))
             inputs = window_engine._inputs(db, dg, home, away, by_asset, side_of, counting, state["selections"], state)
-            whole = HockeySimulatorAdapter().build_script(inputs, dg.id)
+            from fantasy_sports.sports.hockey.simulator.attribution import build_value_ledger, tie_out_value_ledger
+            from fantasy_sports.sports.hockey.simulator.progressive import noise_units, normalize_value_through
+            ledger = build_value_ledger(inputs)
+            tie_out_value_ledger(inputs, ledger)
+            whole = normalize_value_through(ledger, noise_units(dg.id, dg.id), 3, 0, 0)
             periods = prov["normalization"]["periods"]
             ratcheted = any(p["ratcheted"] or p["forced_leader"] for p in periods)
-            last = whole.events[-1]
+            check(prov["model"] == "value" and prov["adapter_version"] == "2.0", "the game was simulated by the value model")
+            check(set(prov["value"]) == {"created", "saved", "net", "expected_goals"}, "the provenance carries the value behind the goals")
             if not ratcheted:
-                check((last.home_score, last.away_score) == (events3[-1][4], events3[-1][5]),
-                      f"with no ratchet the period-by-period final {events3[-1][4]}-{events3[-1][5]} equals the whole-game normalization")
+                check((whole.home_goals, whole.away_goals) == (events3[-1][4], events3[-1][5]),
+                      f"with no ratchet the period-by-period final {events3[-1][4]}-{events3[-1][5]} equals the value model on all the credit")
             else:
-                check(True, f"a ratchet applied here (periods: {[(p['home_goals'], p['away_goals']) for p in periods]}); whole game was {last.home_score}-{last.away_score}")
-            check(abs(prov["raw"]["margin"] - whole.provenance["raw"]["margin"]) < 1e-6, "the cumulative credit after the last period ties out to the whole game's raw margin")
+                check(True, f"a ratchet applied here (periods: {[(p['home_goals'], p['away_goals']) for p in periods]}); whole game was {whole.home_goals}-{whole.away_goals}")
+            check(abs(prov["raw"]["margin"] - (ledger.raw["home"] - ledger.raw["away"])) < 1e-6, "the cumulative credit after the last period ties out to the whole game's credit margin")
+            check(abs((prov["value"]["net"]["home"] - prov["value"]["net"]["away"]) - prov["raw"]["margin"]) < 1e-5,
+                  "the net value differential is exactly the credit differential: saves take value from the other side and never push it below zero")
             check(abs(sum(p["points"] for p in prov["box_score"]["home"]) - prov["raw"]["home"]) < 1e-5
                   and abs(sum(p["points"] for p in prov["box_score"]["away"]) - prov["raw"]["away"]) < 1e-5, "the box score ties out to the raw credit")
 

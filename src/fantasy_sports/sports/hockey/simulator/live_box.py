@@ -27,11 +27,11 @@ from fantasy_sports.platform.simulator import service
 from fantasy_sports.sports.hockey.models import GameEvent, Shot
 from fantasy_sports.sports.hockey.simulator import loader, window_engine
 from fantasy_sports.sports.hockey.simulator.division import REAL_PERIOD, Division, is_overtime, real_period_of
-from fantasy_sports.sports.hockey.simulator.model import PERIODS, ROLES, CountingGame
+from fantasy_sports.sports.hockey.simulator.model import PERIODS, ROLES, SKATER_GOAL_ROLES, CountingGame
 from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
 from fantasy_sports.sports.hockey.simulator.timeline import filler_shots
 
-ROLE_ORDER = ("shooter", "primary_assist", "secondary_assist", "blocker", "goalie")
+ROLE_ORDER = ("shooter", "primary_assist", "secondary_assist", "blocker", "hitter", "takeaway", "goalie")
 
 
 def _slot_state(now: datetime.datetime, start: datetime.datetime) -> str:
@@ -188,9 +188,13 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
 
     division = Division.build(counting)
     n = len(counting)
-    lines, attempts = loader._credits_for(db, {a: assets[a] for a in chosen}, sorted(set(chosen.values())), tag_games=True)
+    # Credit as the engine reads it: the value model, except for a game that published periods under the earlier fixed-total model.
+    use_value = sim is None or (sim.published_periods or 0) == 0 or prov.get("model") == "value"
+    credits_for = loader._value_lines_for if use_value else loader._credits_for
+    lines, attempts = credits_for(db, {a: assets[a] for a in chosen}, sorted(set(chosen.values())), tag_games=True)
     lines = [l for l in lines if chosen.get(l.asset_id) == l.game_id]
     attempts = [a for a in attempts if chosen.get(a.asset_id) == a.game_id]
+    out["model"] = "value" if use_value else "fixed total (published before the value model)"
 
     # points per (asset, real period), by role, plus goal / shot counts
     cell: dict[tuple[int, int], dict] = {}
@@ -204,8 +208,20 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         c = cell.setdefault((a.asset_id, real_period_of(a.real_second)), {"points": 0.0, "by_role": {}, "goals": 0, "shots": 0, "ot": False})
         c["shots"] += 1
         c["ot"] = c["ot"] or is_overtime(a.real_second)
-    for c in cell.values():
-        c["shots"] += c["goals"]
+    if use_value:
+        # every shot is one line group; it counts once, for the player who took it (or, with no shooter in the lineup, his first assist)
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for l in lines:
+            if l.role in SKATER_GOAL_ROLES:
+                groups[l.group_id].append(l)
+        for members in groups.values():
+            lead = next((l for l in members if l.role == "shooter"), sorted(members, key=lambda l: l.line_id)[0])
+            c = cell.setdefault((lead.asset_id, real_period_of(lead.real_second)), {"points": 0.0, "by_role": {}, "goals": 0, "shots": 0, "ot": False})
+            c["shots"] += 1
+    else:
+        for c in cell.values():
+            c["shots"] += c["goals"]
     # The filler shots (seeded, fabricated for realism): the very ones the simulator publishes, so rows and scoreboard agree.
     seed = prov.get("seed", daily_game.id)
     shape = types.SimpleNamespace(counting_games=tuple(counting), home=types.SimpleNamespace(name=names["home"]),

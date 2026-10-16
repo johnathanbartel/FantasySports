@@ -5,11 +5,12 @@ from the stored feed, on a lineup resolved on the full schedule (src/fantasy_spo
     .\\.venv-api\\Scripts\\python.exe scripts/resimulate_hockey_games.py --league 123            # dry run: only reports
     .\\.venv-api\\Scripts\\python.exe scripts/resimulate_hockey_games.py --league 123 --yes      # does it
     .\\.venv-api\\Scripts\\python.exe scripts/resimulate_hockey_games.py --league 123 --game 456 --yes
+    .\.venv-api\Scripts\python.exe scripts/resimulate_hockey_games.py --league 123 --old-model --yes   # also games scored before the value model
 
 DESTRUCTIVE with --yes: each voided game's events and every viewer's watched progress are deleted, the game goes back to scheduled,
 and every score, shot and highlight in it can change when it is simulated again. Only games the audit calls "locked, differs"
 (frozen on a possibly partial schedule, with periods already published, and different from what the pecking order gives now) are
-touched; every other game is left alone. Run scripts/audit_hockey_lineups.py first and read it.
+touched (plus, with --old-model, games whose published periods used the earlier fixed-total scoring); every other game is left alone. Run scripts/audit_hockey_lineups.py first and read it.
 
 The database is whatever DATABASE_URL points at (this script does not read .env; set it yourself). Take a backup first.
 """
@@ -29,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--league", type=int, required=True, help="league id (not a game id)")
     parser.add_argument("--game", type=int, action="append", help="only this daily game id (repeatable); default: every flagged game")
     parser.add_argument("--since", help="only windows ending on or after this date (YYYY-MM-DD); default: the last 7 days")
+    parser.add_argument("--old-model", action="store_true",
+                        help="also void games whose published periods used the earlier fixed-total scoring, so they are simulated by the value model")
     parser.add_argument("--yes", action="store_true", help="actually void the games (default is a dry run)")
     args = parser.parse_args(argv)
 
@@ -45,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
         import datetime
         since = datetime.date.fromisoformat(args.since) if args.since else datetime.date.today() - datetime.timedelta(days=7)
         print(f"Looking at windows ending on or after {since}...", flush=True)
-        done = lineup_audit.resimulate_locked(db, args.league, args.game, execute=args.yes, since=since,
+        done = lineup_audit.resimulate_locked(db, args.league, args.game, execute=args.yes, since=since, include_old_model=args.old_model,
                                               progress=lambda n, total, gid: print(f"  {n}/{total} (game #{gid})", flush=True))
         if args.yes:
             db.commit()

@@ -28,6 +28,15 @@ PRIOR_POINTS = 1.0      # each side gets this many goal-equivalents added before
 NOISE_SIGMA = 0.5       # std dev of the Gaussian error term on the expected goal margin, in goals
 NOISE_CAP = 1.0         # hard bound on that error term (goals): an upset needs |expected margin| < NOISE_CAP
 
+# --- Value model (window games). PROVISIONAL product defaults, like the constants above; see docs/hockey_simulator_scoring.md ---
+WINDOW_ADAPTER_VERSION = "2.0"   # 2.0: goals come from the net value the lineups created, not from a fixed total
+VALUE_SCALE = 2.6        # goals per unit of net value (calibrate: scripts/calibrate_hockey_value_scale.py; ~3.0 goals a team on average)
+ASSIST_SHARE = 0.4       # share of a goal's xG that goes to its assists (primary 2/3, secondary 1/3); the shooter keeps the rest
+HIT_VALUE = 0.01         # value of a hit. Fitted data say hits are worth ~0 (pipeline.HIT_CREDIT); this is the owner's call
+TAKEAWAY_VALUE = 0.02    # value of a takeaway
+VALUE_NOISE_SIGMA = 0.6  # std dev of the bounded error on each side's expected goals
+VALUE_NOISE_CAP = 1.2    # hard bound on that error (goals); a raw leader can only lose when its expected margin is under 2 x this
+
 PERIODS = 3
 PERIOD_SECONDS = 1200
 GAME_SECONDS = PERIODS * PERIOD_SECONDS
@@ -37,6 +46,8 @@ MAX_SHOT_EVENTS_PER_SIDE = 60
 TIEBREAK_WINDOW = (3300, 3590)     # game seconds in which a tied scoreboard's deciding goal lands
 
 ROLES = ("shooter", "primary_assist", "secondary_assist", "goalie", "blocker")
+# The value model (window games, docs/hockey_simulator_scoring.md "Value model") also credits hits and takeaways.
+VALUE_ROLES = ROLES + ("hitter", "takeaway")
 SKATER_GOAL_ROLES = ("shooter", "primary_assist", "secondary_assist")
 EPS = 1e-9
 
@@ -140,12 +151,13 @@ class HockeyGameInputs:
         return self.home if key == "home" else self.away
 
 
-def validate_inputs(inputs: HockeyGameInputs) -> None:
+def validate_inputs(inputs: HockeyGameInputs, value_model: bool = False) -> None:
+    allowed = VALUE_ROLES if value_model else ROLES      # hits and takeaways only carry value in the value model
     seen: set[str] = set()
     owner: dict[int, str] = {}
     for key in ("home", "away"):
         for line in inputs.side(key).lines:
-            if line.role not in ROLES:
+            if line.role not in allowed:
                 raise InputError(f"{line.line_id}: unknown role {line.role!r}")
             if not math.isfinite(line.points):
                 raise InputError(f"{line.line_id}: points must be finite")
@@ -193,8 +205,10 @@ class Ledger:
     raw: dict[str, float]                  # signed team totals S (own credits, negatives included)
     positive: dict[str, float]             # P: sum of positive lines
     negative: dict[str, float]             # N: sum of |negative lines|
-    offense: dict[str, float]              # O = P + opponent's N
+    offense: dict[str, float]              # O = P + opponent's N (value model: V, the net value that feeds the goals)
     items: dict[str, list[Contribution]] = field(default_factory=dict)
+    created: dict[str, float] = field(default_factory=dict)   # value model: value the side's skaters created
+    saved: dict[str, float] = field(default_factory=dict)     # value model: value the side's goalie took away (xGSA)
 
     @property
     def raw_margin(self) -> float:

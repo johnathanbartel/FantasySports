@@ -248,6 +248,26 @@ def main() -> None:
                   "with --yes the flagged game is voided, ready to be simulated again")
         code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--yes")
         check("Nothing to do" in out, "a game that is not flagged is never touched")
+
+        # ---- a game published under the earlier fixed-total scoring is only voided when asked ------------------------------------------------------
+        tick(at(SUN, 13, 40))                           # simulate it again (value model), then make it look like an old-model game with a period out
+        with SessionLocal() as db:
+            sim = service.get_sim(db, dg_id)
+            check(sim is not None and sim.provenance["window_state"]["schedule_verified"] is True, "(the voided game was created again on the next tick)")
+            prov = dict(sim.provenance)
+            prov.pop("model", None)
+            service.update_provenance(db, sim, prov)
+            sim.published_periods = 1
+            db.commit()
+        check(audit()["status"] == "old scoring model", "the audit calls a game published before the value model 'old scoring model'")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--yes")
+        with SessionLocal() as db:
+            check("Nothing to do" in out and service.get_sim(db, dg_id) is not None, "without --old-model such a game is left alone")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--old-model")
+        check("DRY RUN" in out and "would be voided" in out, "with --old-model a dry run lists it")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--old-model", "--yes")
+        with SessionLocal() as db:
+            check("Voided 1 game" in out and service.get_sim(db, dg_id) is None, "with --old-model --yes it is voided, to be simulated again by the value model")
         print("lineup freeze checks passed")
 
 

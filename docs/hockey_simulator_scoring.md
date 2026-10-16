@@ -47,3 +47,32 @@ The script's `provenance` (shown with the final snapshot) holds the adapter id a
 ## Not done / needs owner decisions
 
 Constants above; whether a level raw game should be allowed to end level; NHL hits (worth 0 today, so hitter credit rows raise an error if they ever carry points); using real team-level shot totals instead of the lineup's own attempts; fitting `T`, `σ` and `p` to data.
+
+
+## Value model (window games, adapter 2.0)
+
+Window games (the Sun-Tue / Wed-Thu / Fri-Sat matchups) are simulated by the **value model**. The formulas above (a fixed total `T`, shares, one margin error) are the earlier model; they still describe plain single-date games and any window game that already published periods under them (its provenance has no `model: "value"`; such a game keeps that model to its last period). Code: `loader._value_lines_for`, `attribution.build_value_ledger`, `progressive.normalize_value_through`. Checks: `scripts/verify_hockey_value_model.py`, `run_window_engine_audit.py`.
+
+**What creates value.** Credit is built straight from the stored shots and plays, not from the stored goal credit (which pays a flat 1.0 per goal).
+
+| Action | Value |
+|---|---|
+| Shot on goal, saved or scored | its xG, whatever the outcome. A goal's assists share `ASSIST_SHARE` (0.4) of that xG, primary 2/3 and secondary 1/3 (one assist takes it all); the shooter keeps the rest |
+| Block | the xG it prevented (the stored block credit, unchanged) |
+| Hit | `HIT_VALUE` (0.01) |
+| Takeaway | `TAKEAWAY_VALUE` (0.02) |
+| Goalie save | the xG of the shot he stopped (xGSA). A goal against costs him nothing: the shot's value already counts for the shooter |
+
+Hits: the fitted data in `pipeline.py` say a hit is worth about zero (slightly negative); `HIT_VALUE` is the owner's choice and can be set to 0.
+
+**Net value.** `C` = value a side's skaters created, `G` = value its goalie took away. Saves come off the opponent's created value, never below zero, and what a goalie saved beyond everything the opponent created is added to his own team:
+
+    x = C_home - G_away        y = G_home - C_away
+    V_home = max(0, x) + max(0, y)        V_away = max(0, -x) + max(0, -y)
+    V_home - V_away = x + y = S_home - S_away        (the goal differential is the true credit differential)
+
+**Goals.** Expected goals are `lambda = VALUE_SCALE x V` (2.6, provisional; `scripts/calibrate_hockey_value_scale.py` measures it from finished games). Value accrues as the periods are played, so after each period `V` is the cumulative net value and there is no fraction-of-game scaling. Each side gets a seeded bounded error (`VALUE_NOISE_SIGMA` 0.6, `VALUE_NOISE_CAP` 1.2 goals, scaled by the fraction of the game played). Goals so far are `round_half_up(lambda + error)`, never below zero and never below what is already published (the scoreboard only climbs). **Nothing fixes the total**: a quiet game has few goals and a busy one many. After the last period a level game gets one deciding goal for the side ahead on `lambda + error`, and a side whose expected margin is at least twice the error bound is never left trailing.
+
+**Story.** A side's goals are drawn, weighted by xG, from the side's shots (so a chance with more xG is likelier to be the goal); the other shots appear as shots, saves and blocks are ticker texture, and goals beyond the shots are unattributed team goals. Every shot of a lineup skater is a shot on the scoreboard, plus the filler shots; a goal the scoreboard invents adds no shot, so the shot count is known before the goals are.
+
+**Constants to confirm** (all in `model.py`, all provisional): `VALUE_SCALE`, `ASSIST_SHARE`, `HIT_VALUE`, `TAKEAWAY_VALUE`, `VALUE_NOISE_SIGMA`, `VALUE_NOISE_CAP`. Changing any changes every seed's output.
