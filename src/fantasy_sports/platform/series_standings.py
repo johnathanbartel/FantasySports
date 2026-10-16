@@ -55,6 +55,18 @@ class SeriesRecord:
         return self.games or self.total_days
 
 
+@dataclass(frozen=True)
+class StandingsRules:
+    """How a league ranks its teams: by points (points_win per win, points_tie per tie) or by win percentage."""
+    mode: str = "points"            # "points" | "win_pct"
+    points_win: int = 3
+    points_tie: int = 1
+
+
+def rules_for(league) -> StandingsRules:
+    return StandingsRules(league.standings_mode, league.points_per_win, league.points_per_tie)
+
+
 @dataclass
 class TeamStanding:
     team_id: int
@@ -71,12 +83,21 @@ class TeamStanding:
     away_ties: int = 0
     h2h_wins: int = 0  # wins over the other teams tied with this one on W-L and goal differential
     rank: int = 0
+    points: int = 0
+    win_pct: float = 0.0
+    primary: float | None = None    # what the league sorts on first (points or win %); None = the original wins/losses order
+
+    @property
+    def games_played(self) -> int:
+        return self.wins + self.losses + self.ties
 
     @property
     def goal_diff(self) -> int:
         return self.goals_for - self.goals_against
 
     def sort_key(self) -> tuple:
+        if self.primary is not None:
+            return (-self.primary, -self.goal_diff, -self.h2h_wins, -self.goals_for, self.goals_against)
         return (-self.wins, self.losses, -self.goal_diff, -self.h2h_wins, -self.goals_for, self.goals_against)
 
 
@@ -147,7 +168,9 @@ def _winner(g: GameRecord) -> int | None:
 
 
 def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: list[GameRecord],
-                      as_of: datetime.date | None = None) -> list[TeamStanding]:
+                      as_of: datetime.date | None = None, rules: StandingsRules | None = None) -> list[TeamStanding]:
+    """Without rules, the original order (wins, then losses). With a league's rules the order is by points or win percentage,
+    then goal differential, then the head-to-head and goal tiebreaks."""
     rows = {t: TeamStanding(t) for t in team_ids}
     results: list[tuple[int, int]] = []  # (winner, loser) per decided game
     for g in _counted(games, as_of):
@@ -163,9 +186,15 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
         w = _winner(g)
         if w is not None:
             results.append((w, g.away_team_id if w == g.home_team_id else g.home_team_id))
+    pw, pt = (rules.points_win, rules.points_tie) if rules else (3, 1)
+    for r in rows.values():
+        r.points = r.wins * pw + r.ties * pt
+        r.win_pct = (r.wins + 0.5 * r.ties) / r.games_played if r.games_played else 0.0
+        if rules:
+            r.primary = float(r.points) if rules.mode == "points" else r.win_pct
     buckets: dict[tuple, list[TeamStanding]] = {}
     for r in rows.values():
-        buckets.setdefault((r.wins, r.losses, r.goal_diff), []).append(r)
+        buckets.setdefault((r.primary if rules else (r.wins, r.losses), r.goal_diff), []).append(r)
     for members in buckets.values():
         ids = {m.team_id for m in members}
         if len(ids) < 2:

@@ -71,6 +71,10 @@ class LeagueSettingsRequest(BaseModel):
     keeper_draft_style: Literal["rookie_resign", "combined", "separate"] | None = None
     keeper_limit: int | None = Field(default=None, ge=0, le=100)
     pick_trade_seasons: int | None = Field(default=None, ge=1, le=10)
+    standings_mode: Literal["points", "win_pct"] | None = None
+    points_per_win: int | None = Field(default=None, ge=0, le=20)
+    points_per_tie: int | None = Field(default=None, ge=0, le=20)
+    playoff_teams: int | None = Field(default=None, ge=1, le=64)       # send null to go back to the default
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline")(_naive_utc)
@@ -155,6 +159,10 @@ class LeagueOut(ORMModel):
     keeper_deadline: datetime.datetime | None
     keepers_finalized: bool
     pick_trade_seasons: int
+    standings_mode: str
+    points_per_win: int
+    points_per_tie: int
+    playoff_teams: int | None
 
 
 class RolloverRequest(BaseModel):
@@ -749,12 +757,21 @@ class SeriesStandingOut(BaseModel):
     away_wins: int = 0
     away_losses: int = 0
     away_ties: int = 0
+    games_played: int = 0
+    points: int = 0
+    win_pct: float = 0.0
+    seed: int | None = None             # playoff seed, None if the team is outside the playoff field
+    division_winner: bool = False
 
 
 class SeriesStandingsOut(BaseModel):
     league_id: int
     as_of: datetime.date | None
     tiebreak_order: str
+    standings_mode: str = "points"
+    points_per_win: int = 3
+    points_per_tie: int = 1
+    playoff_teams: int = 0              # the field size in use (the league's setting, or the default)
     standings: list[SeriesStandingOut]
 
 

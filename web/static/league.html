@@ -1967,6 +1967,23 @@ async function renderLeagueSettings() {
       + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
   }
 
+  if (isHockey()) {
+    const nTeams = ov.teams.length, defPlayoff = Math.max(1, Math.floor(nTeams * 0.33 + 0.5));
+    const inUse = lg.playoff_teams || defPlayoff;
+    html += `<div class="card"><h3>Standings &amp; Playoffs</h3>` + (isCommissioner
+      ? `<p><label>Standings are sorted by <select id="standings-mode">
+            <option value="points"${lg.standings_mode === 'points' ? ' selected' : ''}>Points</option>
+            <option value="win_pct"${lg.standings_mode === 'win_pct' ? ' selected' : ''}>Win Percentage</option></select></label></p>
+         <p><label>Points for a win <input id="points-win" type="number" min="0" max="20" value="${lg.points_per_win}" style="width:4em"></label>
+            <label> Points for a tie <input id="points-tie" type="number" min="0" max="20" value="${lg.points_per_tie}" style="width:4em"></label>
+            <span class="muted">(used when sorting by points)</span></p>
+         <p><label>Playoff teams <input id="playoff-teams" type="number" min="1" max="${nTeams}" value="${inUse}" style="width:4em"></label>
+            <button id="standings-save">Save</button></p>
+         ${lg.playoff_teams ? '' : `<p class="note">How many teams should make the playoffs? Until you choose, the default is ${defPlayoff} (33% of ${nTeams} teams, rounded). Pick a number and save.</p>`}`
+      : `<p>Standings are sorted by <b>${lg.standings_mode === 'points' ? 'points (' + lg.points_per_win + ' for a win, ' + lg.points_per_tie + ' for a tie)' : 'win percentage'}</b>.</p>
+         <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}.</p>`)
+      + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential. The division winners take the top seeds and the rest of the field is seeded by rank (wild cards).</p></div>`;
+  }
   if (isKeeper || isDynasty) {
     html += `<div class="card"><h3>Draft Pick Trading</h3>` + (isCommissioner
       ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label> <button id="pick-trade-save">Save</button></p>`
@@ -2003,6 +2020,9 @@ async function renderLeagueSettings() {
   on('keeper-settings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
     keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
+  on('standings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
+    standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
+    points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10)})), 'Standings and playoff settings saved.'));
   on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)})), 'Pick trading saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
@@ -2088,8 +2108,11 @@ async function renderStandings() {
 
 // NHL standings: built from the simulated games the viewer may see (the same ones the scoreboard shows).
 async function renderHockeyStandings() {
-  const {standings} = await api(`/leagues/${LEAGUE_ID}/series-standings`);
+  const sres = await api(`/leagues/${LEAGUE_ID}/series-standings`);
+  const standings = sres.standings;
   const played = standings.some(r => r.wins + r.losses + r.ties > 0);
+  const pct = (v) => v.toFixed(3).replace(/^0/, '');
+  const sortedBy = sres.standings_mode === 'points' ? `points (${sres.points_per_win} for a win, ${sres.points_per_tie} for a tie)` : 'win percentage';
   const byConf = {};
   standings.forEach(r => {
     const t = teamsById[r.team_id];
@@ -2098,10 +2121,11 @@ async function renderHockeyStandings() {
   });
   const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
-    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
+    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then goal differential. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams - division winners (*) take the top seeds, then wild cards by rank.</p>`
+    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
-      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td></tr>`).join('')}
+      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + '</span>' : '<span class="muted">-</span>'}</td></tr>`).join('')}
         </tbody></table></div>`; }).join('') + '</div>';
 }
 

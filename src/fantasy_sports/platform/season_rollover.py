@@ -50,9 +50,10 @@ def final_standings(db: Session, league: League) -> list[dict]:
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league.id)}
     if league.series_length_days is not None:
         team_ids, series, games = series_standings.load_league(db, league.id)
-        rows = series_standings.compute_standings(team_ids, series, games)
+        rows = series_standings.compute_standings(team_ids, series, games, rules=series_standings.rules_for(league))
         return [{"rank": r.rank, "team_id": r.team_id, "team_name": names[r.team_id], "wins": r.wins, "losses": r.losses,
-                 "ties": r.ties, "goals_for": r.goals_for, "goals_against": r.goals_against} for r in rows]
+                 "ties": r.ties, "goals_for": r.goals_for, "goals_against": r.goals_against, "points": r.points,
+                 "win_pct": round(r.win_pct, 4)} for r in rows]
     rows = scoring.standings(db, league.id)
     return [{**r, "rank": i} for i, r in enumerate(rows, start=1)]
 
