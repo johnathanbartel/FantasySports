@@ -33,9 +33,12 @@ from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimEven
 from fantasy_sports.sports.hockey import pipeline
 from fantasy_sports.sports.hockey.models import GameEvent, NhlStandingsSnapshot
 from fantasy_sports.sports.hockey.simulator import loader, model, progressive
-from fantasy_sports.sports.hockey.simulator.attribution import box_score
+from fantasy_sports.sports.hockey.simulator.attribution import box_score, build_ledger
 from fantasy_sports.sports.hockey.simulator.division import CLOCK_TIMEZONE, REAL_PERIOD, Division, division_table
+from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
+from fantasy_sports.sports.hockey.simulator.timeline import filler_shots, place as timeline_place
 from fantasy_sports.sports.hockey.simulator.model import (
+    MAX_SHOT_EVENTS_PER_SIDE,
     ADAPTER_ID, ADAPTER_VERSION, DEFAULT_WINDOW_SECONDS, NOISE_CAP, PERIOD_SECONDS, PERIODS, CountingGame, HockeyGameInputs,
     SideInput,
 )
@@ -212,17 +215,62 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         service.append_period(db, sim, k, events, new_prov)
         prov, published = new_prov, k
         new_periods.append(k)
+    # Keep the clock, the stored choices and the live read-outs current (a lock may have passed, a projection may have
+    # firmed up, more of the feed may have arrived). Never touches events.
+    fresh = dict(prov)
     if not new_periods:
-        # Keep the clock and the stored choices current (a lock may have passed, a projection may have firmed up).
-        fresh = dict(prov)
         fresh["window_state"] = state | {"selections": selections}
         fresh["wall_clock"] = division.wall_clock().to_dict() if n else prov.get("wall_clock")
-        if fresh != prov:
-            service.update_provenance(db, sim, fresh)
+    if n:
+        fresh["live_shots"] = _live_shots(db, daily_game, home, away, assets, side_of, counting, selections, state, division,
+                                          published, seed)
+        fresh["sim_progress"] = _sim_progress(db, games, division, published, now)
+    if fresh != prov:
+        service.update_provenance(db, sim, fresh)
     service.sync(db, sim, now_utc)
     if new_periods:
         return TickResult("published", published, f"published period(s) {new_periods}")
     return TickResult("opened" if opened else "idle", published)
+
+
+def _sim_progress(db: Session, games: dict, division: Division, published: int, now: datetime.datetime) -> dict[str, int]:
+    """Per unpublished fantasy period, the percentage of its real periods that have ended AND are complete in the stored
+    feed: how far the simulator is from being able to run it. Read by the game page's Zamboni meter."""
+    out = {}
+    for k in range(published + 1, PERIODS + 1):
+        chunk = division.chunks[k - 1]
+        done = sum(1 for s in chunk if now >= s.start + REAL_PERIOD and real_period_complete(db, games[s.game_id], s.period))
+        out[str(k)] = int(100 * done / len(chunk)) if chunk else 0
+    return out
+
+
+def _live_shots(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team, assets: dict, side_of: dict,
+                counting: list[CountingGame], selections: dict, state: dict, division: Division, published: int,
+                seed: int) -> list[list]:
+    """Shots the simulator WILL publish for the periods it has not published yet, as [side, fantasy game second]: real
+    shot attempts, the shots behind earned goal credit, and the filler shots (their own seeded stream, so identical to
+    what the publish adds). Goals the scoreboard invents (inverted errors, team goals, the tie-break) are the only
+    shots missing. The page counts those whose second has passed on the periods' own clock, so shot totals build up as
+    the real periods are played, long before the simulation runs. Pure read: nothing here is a score."""
+    if published >= PERIODS or not selections:
+        return []
+    inputs = _inputs(db, daily_game, home, away, assets, side_of, counting, selections, state)
+    out: list[list] = []
+    for k in range(published + 1, PERIODS + 1):
+        only = restrict(inputs, division, {k})
+        ledger = build_ledger(only)
+        for side in ("home", "away"):
+            attempts = sorted(only.side(side).attempts, key=lambda a: (-a.xg, a.attempt_id))[:MAX_SHOT_EVENTS_PER_SIDE]
+            for a in attempts:
+                out.append([side, int(timeline_place(division.place(a.asset_id, a.real_second)))])
+            for item in ledger.items[side]:
+                if item.kind == "goal_credit":
+                    lead = next((l for l in item.lines if l.role == "shooter"), item.lines[0])
+                    out.append([side, int(timeline_place(division.place(lead.asset_id, lead.real_second)))])
+        for raw in filler_shots(inputs, division, k, derive_rng(seed, daily_game.id, f"filler:{k}")):
+            out.append([raw.side, int(raw.second)])
+    out.sort()
+    return out
 
 
 def _inputs(db: Session, daily_game: SeriesDailyGame, home: Team, away: Team, assets: dict, side_of: dict,

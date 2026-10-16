@@ -251,6 +251,33 @@ def watch_bound(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int) -
     return len(events)
 
 
+def live_shots(sim: SimulatorGame, events: list[SimulatorEvent], now: datetime.datetime) -> tuple[int, int]:
+    """(home, away) shots on goal as the viewer may see them: what the published events add up to, plus the shots the
+    script is known to be about to publish for later periods whose clock has already passed them (provenance
+    "live_shots" = [[side, game second], ...], kept by the sport adapter). Shots are not a spoiler; scores are."""
+    home = events[-1].home_shots if events else 0
+    away = events[-1].away_shots if events else 0
+    shape = shape_of(sim)
+    clock = shape.wall_clock
+    if sim.status != st.LIVE or clock is None:
+        return home, away
+    published = sim.published_periods or 0
+    local = clock.local(now)
+    progress: dict[int, float] = {}
+    for side, second in (sim.provenance or {}).get("live_shots") or []:
+        k = int(second) // shape.period_seconds + 1
+        if k <= published or k > shape.periods:
+            continue
+        if k not in progress:
+            progress[k] = clock.progress(k, local)
+        if second <= (k - 1) * shape.period_seconds + shape.period_seconds * progress[k]:
+            if side == "home":
+                home += 1
+            else:
+                away += 1
+    return home, away
+
+
 def period_phases(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int, now: datetime.datetime) -> list[dict]:
     """One entry per period: upcoming / in_progress (live, with the time left) / simulating (the real periods are over
     and the simulation has not published it yet: the intermission) / ready (published, not watched) / watched."""
@@ -259,6 +286,7 @@ def period_phases(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int,
     published = sim.published_periods or 0
     clock = shape.wall_clock
     local = clock.local(now) if clock is not None and sim.status == st.LIVE else None
+    sim_progress = (sim.provenance or {}).get("sim_progress") or {}
     out = []
     for k in range(1, shape.periods + 1):
         if k <= published:
@@ -267,7 +295,8 @@ def period_phases(sim: SimulatorGame, events: list[SimulatorEvent], cursor: int,
             continue
         progress = clock.progress(k, local) if local is not None else (1.0 if sim.status == st.FINAL else 0.0)
         if progress >= 1.0:
-            out.append({"period": k, "phase": "simulating", "seconds_remaining": 0, "last_seq": 0})
+            out.append({"period": k, "phase": "simulating", "seconds_remaining": 0, "last_seq": 0,
+                        "percent": int(sim_progress.get(str(k), 0)), "waiting_for": published + 1 if k > published + 1 else None})
         elif progress > 0.0:
             out.append({"period": k, "phase": "in_progress", "seconds_remaining": int(round(shape.period_seconds * (1.0 - progress))), "last_seq": 0})
         else:
@@ -308,10 +337,10 @@ def _progressive_state(sim: SimulatorGame, shape: st.GameShape, events: list[Sim
         view.period, view.seconds_remaining = st.clock_at(shape, st.public_elapsed(shape, sim.status, sim.started_at, now))
     view.shown_seq = cursor
     view.cursor_seq = reveal.cursor_seq if reveal else 0
-    if cursor > 0:                     # nothing is shown (the client prints "?") until a period has been watched
+    view.home_shots, view.away_shots = live_shots(sim, events, now)       # shots build up with the clock; they are no spoiler
+    if cursor > 0:                     # the score is hidden (the client prints "?") until a period has been watched
         totals = st.totals_through(events, cursor)
         view.home_score, view.away_score = totals.home_score, totals.away_score
-        view.home_shots, view.away_shots = totals.home_shots, totals.away_shots
     view.can_skip = any(p["phase"] == "ready" for p in phases) or (sim.status == st.FINAL and cursor < total)
     view.has_more = sim.status == st.LIVE or cursor < total
     view.is_complete = sim.status == st.FINAL and cursor == total

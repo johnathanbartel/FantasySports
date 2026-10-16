@@ -17,6 +17,7 @@ between "earned" and "published" is visible instead of hidden.
 from __future__ import annotations
 
 import datetime
+import types
 
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,8 @@ from fantasy_sports.sports.hockey.models import GameEvent
 from fantasy_sports.sports.hockey.simulator import loader, window_engine
 from fantasy_sports.sports.hockey.simulator.division import REAL_PERIOD, Division, is_overtime, real_period_of
 from fantasy_sports.sports.hockey.simulator.model import PERIODS, ROLES, CountingGame
+from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
+from fantasy_sports.sports.hockey.simulator.timeline import filler_shots
 
 ROLE_ORDER = ("shooter", "primary_assist", "secondary_assist", "blocker", "goalie")
 
@@ -106,7 +109,7 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         game = games[rec["game_id"]] if rec else min(cands, key=lambda g: (g.kickoff_at, g.id))
         at_home = real_team_of[aid] == game.home_team_id
         label = f"vs {labels.get(game.away_team_id, '')}" if at_home else f"@ {labels.get(game.home_team_id, '')}"
-        counting.append(CountingGame(aid, assets[aid].full_name, side_of[aid], game.id, game.kickoff_at, label))
+        counting.append(CountingGame(aid, assets[aid].full_name, side_of[aid], game.id, game.kickoff_at, label, assets[aid].position or ""))
         chosen[aid] = game.id
         pick[aid] = {
             "state": state, "source": rec["source"] if rec else "projected", "lock_at": lock_at.isoformat(),
@@ -138,6 +141,17 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         c["ot"] = c["ot"] or is_overtime(a.real_second)
     for c in cell.values():
         c["shots"] += c["goals"]
+    # The filler shots (seeded, fabricated for realism): the very ones the simulator publishes, so rows and scoreboard agree.
+    seed = prov.get("seed", daily_game.id)
+    shape = types.SimpleNamespace(counting_games=tuple(counting), home=types.SimpleNamespace(name=names["home"]),
+                                  away=types.SimpleNamespace(name=names["away"]))
+    filler: dict[tuple[int, int], int] = {}
+    for k in range(1, PERIODS + 1):
+        for raw in filler_shots(shape, division, k, derive_rng(seed, daily_game.id, f"filler:{k}")):
+            key = (raw.detail["asset_id"], raw.detail["real_period"])
+            filler[key] = filler.get(key, 0) + 1
+            c = cell.setdefault(key, {"points": 0.0, "by_role": {}, "goals": 0, "shots": 0, "ot": False})
+            c["shots"] += 1
 
     info = {c.asset_id: c for c in counting}
     published = out["published_periods"]
@@ -159,7 +173,7 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
                 "game_status": g.status, "real_period": s.period, "nominal_start": s.start.isoformat(),
                 "nominal_state": nominal, "feed_period": _feed_period(db, s.game_id), "feed_complete": complete,
                 "ot": c["ot"], "points": round(c["points"], 4), "by_role": {r: round(v, 4) for r, v in c["by_role"].items()},
-                "shots": c["shots"], "goals": c["goals"], "projected": pick[s.asset_id]["state"].startswith("projected")})
+                "shots": c["shots"], "filler_shots": filler.get((s.asset_id, s.period), 0), "goals": c["goals"], "projected": pick[s.asset_id]["state"].startswith("projected")})
         if k > published:
             if begun < k * n:
                 blockers.append(f"membership not certain yet: {begun} of the {k * n} real periods needed have begun")
@@ -208,7 +222,9 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
             "published_total": round(stored, 4), "expected_published": round(published_total, 4),
             "ties_out": abs(stored - published_total) < 1e-3})
 
+    shots = service.live_shots(sim, service._events(db, sim), now_utc) if sim is not None else (0, 0)
     out.update(
+        shots_on_goal={"home": shots[0], "away": shots[1]},
         state="live", players=players, periods=periods, counting_games=n, real_periods_pooled=division.pooled,
         chunk_size=division.chunk_size, real_periods_begun=begun,
         side_credit={s: round(sum(p["credit"][s] for p in periods), 4) for s in ("home", "away")},

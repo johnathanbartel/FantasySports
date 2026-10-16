@@ -104,6 +104,8 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                         period, remaining = st.clock_at(shape, elapsed)
                         g.current_period = period
                         g.seconds_remaining = min(remaining, 1200)
+                        if service.is_progressive(sim):
+                            g.home_shots, g.away_shots = service.live_shots(sim, sim_evs, now_utc)
                     if service.is_progressive(sim) and not is_ai_vs_ai:
                         # Period-by-period games: a viewer sees the score of the periods they have watched, no more.
                         mine = reveal_of.get((sim.id, viewer_user_id)) if viewer_user_id else None
@@ -113,7 +115,6 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                         watched_map[g.id] = cursor > 0
                         shown = st.totals_through(sim_evs, cursor)
                         g.home_score, g.away_score = shown.home_score, shown.away_score
-                        g.home_shots, g.away_shots = shown.home_shots, shown.away_shots
 
         nhl = db.query(Universe).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id).filter(
             LeagueUniverse.league_id == league.id, Universe.code == "nhl"

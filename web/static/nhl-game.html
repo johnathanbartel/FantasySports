@@ -68,9 +68,12 @@
   .tile-t{font-family:var(--font-heading);font-size:20px}
   .rink{position:relative;height:44px;border-radius:8px;background:linear-gradient(#eaf6ff,#cfe9fb);overflow:hidden;border:1px solid var(--color-divider)}
   .zam{position:absolute;left:0;bottom:2px;animation:zam-drive 5s ease-in-out infinite alternate}
+  .zam.meter{animation:none;left:calc((100% - 64px) * var(--pct) / 100);transition:left 1.2s ease}
+  .rink-fill{position:absolute;inset:0 auto 0 0;background:linear-gradient(#bfe3ff,#8fc9f2);width:calc(32px + (100% - 64px) * var(--pct) / 100);transition:width 1.2s ease}
+  .rink-label{font-size:13px;font-variant-numeric:tabular-nums}
   @keyframes zam-drive{from{left:0}to{left:calc(100% - 64px)}}
-  @media (prefers-reduced-motion:reduce){.zam{animation:none;left:calc(50% - 32px)}}
-  .reduced .zam{animation:none;left:calc(50% - 32px)}
+  @media (prefers-reduced-motion:reduce){.zam{animation:none}.zam.meter,.rink-fill{transition:none}}
+  .reduced .zam{animation:none}
   button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,#board-h:focus-visible{outline:3px solid var(--color-accent);outline-offset:2px}
   @media (max-width:720px){
     .wrap{padding:var(--space-4) 16px}
@@ -475,19 +478,21 @@ async function finishReplay() {
 // ---------- game centre (games published period by period) ----------
 // No veil: the clock is public and the score is what you have watched. Each period is simulated as the real ones end
 // (the Zamboni intermission), then "Watch period N now!" appears; highlights are never live, only published periods.
-function zamboniHtml() {
-  return `<div class="rink" aria-hidden="true"><svg class="zam" width="64" height="38" viewBox="0 0 64 38">
+// The Zamboni is the loading meter of the simulation: it drives from left to right as `pct` rises.
+function zamboniHtml(pct) {
+  return `<div class="rink" style="--pct:${pct}" role="progressbar" aria-label="Simulation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><div class="rink-fill"></div><svg class="zam meter" width="64" height="38" viewBox="0 0 64 38">
     <rect x="4" y="14" width="40" height="14" rx="3" fill="#f2f4f7" stroke="#6b7684"/><rect x="34" y="6" width="20" height="22" rx="3" fill="#2f6fd6"/>
     <rect x="38" y="9" width="12" height="9" rx="1" fill="#d6ecff"/><rect x="8" y="9" width="14" height="5" fill="#8a96a5"/>
-    <circle cx="14" cy="31" r="5" fill="#2b2f36"/><circle cx="44" cy="31" r="5" fill="#2b2f36"/><rect x="0" y="26" width="6" height="3" fill="#8a96a5"/></svg></div>`;
+    <circle cx="14" cy="31" r="5" fill="#2b2f36"/><circle cx="44" cy="31" r="5" fill="#2b2f36"/><rect x="0" y="26" width="6" height="3" fill="#8a96a5"/></svg></div>
+    <div class="rink-label muted">${pct}% simulated</div>`;
 }
 
 function hubSeconds() { return Math.floor((Date.now() - hub.readAt) / 1000); }
 
 function hubBoard() {
-  const hidden = state.home_score == null;
+  const hidden = state.home_score == null;      // the score is hidden until a period is watched; shots on goal are public
   const v = (x) => hidden ? '?' : x;
-  return {home_score: v(state.home_score), away_score: v(state.away_score), home_shots: v(state.home_shots), away_shots: v(state.away_shots), period: state.period};
+  return {home_score: v(state.home_score), away_score: v(state.away_score), home_shots: state.home_shots == null ? 0 : state.home_shots, away_shots: state.away_shots == null ? 0 : state.away_shots, period: state.period};
 }
 
 function hubFraction() { return state.status === 'FINAL' ? 1 : 1 - (state.seconds_remaining == null ? 1200 : state.seconds_remaining) / (state.period_seconds || 1200); }
@@ -497,7 +502,7 @@ function calloutHtml() {
   const first = G.firstReadyPeriod(phases);
   if (first) return `<div class="callout ready" id="callout" role="status">Watch period ${first} now! Its highlights are ready, and watching updates the score.</div>`;
   const sim = phases.find(p => p.phase === 'simulating');
-  if (sim) return `<div class="callout" id="callout" role="status">Intermission: period ${sim.period} is being simulated. The score updates after each intermission. Watch the highlights to find out!</div>`;
+  if (sim) return `<div class="callout" id="callout" role="status">Intermission: period ${sim.period} is being simulated. The Zamboni is currently on the simulator. The score updates after each intermission. Watch the highlights to find out!</div>`;
   const live = phases.find(p => p.phase === 'in_progress');
   if (live) return `<div class="callout" id="callout" role="status">Period ${live.period} in progress. The score updates after each intermission. Watch the highlights to find out!</div>`;
   if (state.status === 'FINAL') return `<div class="callout" id="callout" role="status">All periods are simulated. Watch the rest to see the final score and the box score.</div>`;
@@ -513,7 +518,7 @@ function tilesHtml() {
     const btn = t.action === 'watch' ? `<button type="button" class="btn btn-primary" data-hub="watch" data-p="${p.period}">Watch period ${p.period}</button>`
       : t.action === 'replay' ? `<button type="button" class="btn btn-secondary" data-hub="watch" data-p="${p.period}">Replay highlights</button>` : '';
     return `<section class="tile ${t.tone}" aria-label="Period ${p.period}"><div class="tile-h">Period ${p.period}</div>
-      ${p.phase === 'simulating' ? zamboniHtml() : ''}
+      ${p.phase === 'simulating' ? zamboniHtml(t.percent) : ''}
       <div class="tile-t">${esc(t.title)}</div>
       <div class="muted" ${p.phase === 'in_progress' ? `data-left="${p.seconds_remaining}"` : ''}>${esc(t.detail)}</div>${btn}</section>`;
   }).join('')}</div>`;

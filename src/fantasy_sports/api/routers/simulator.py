@@ -54,8 +54,35 @@ def read_contract():
             "event_kinds": list(contract.EVENT_KINDS), "max_events": contract.MAX_EVENTS}
 
 
+_LAST_SYNC: dict[int, float] = {}
+SYNC_EVERY_SECONDS = 15
+
+
+def _drive_window_engine(db: Session, game: SeriesDailyGame) -> None:
+    """A game page that is open is what is watching the game, so it must also be what moves it: ingest the feed and let
+    the window engine publish what is due, at most every SYNC_EVERY_SECONDS per league and server process. Without this
+    a period waits for someone to open the league page. Never raises."""
+    import logging
+    import time
+    if game.window_index is None or game.status == "FINAL":
+        return
+    league_id = game.series.league_id
+    now = time.monotonic()
+    if now - _LAST_SYNC.get(league_id, -1e9) < SYNC_EVERY_SECONDS:
+        return
+    _LAST_SYNC[league_id] = now
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, league_id)
+    except Exception:
+        logging.getLogger(__name__).exception("game page sync failed for league %s", league_id)
+        db.rollback()
+
+
 @router.get("/games/{daily_game_id}/state", response_model=SimStateOut)
 def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    game = _game(db, daily_game_id)
+    _drive_window_engine(db, game)
     game = _game(db, daily_game_id)
     sim = service.get_sim(db, daily_game_id)
     if sim is None:
