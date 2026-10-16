@@ -18,6 +18,34 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 
+def explain(db, dg, state, side, asset_id) -> None:
+    """Why no replacement was (or would be) found for a starter who sat out: every ranked player in his group, with the reason he is
+    skipped or accepted. Read-only."""
+    from fantasy_sports.platform import pecking_order as po
+    from fantasy_sports.platform.db.models.core import Team
+    from fantasy_sports.sports.hockey.simulator import window_engine as we
+
+    team = db.get(Team, dg.home_team_id if side == "home" else dg.away_team_id)
+    universe_id = we._universe_id(db, dg.series.league_id)
+    games = {g.id: g for g in we.window_games(db, universe_id, dg.calendar_date, dg.calendar_date_end)}
+    roster = po.roster_players(db, team.id)
+    by_asset = {aid: pl for _, (aid, pl) in roster.items()}
+    window_real = {t for g in games.values() for t in (g.home_team_id, g.away_team_id)}
+    order = po.load_order(db, team.id)
+    player = we.frozen_player(db, by_asset, asset_id)
+    group = next((g for g in po.GROUPS if player.id in order[g]), po.GROUP_BY_POSITION.get(player.position))
+    taken = set(state["lineup"][side])
+    print(f"      pecking order {group} of {team.name}: {[roster[p][1].full_name for p in order[group] if p in roster] or 'EMPTY'}")
+    for pid in order[group]:
+        if pid not in roster:
+            print(f"      - player {pid}: not on the active roster (dropped or on the injured list)")
+            continue
+        aid, pl = roster[pid]
+        why = ("already in the lineup" if aid in taken else "his real team has no game in the window" if pl.real_team_id not in window_real
+               else "ok - would be the replacement")
+        print(f"      - {pl.full_name}: {why}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--game", type=int, required=True, help="daily (window) game id")
@@ -56,8 +84,10 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 rows = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=game.id).all())
                 toi = rows.get(aid)
-                print(f"  {name}: game {game.id} status={game.status} game_has_toi_rows={bool(rows)} his_toi={toi} "
-                      f"sat_out={window_engine.sat_out(db, game, aid)}")
+                out = window_engine.sat_out(db, game, aid)
+                print(f"  {name}: game {game.id} status={game.status} game_has_toi_rows={bool(rows)} his_toi={toi} sat_out={out}")
+                if out:
+                    explain(db, dg, state, side, aid)
         db.rollback()
     return 0
 
