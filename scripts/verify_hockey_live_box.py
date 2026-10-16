@@ -250,8 +250,9 @@ def main() -> None:
             entry.on_injured_list = True
             db.commit()
         d = box(at(TUE, 22, 30))
-        gone = d["lineups"]["home"]["dropped_from_matchup"]
-        check([g["player"] for g in gone] == ["One D4"] and d["counting_games"] == 11, "a frozen starter put on the injured list is named as not counted, and the matchup shrinks to 11")
+        check(d["lineups"]["home"]["left_roster_still_counted"] == ["One D4"] and d["counting_games"] == 12,
+              "a frozen starter put on the injured list is named, and still counts: the lineup is frozen")
+
         print("live box score checks passed")
 
 

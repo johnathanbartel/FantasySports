@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po
 from fantasy_sports.platform.db.models.core import (
-    Game, LeagueUniverse, RealTeam, SeriesDailyGame, SimulatorEvent, Team, Universe,
+    DraftableAsset, Game, LeagueUniverse, RealTeam, SeriesDailyGame, SimulatorEvent, Team, Universe,
 )
 from fantasy_sports.platform.simulator import service, wallclock
 from fantasy_sports.platform.simulator.contract import CONTRACT_VERSION, SimEventInput, SimScript
@@ -109,6 +109,17 @@ def select_game(db: Session, universe_id: int, asset_id: int, candidates: list[G
     return {"game_id": best.game_id, "source": "no_standings", "lock_at": lock_at.isoformat()}
 
 
+def frozen_player(db: Session, by_asset: dict, asset_id: int):
+    """The Player of a frozen starter. The lineup is frozen at the first kickoff, so a starter who has since been dropped,
+    traded or put on the injured list (and so is no longer in the team's active roster) still counts for the lineup that
+    froze him. Looking him up in the roster alone raised KeyError and stopped the whole game from publishing."""
+    pl = by_asset.get(asset_id)
+    if pl is not None:
+        return pl
+    asset = db.get(DraftableAsset, asset_id)
+    return asset.player if asset is not None else None
+
+
 def real_period_complete(db: Session, game: Game, period: int) -> bool:
     """Whether the stored feed shows real period `period` of `game` complete: the game is final, or play from a later
     period exists. Overtime is part of period 3, so period 3 needs a final game."""
@@ -176,7 +187,10 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
     for side in ("home", "away"):
         by_asset = {aid: pl for _, (aid, pl) in rosters[side].items()}
         for aid in state["lineup"][side]:
-            side_of[aid], assets[aid], real_team_of[aid] = side, by_asset[aid], by_asset[aid].real_team_id
+            pl = frozen_player(db, by_asset, aid)
+            if pl is None:
+                continue
+            side_of[aid], assets[aid], real_team_of[aid] = side, pl, pl.real_team_id
     selections = dict(state["selections"])
     counting: list[CountingGame] = []
     for aid in sorted(assets):

@@ -108,6 +108,7 @@ function lineupsHtml(d) {
       ${g.vacancies.length ? `<div class="pill2 warn" style="margin-top:4px">${g.vacancies.length} vacancy: ${esc(g.vacancies.join(', '))}</div>` : ''}</td></tr>`).join('');
     return `<h3 style="font-size:16px;margin:var(--space-3) 0 4px">${esc(t.team)} · ${t.frozen_starters} starters · ${t.ranked_count} of ${t.roster_size} rostered players ranked</h3>
       <div class="tbl-wrap"><table class="table"><tbody>${groups}</tbody></table></div>
+      ${t.left_roster_still_counted && t.left_roster_still_counted.length ? `<p class="muted" style="margin:6px 0 0"><strong>Left the active roster since the lock, still counted (the lineup is frozen):</strong> ${t.left_roster_still_counted.map(esc).join(', ')}</p>` : ''}
       ${t.dropped_from_matchup && t.dropped_from_matchup.length ? `<p style="margin:6px 0 0"><strong>Frozen starters the matchup is NOT counting:</strong> ${t.dropped_from_matchup.map(x => esc(x.player) + ' (' + esc(x.reason) + ')').join('; ')}</p>` : ''}
       ${t.unranked.length ? `<p class="muted" style="margin:6px 0 0"><strong>Rostered but not ranked (cannot start):</strong> ${t.unranked.map(u => esc(u.player) + ' (' + esc(u.position) + ', ' + u.games + ' game' + (u.games === 1 ? '' : 's') + ')').join('; ')}</p>` : ''}`;
   }).join('');
