@@ -115,6 +115,11 @@ def main() -> None:
                 db.add(g)
                 db.flush()
                 games[key] = g
+            earlier = Game(universe_id=nhl.id, week_id=week.id, home_team_id=real["BOS"].id, away_team_id=real["NYR"].id, home_score=1, away_score=0,
+                           kickoff_at=datetime.datetime.combine(SUN - datetime.timedelta(days=1), datetime.time(19)), status="final")
+            db.add(earlier)                                  # an earlier game, outside the window, whose ice times were stored: they are being collected
+            db.flush()
+            db.add(PlayerGameToi(game_id=earlier.id, draftable_asset_id=f1["C1"], toi_seconds=900))
             for abbr, pts in (("BOS", 10), ("TOR", 12), ("NYR", 8), ("MTL", 6)):
                 db.add(NhlStandingsSnapshot(universe_id=nhl.id, real_team_id=real[abbr].id, as_of_date=SUN, points=pts, games_played=5))
 
@@ -187,7 +192,14 @@ def main() -> None:
 
         # Fan1's G1 and G2 never played (G1 listed with 0, G2 not even dressed); Fan2's D1 was a healthy scratch. Game A has no stored ice times.
         finish("A", store=False)
-        finish("B", absent=[f1["G2"], f2["D1"]], zero=[f1["G1"]])
+        finish("B", store=False)
+        tick(at(SUN, 23, 0))
+        check(published() == 0, "a counting game that is final but has no ice times yet holds publishing (the boxscore can lag)")
+        with SessionLocal() as db:                           # the boxscore arrives
+            g = db.get(Game, ids["B"])
+            toi = {a: (0 if a == f1["G1"] else 1100) for ab in ("NYR", "MTL") for a in on_team[ab] if a not in (f1["G2"], f2["D1"])}
+            sync.store_game_toi(db, g.id, {str(a): s for a, s in toi.items()}, {str(a): a for a in toi})
+            db.commit()
         with SessionLocal() as db:
             rows = {a: s for a, s in db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=ids["B"])}
             check(rows[f1["G1"]] == 0 and f1["G2"] not in rows and f2["D1"] not in rows and rows[f1["G3"]] == 1100, "game B's ice times are stored")
