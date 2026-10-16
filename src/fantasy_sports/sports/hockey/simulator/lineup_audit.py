@@ -99,16 +99,22 @@ def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None, s
 
 
 def resimulate_locked(db: Session, league_id: int, game_ids: list[int] | None = None, execute: bool = False,
-                      since: datetime.date | None = None, progress=None, include_old_model: bool = False) -> list[dict]:
+                      since: datetime.date | None = None, progress=None, include_old_model: bool = False,
+                      everything: bool = False, keep: list[int] | None = None) -> list[dict]:
     """Void the simulation of every window game the audit calls "locked, differs" (or only those of `game_ids`; with
     `include_old_model` also games still on the earlier scoring model), so the next
     window-engine sync simulates it again from the stored feed on a lineup resolved on the full schedule. A dry run (the default)
-    only reports. Games in any other state are never touched. Flushes, does not commit. Returns what was (or would be) done."""
+    only reports. Games in any other state are never touched. With `everything`, EVERY game that has a simulation (in `since` or later) is
+    voided whatever the audit says, except the ids in `keep`. Flushes, does not commit. Returns what was (or would be) done."""
     out = []
     for entry in lineup_audit(db, league_id, since=since, progress=progress, started_only=True):
         if game_ids is not None and entry["daily_game_id"] not in game_ids:
             continue
-        if entry["status"] != "locked, differs" and not (include_old_model and entry["status"] == "old scoring model"):
+        if everything and entry["daily_game_id"] in (keep or []):
+            out.append({"daily_game_id": entry["daily_game_id"], "action": "kept (not re-simulated)", "sides": entry["sides"]})
+            continue
+        flagged = entry["status"] == "locked, differs" or (include_old_model and entry["status"] == "old scoring model")
+        if not everything and not flagged:
             out.append({"daily_game_id": entry["daily_game_id"], "action": f"left alone ({entry['status']})", "sides": entry["sides"]})
             continue
         if execute:
