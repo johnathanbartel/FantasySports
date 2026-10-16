@@ -616,6 +616,7 @@ class SeriesDailyGameOut(ORMModel):
     game_score_rating: int = 50
     status: str
     owner_watched: bool = False
+    highlights_ready: bool = False   # the viewer has a simulated period of this game they have not watched yet
 
 
 
