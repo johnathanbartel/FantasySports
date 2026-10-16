@@ -67,7 +67,7 @@ function slotRow(r) {
     <td class="num">P${r.real_period}${r.ot ? ' + OT' : ''}</td><td>${esc(dt(r.nominal_start))}</td>
     <td><span class="pill2 ${c}">${label}</span></td>
     <td>${r.feed_complete ? '<span class="pill2 ok">complete</span>' : `<span class="pill2 warn">feed at P${r.feed_period || '–'}</span>`}</td>
-    <td class="num">${r.shots}</td><td class="num">${r.goals}</td>
+    <td class="num" title="${r.filler_shots} of these are fabricated filler shots">${r.shots}</td><td class="num">${r.goals}</td>
     <td class="num ${cls(r.points)}"><strong>${pts(r.points)}</strong></td><td class="muted">${esc(roles)}</td></tr>`;
 }
 
@@ -78,7 +78,7 @@ function periodHtml(p, names) {
   const why = p.waiting_on.length ? `<p class="why muted">Waiting on: ${p.waiting_on.map(esc).join('; ')}.</p>` : '';
   return `<div class="tbl-wrap"><table class="table"><caption style="text-align:left;font-weight:600;padding:8px 0 2px">Fantasy period ${p.fantasy_period} · ${p.real_periods} real periods ${status}
       <div class="muted" style="font-weight:400">Earned so far: ${esc(names.away)} ${pts(p.credit.away)} · ${esc(names.home)} ${pts(p.credit.home)}${goals}</div>${why}</caption>
-    <thead><tr><th scope="col">Player</th><th scope="col">Fantasy team</th><th scope="col">Real game</th><th class="num" scope="col">Real period</th><th scope="col">Nominal start</th><th scope="col">Clock</th><th scope="col">Stored feed</th><th class="num" scope="col">SOG</th><th class="num" scope="col">G</th><th class="num" scope="col">Earned</th><th scope="col">By role</th></tr></thead>
+    <thead><tr><th scope="col">Player</th><th scope="col">Fantasy team</th><th scope="col">Real game</th><th class="num" scope="col">Real period</th><th scope="col">Nominal start</th><th scope="col">Clock</th><th scope="col">Stored feed</th><th class="num" scope="col">SOG (incl. filler)</th><th class="num" scope="col">G</th><th class="num" scope="col">Earned</th><th scope="col">By role</th></tr></thead>
     <tbody>${p.rows.map(slotRow).join('')}</tbody></table></div>`;
 }
 

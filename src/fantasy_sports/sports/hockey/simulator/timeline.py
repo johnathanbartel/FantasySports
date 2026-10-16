@@ -133,7 +133,7 @@ def filler_shots(inputs: HockeyGameInputs, division: Division, period: int, rng:
             real_second = (slot.period - 1) * (GAME_SECONDS // PERIODS) + rng.randint(15, GAME_SECONDS // PERIODS - 15)
             out.append(_Raw(place(division.place(asset_id, real_second)), start + len(out), "shot", game.side,
                             f"{game.player_name} puts a shot on net for {team[game.side]}",
-                            {"origin": "filler", "asset_id": asset_id, "fabricated": True}, d_shot=1))
+                            {"origin": "filler", "asset_id": asset_id, "real_period": slot.period, "fabricated": True}, d_shot=1))
     return out
 
 
@@ -145,6 +145,11 @@ def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int],
     raw: list[_Raw] = []
     names = {"home": inputs.home.name, "away": inputs.away.name}
     draw = lambda: division.draw(rng, period)
+    # A goal the scoreboard invents (an inverted error, a team goal, the tie-break) is a shot too in a whole-game script, where
+    # the tie-out needs shots >= goals. In a period-by-period game it is not: the shots of a period are then known before its
+    # goals are (window_engine._live_shots), so the scoreboard's shot count and the highlights can never disagree. Every skater
+    # who plays gets a filler shot, so shots stay above goals.
+    invented_shot = 1 if period is None else 0
     goal_times: dict[str, list[int]] = {"home": [], "away": []}
 
     def add(second, kind, side, headline, detail, d_score=0, d_shot=0, tie=0):
@@ -181,14 +186,14 @@ def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int],
                 second, tie = draw(), 0
             detail["goal_for"] = side
             goal_times[side].append(place(second))
-            add(second, "score", side, text, detail, d_score=1, d_shot=1, tie=tie)
+            add(second, "score", side, text, detail, d_score=1, d_shot=1 if item.kind == "goal_credit" else invented_shot, tie=tie)
 
         base_missing = base_goals - len(chosen)
         for _ in range(base_missing):
             second = draw()
             goal_times[side].append(place(second))
             add(second, "score", side, f"GOAL! {names[side]} score",
-                {"origin": "team", "credits": [], "goal_for": side}, d_score=1, d_shot=1)
+                {"origin": "team", "credits": [], "goal_for": side}, d_score=1, d_shot=invented_shot)
 
         # Goal-sized items that did not make the scoreboard.
         for item in goal_items:
@@ -228,7 +233,7 @@ def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int],
         latest = max([t for s in goal_times.values() for t in s], default=0)
         second = min(GAME_SECONDS - 1, max(rng.randint(*TIEBREAK_WINDOW), latest + 1))
         add(second, "score", side, f"GOAL! {names[side]} score the deciding goal",
-            {"origin": "team", "credits": [], "goal_for": side, "tiebreak": True}, d_score=1, d_shot=1, tie=TIEBREAK_LAST)
+            {"origin": "team", "credits": [], "goal_for": side, "tiebreak": True}, d_score=1, d_shot=invented_shot, tie=TIEBREAK_LAST)
 
     raw.sort(key=lambda r: (r.second, r.tie, r.order))
     return raw

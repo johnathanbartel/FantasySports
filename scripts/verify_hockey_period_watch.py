@@ -209,6 +209,7 @@ def main() -> None:
         sim_pct = v.period_phases[0]["percent"]
         check(0 <= sim_pct < 100, "the Zamboni meter shows how much of the feed has arrived (not done yet)")
         before_publish = v.home_shots + v.away_shots
+        before_sides = (v.home_shots, v.away_shots)
         check(before_publish >= early and before_publish > 0, "shots on goal have built up during the period, before anything is published")
         later = view(at(SUN, 19, 40))
         check(early <= later.home_shots + later.away_shots <= before_publish, "shot totals only climb as the clock advances")
@@ -218,7 +219,7 @@ def main() -> None:
         tick(at(SUN, 20, 5))
         v = view(at(SUN, 20, 5))
         check(v.period_phases[0]["phase"] == "ready" and v.home_score is None, "Period 1 is ready to watch and the score is still hidden")
-        check(v.home_shots + v.away_shots >= before_publish, "publishing never lowers the shot count")
+        check((v.home_shots, v.away_shots) == before_sides, "publishing a period leaves the scoreboard's shot count exactly as it was: the estimate IS the highlights")
         check(v.can_skip, "...and the viewer may reveal what has been simulated")
         check(events_for(at(SUN, 20, 5)) == ([], 0) or events_for(at(SUN, 20, 5))[1] == 0, "without watching, no events are served")
         check(refuses(service.progress, at(SUN, 20, 5), 1) == "NOT_WATCHING", "progress needs a watch first")
@@ -291,6 +292,17 @@ def main() -> None:
             with SessionLocal() as db2:
                 again = service._events(db2, service.get_sim(db2, dg_id))
                 check([e.headline for e in again] == [e.headline for e in evs], "the published events are stable")
+        # ---- one shot count everywhere ----------------------------------------------------------------------------------------
+        from fantasy_sports.sports.hockey.simulator import live_box
+        with SessionLocal() as db:
+            sim = service.get_sim(db, dg_id)
+            evs = service._events(db, sim)
+            box = live_box.live_box_score(db, db.get(SeriesDailyGame, dg_id), at(TUE, 22, 30))
+            side_rows = {s: sum(r["shots"] for p in box["periods"] for r in p["rows"] if r["side"] == s) for s in ("home", "away")}
+            shot_events = {s: sum(1 for e in evs if e.team_side == s and e.kind == "shot") + sum(1 for e in evs if e.team_side == s and e.kind == "score" and e.detail.get("origin") == "earned") for s in ("home", "away")}
+            check((evs[-1].home_shots, evs[-1].away_shots) == (shot_events["home"], shot_events["away"]), "the shot total equals the shot events in the highlights (goals from invented credit add none)")
+            check((box["shots_on_goal"]["home"], box["shots_on_goal"]["away"]) == (evs[-1].home_shots, evs[-1].away_shots), "the box score page's shot total equals the highlights")
+            check(side_rows == {"home": evs[-1].home_shots, "away": evs[-1].away_shots}, "the box score's per-period rows add up to the same number")
         print("period-by-period watching checks passed")
 
 
