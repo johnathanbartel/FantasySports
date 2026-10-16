@@ -49,6 +49,13 @@ from fantasy_sports.sports.hockey.simulator.model import (
 from fantasy_sports.sports.hockey.simulator.progressive import restrict
 
 
+# A final game's boxscore can lag behind the game going final. While a counting game is final and its ice times are not stored, nothing is
+# published (a published period never changes, so a starter who sat out could no longer be replaced early), but only this long after
+# kickoff: a boxscore that never arrives must not stop a game for good, and then nobody is treated as having sat out. Nothing is held in
+# a database that has never stored any ice times (the boxscore ingest is not running there).
+ICE_TIME_GRACE = datetime.timedelta(hours=6)
+
+
 @dataclass
 class TickResult:
     status: str                 # waiting / opened / published / idle
@@ -254,6 +261,18 @@ def _assemble(db: Session, universe_id: int, state: dict, rosters: dict, relevan
     return frame
 
 
+def awaiting_ice_times(db: Session, counting: list[CountingGame], games: dict, now: datetime.datetime) -> bool:
+    """Whether a counting game is final but its boxscore ice times are not stored yet, within ICE_TIME_GRACE of its kickoff."""
+    if db.query(PlayerGameToi.id).first() is None:
+        return False
+    for game_id in {c.game_id for c in counting}:
+        game = games.get(game_id)
+        if (game is not None and game.status == "final" and now < game.kickoff_at + ICE_TIME_GRACE
+                and db.query(PlayerGameToi.id).filter_by(game_id=game_id).first() is None):
+            return True
+    return False
+
+
 def real_period_complete(db: Session, game: Game, period: int) -> bool:
     """Whether the stored feed shows real period `period` of `game` complete: the game is final, or play from a later
     period exists. Overtime is part of period 3, so period 3 needs a final game."""
@@ -352,7 +371,8 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
     # ---- publish every period that is due -----------------------------------------------------------------------------
     published = sim.published_periods or 0
     new_periods = []
-    while published < PERIODS and n:
+    waiting_for_ice_times = awaiting_ice_times(db, counting, games, now)
+    while published < PERIODS and n and not waiting_for_ice_times:
         k = published + 1
         chunk = division.chunks[k - 1]
         begun = sum(1 for s in division.slots if s.start <= now)

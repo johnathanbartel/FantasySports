@@ -268,6 +268,19 @@ def main() -> None:
         code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--old-model", "--yes")
         with SessionLocal() as db:
             check("Voided 1 game" in out and service.get_sim(db, dg_id) is None, "with --old-model --yes it is voided, to be simulated again by the value model")
+
+        # ---- --all re-simulates every game with a simulation, except the ones named with --keep ------------------------------------------------
+        tick(at(SUN, 13, 50))
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--all", "--keep", dg_id)
+        with SessionLocal() as db:
+            check("kept (not re-simulated)" in out and "DRY RUN" not in out and "Nothing to do" in out and service.get_sim(db, dg_id) is not None,
+                  "--all --keep leaves the kept game alone (nothing else has a simulation here)")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--all")
+        with SessionLocal() as db:
+            check("would be voided" in out and "DRY RUN" in out and service.get_sim(db, dg_id) is not None, "--all without --yes is a dry run")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--since", "2026-01-01", "--all", "--yes")
+        with SessionLocal() as db:
+            check("Voided 1 game" in out and service.get_sim(db, dg_id) is None, "--all --yes voids a game the audit does not flag")
         print("lineup freeze checks passed")
 
 
