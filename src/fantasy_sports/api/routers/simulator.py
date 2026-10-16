@@ -65,6 +65,18 @@ def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     return _state_out(view, game)
 
 
+@router.get("/games/{daily_game_id}/live-box")
+def read_live_box(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Transparency view of an NHL window matchup: which real periods fell in which fantasy period and the credit earned
+    in each so far. Read-only and deliberately unveiled (no reveal row needed, nothing is recorded for the viewer)."""
+    game = _game(db, daily_game_id)
+    from fantasy_sports.sports.hockey.simulator import live_box
+    try:
+        return live_box.live_box_score(db, game, service.utcnow())
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/games/{daily_game_id}/events", response_model=SimEventsOut)
 def read_events(daily_game_id: int, after_seq: int = 0, limit: int = 200, db: Session = Depends(get_db),
                 user: User = Depends(current_user)):

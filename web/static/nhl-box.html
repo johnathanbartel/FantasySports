@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Box Score - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+  body{margin:0}
+  .wrap{max-width:1180px;margin:0 auto;padding:var(--space-6) var(--space-4)}
+  .muted{color:color-mix(in srgb,var(--color-text) 60%,transparent)}
+  .banner{display:none;padding:var(--space-3);border-radius:var(--radius-md);margin-bottom:var(--space-4);background:var(--color-accent-2-100);color:var(--color-accent-2-800)}
+  .tbl-wrap{overflow-x:auto}
+  .table td.num,.table th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .table{font-size:13px}
+  .neg{color:var(--color-accent-2-700)}
+  .sec{padding:var(--space-4);margin-top:var(--space-4)}
+  .sec h2{font-size:20px;margin:0 0 4px}
+  .pill2{display:inline-block;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--color-neutral-200)}
+  .pill2.ok{background:var(--color-accent-100);color:var(--color-accent-800)}
+  .pill2.live{background:#ffdede;color:#8a0010}
+  .pill2.warn{background:#fff6dc;color:#5c4500}
+  .sum{display:flex;gap:var(--space-6);flex-wrap:wrap;margin:var(--space-2) 0}
+  .sum b{font-size:22px;font-variant-numeric:tabular-nums}
+  .proj{opacity:.65;font-style:italic}
+  .why{font-size:12px;margin:4px 0}
+  details summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+  <div class="nav">
+    <span class="nav-brand">NHL</span>
+    <div style="display:flex;gap:var(--space-4);flex-wrap:wrap">
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
+      <a href="#" id="nav-league">League home</a>
+      <a href="#" id="nav-game">Highlights</a>
+      <a href="#" aria-current="page">Live box score</a>
+    </div>
+  </div>
+  <main class="wrap">
+    <div class="card-kicker" id="kicker">Live box score</div>
+    <h1 id="title" style="margin:0 0 var(--space-2)">Box score</h1>
+    <p class="muted" style="margin:0">Unveiled and read-only: shows every real NHL period, the fantasy period it was assigned to, and the credit earned in it so far. Refreshes every 15 seconds. <span id="updated"></span></p>
+    <div id="err" class="banner" role="alert"></div>
+    <div id="out"><div class="card sec"><p class="muted">Loading…</p></div></div>
+  </main>
+</div>
+<script src="/static/session.js"></script>
+<script>
+const GAME_ID = Number(new URLSearchParams(location.search).get('daily_game_id'));
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pts = (v) => { const n = Math.round(v * 100) / 100; return (n > 0 ? '+' : '') + (Object.is(n, -0) ? '0.00' : n.toFixed(2)); };
+const cls = (v) => v < 0 ? 'neg' : '';
+const hm = (iso) => { const m = /T(\d{2}):(\d{2})/.exec(iso || ''); if (!m) return ''; const h = +m[1]; return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`; };
+const dt = (iso) => (iso || '').slice(5, 10) + ' ' + hm(iso);
+const ROLES = [['shooter','Goals'],['primary_assist','A1'],['secondary_assist','A2'],['blocker','Blk'],['goalie','G']];
+const NOMINAL = {not_started: ['not started', ''], in_progress: ['in progress', 'live'], ended: ['ended', 'ok']};
+
+function slotRow(r) {
+  const [label, c] = NOMINAL[r.nominal_state];
+  const roles = Object.entries(r.by_role).map(([k, v]) => `${k.replace('_assist', '')} ${pts(v)}`).join(', ');
+  return `<tr class="${r.projected ? 'proj' : ''}"><th scope="row">${esc(r.player)}</th><td>${esc(r.team)}</td>
+    <td>${esc(r.game)} · ${esc(r.game_date)} <span class="muted">(${esc(r.game_status)})</span></td>
+    <td class="num">P${r.real_period}${r.ot ? ' + OT' : ''}</td><td>${esc(dt(r.nominal_start))}</td>
+    <td><span class="pill2 ${c}">${label}</span></td>
+    <td>${r.feed_complete ? '<span class="pill2 ok">complete</span>' : `<span class="pill2 warn">feed at P${r.feed_period || '–'}</span>`}</td>
+    <td class="num">${r.shots}</td><td class="num">${r.goals}</td>
+    <td class="num ${cls(r.points)}"><strong>${pts(r.points)}</strong></td><td class="muted">${esc(roles)}</td></tr>`;
+}
+
+function periodHtml(p, names) {
+  const g = p.published_goals;
+  const status = p.published ? '<span class="pill2 ok">published</span>' : '<span class="pill2 warn">not published</span>';
+  const goals = g ? ` · scoreboard goals this period: ${esc(names.away)} ${g.away}, ${esc(names.home)} ${g.home} (running ${g.away_total}–${g.home_total}; expected margin ${g.expected_margin.toFixed(2)}, noise ${pts(g.noise)}${g.ratcheted ? ', ratcheted' : ''})` : '';
+  const why = p.waiting_on.length ? `<p class="why muted">Waiting on: ${p.waiting_on.map(esc).join('; ')}.</p>` : '';
+  return `<div class="tbl-wrap"><table class="table"><caption style="text-align:left;font-weight:600;padding:8px 0 2px">Fantasy period ${p.fantasy_period} · ${p.real_periods} real periods ${status}
+      <div class="muted" style="font-weight:400">Earned so far: ${esc(names.away)} ${pts(p.credit.away)} · ${esc(names.home)} ${pts(p.credit.home)}${goals}</div>${why}</caption>
+    <thead><tr><th scope="col">Player</th><th scope="col">Fantasy team</th><th scope="col">Real game</th><th class="num" scope="col">Real period</th><th scope="col">Nominal start</th><th scope="col">Clock</th><th scope="col">Stored feed</th><th class="num" scope="col">SOG</th><th class="num" scope="col">G</th><th class="num" scope="col">Earned</th><th scope="col">By role</th></tr></thead>
+    <tbody>${p.rows.map(slotRow).join('')}</tbody></table></div>`;
+}
+
+function playersHtml(d) {
+  const side = (s) => {
+    const rows = d.players.filter(p => p.side === s);
+    const tot = [0, 0, 0, 0, 0];
+    rows.forEach(p => { p.by_fantasy_period.forEach((v, i) => tot[i] += v); tot[3] += p.total; tot[4] += p.published_total; });
+    return `<div class="tbl-wrap"><table class="table"><caption style="text-align:left;font-weight:600;padding:8px 0">${esc(d.teams[s])} · starters</caption>
+      <thead><tr><th scope="col">Player</th><th class="num" scope="col">Fantasy P1</th><th class="num" scope="col">P2</th><th class="num" scope="col">P3</th><th class="num" scope="col">Earned total</th><th class="num" scope="col">Published total</th><th scope="col">Counting game (why)</th></tr></thead>
+      <tbody>${rows.map(p => { const sel = p.selection; const cands = sel.candidates.map(c => `${c.chosen ? '★ ' : ''}${esc(c.opponent)} ${esc(dt(c.kickoff))}`).join(' | ');
+        return `<tr><th scope="row">${esc(p.player)} <span class="muted">${esc(p.position)}</span></th>
+          ${p.by_fantasy_period.map(v => `<td class="num ${cls(v)}">${pts(v)}</td>`).join('')}
+          <td class="num ${cls(p.total)}"><strong>${pts(p.total)}</strong></td>
+          <td class="num ${cls(p.published_total)}">${pts(p.published_total)}${p.ties_out ? '' : ' <span class="pill2 warn" title="Differs from the earned credit in published periods">≠</span>'}</td>
+          <td class="muted">${esc(sel.source)} · ${esc(sel.state)}<br>${cands}</td></tr>`; }).join('')}
+        <tr><th scope="row">Total</th>${tot.slice(0, 5).map(v => `<td class="num ${cls(v)}"><strong>${pts(v)}</strong></td>`).join('')}<td></td></tr></tbody></table></div>`;
+  };
+  return side('away') + side('home');
+}
+
+function render(d) {
+  const n = d.teams;
+  $('title').textContent = `${n.away} at ${n.home}`;
+  document.title = `${n.away} at ${n.home} · Live box score`;
+  $('kicker').textContent = `NHL window ${d.window_index} · ${d.window.start} to ${d.window.end}`;
+  if (d.state !== 'live') { $('out').innerHTML = `<div class="card sec"><p>${esc(d.note)}</p></div>`; return; }
+  const pub = d.published_periods;
+  $('out').innerHTML = `
+  <section class="card sec"><h2>Summary</h2>
+    <div class="sum">
+      <div><span class="muted">Scoreboard</span><br><b>${esc(n.away)} ${d.scoreboard.away} – ${d.scoreboard.home} ${esc(n.home)}</b></div>
+      <div><span class="muted">Status</span><br><b>${esc(d.status)}</b></div>
+      <div><span class="muted">Fantasy periods published</span><br><b>${pub} of 3</b></div>
+      <div><span class="muted">Earned credit</span><br><b>${esc(n.away)} ${pts(d.side_credit.away)} · ${esc(n.home)} ${pts(d.side_credit.home)}</b></div>
+    </div>
+    <p class="muted" style="margin:0">${d.counting_games} counting games → ${d.real_periods_pooled} real periods pooled (3 per game), cut into 3 fantasy periods of ${d.chunk_size} in order of nominal start. ${d.real_periods_begun} have nominally begun. Lineup ${d.lineup_frozen ? 'frozen at first kickoff' : 'is a projection (not frozen until ' + esc(dt(d.first_kickoff)) + ')'}. Local time now ${esc(dt(d.now_local))}.</p>
+    <ul class="muted" style="margin:var(--space-2) 0 0">${d.notes.map(t => `<li>${esc(t)}</li>`).join('')}</ul>
+  </section>
+  <section class="card sec"><h2>Starters by fantasy period</h2>${playersHtml(d)}</section>
+  <section class="card sec"><h2>Which real periods are in which fantasy period</h2>
+    <p class="muted" style="margin:0">Faded rows are projected on a player's earliest game because his counting game has not locked yet.</p>
+    ${d.periods.map(p => periodHtml(p, n)).join('')}</section>
+  <details class="card sec"><summary>Raw JSON</summary><pre style="overflow:auto;font-size:11px">${esc(JSON.stringify(d, null, 2))}</pre></details>`;
+}
+
+let timer = null;
+async function load() {
+  clearTimeout(timer);
+  try {
+    const me = await FSC.current();
+    if (!me) throw new Error('You need to be signed in.');
+    const d = await FSC.api(`/simulator/games/${GAME_ID}/live-box`);
+    $('err').style.display = 'none';
+    const open = Array.from(document.querySelectorAll('details[open]')).length;
+    render(d);
+    if (open) { const el = document.querySelector('details'); if (el) el.open = true; }
+    $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString() + '.';
+    if (d.state === 'live') { /* league/nav links need ids */ }
+    const g = await FSC.api(`/simulator/games/${GAME_ID}/state`).catch(() => null);
+    if (g && g.league_id) { $('nav-league').href = `/static/league.html?league_id=${g.league_id}`; }
+    $('nav-game').href = `/static/nhl-game.html?daily_game_id=${GAME_ID}`;
+  } catch (e) { $('err').textContent = (e && e.message) || 'Could not load the box score.'; $('err').style.display = 'block'; }
+  timer = setTimeout(load, 15000);
+}
+if (!GAME_ID) { $('err').textContent = 'Open this page from the schedule: add ?daily_game_id=…'; $('err').style.display = 'block'; }
+else load();
+</script>
+</body>
+</html>
