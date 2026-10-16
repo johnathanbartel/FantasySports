@@ -98,13 +98,43 @@ def build_events(inputs: HockeyGameInputs, ledger: Ledger, norm: Normalized, rng
 
 
 def build_period_events(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int], tiebreak_side: str | None,
-                        rng: random.Random, division: Division, period: int, start_totals: dict[str, int]) -> list[SimEventInput]:
+                        rng: random.Random, division: Division, period: int, start_totals: dict[str, int],
+                        filler_rng: random.Random | None = None) -> list[SimEventInput]:
     """The events of ONE fantasy period for a game published period by period: `inputs`/`ledger` hold only the credit of
     that period's real periods, `goals` the goals to ADD in it, `start_totals` the running totals before it. The result
     runs from the period's first event to its period_end and then, for the last period, game_end (otherwise the next
     period_start). seq numbers start at 1 and are renumbered by the service when appended."""
     raw = collect_raw(inputs, ledger, goals, tiebreak_side, rng, division, period=period)
+    if filler_rng is not None:
+        raw = sorted(raw + filler_shots(inputs, division, period, filler_rng, start=len(raw)), key=lambda r: (r.second, r.tie, r.order))
     return _assemble_period(inputs, raw, period, start_totals, tiebreak_side)
+
+
+FILLER_SHOTS = (1, 3)   # shots added per skater per fantasy period, inclusive
+
+
+def filler_shots(inputs: HockeyGameInputs, division: Division, period: int, rng: random.Random, start: int = 0) -> list[_Raw]:
+    """Fabricated shots for realism: every skater who plays in this fantasy period (goalies excluded) gets 1-3 shots on
+    net, placed inside one of his real periods in it. They are never goals, carry no credit and change no player's
+    points; they only move the shot counter and the ticker. Marked origin "filler" so the box score can say so.
+    Seeded by its own stream (the caller's), so the story's draws, and therefore every goal, are unchanged."""
+    names = {c.asset_id: c for c in inputs.counting_games}
+    team = {"home": inputs.home.name, "away": inputs.away.name}
+    slots: dict[int, list] = {}
+    for slot in division.chunks[period - 1]:
+        slots.setdefault(slot.asset_id, []).append(slot)
+    out: list[_Raw] = []
+    for asset_id in sorted(slots):
+        game = names.get(asset_id)
+        if game is None or game.position.upper() == "G":
+            continue
+        for n in range(rng.randint(*FILLER_SHOTS)):
+            slot = rng.choice(slots[asset_id])
+            real_second = (slot.period - 1) * (GAME_SECONDS // PERIODS) + rng.randint(15, GAME_SECONDS // PERIODS - 15)
+            out.append(_Raw(place(division.place(asset_id, real_second)), start + len(out), "shot", game.side,
+                            f"{game.player_name} puts a shot on net for {team[game.side]}",
+                            {"origin": "filler", "asset_id": asset_id, "fabricated": True}, d_shot=1))
+    return out
 
 
 def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int], tiebreak_side: str | None,

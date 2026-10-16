@@ -497,11 +497,11 @@ function calloutHtml() {
   const first = G.firstReadyPeriod(phases);
   if (first) return `<div class="callout ready" id="callout" role="status">Watch period ${first} now! Its highlights are ready, and watching updates the score.</div>`;
   const sim = phases.find(p => p.phase === 'simulating');
-  if (sim) return `<div class="callout" id="callout" role="status">Intermission: period ${sim.period} is being simulated. You will be told when its highlights are ready.</div>`;
+  if (sim) return `<div class="callout" id="callout" role="status">Intermission: period ${sim.period} is being simulated. The score updates after each intermission. Watch the highlights to find out!</div>`;
   const live = phases.find(p => p.phase === 'in_progress');
-  if (live) return `<div class="callout" id="callout" role="status">Period ${live.period} in progress. Highlights appear here after each period has been simulated.</div>`;
+  if (live) return `<div class="callout" id="callout" role="status">Period ${live.period} in progress. The score updates after each intermission. Watch the highlights to find out!</div>`;
   if (state.status === 'FINAL') return `<div class="callout" id="callout" role="status">All periods are simulated. Watch the rest to see the final score and the box score.</div>`;
-  return `<div class="callout" id="callout" role="status">Nothing to watch yet. The score stays hidden until you watch a period's highlights.</div>`;
+  return `<div class="callout" id="callout" role="status">Nothing to watch yet. The score updates after each intermission. Watch the highlights to find out!</div>`;
 }
 
 function tilesHtml() {
@@ -528,7 +528,7 @@ function renderHub() {
   $('screen').dataset.mode = 'hub';
   hub.firstReady = G.firstReadyPeriod(state.period_phases);
   $('screen').innerHTML = boardHtml(hubBoard(), state, {clock: G.liveClockLabel(state, hubSeconds()), fraction: hubFraction()}) + calloutHtml() + tilesHtml() + skipHtml() +
-    `<p class="muted" style="font-size:13px">The clock is live. Scores stay hidden until you watch a period's highlights, and a period can only be watched after the one before it.</p>`;
+    `<p class="muted" style="font-size:13px">The clock is live. The score updates after each intermission: watch the highlights to find out! Shot counts include routine shots that never become goals. A period can only be watched after the one before it.</p>`;
   document.querySelectorAll('[data-hub]').forEach(b => {
     b.onclick = () => b.dataset.hub === 'skip' ? hubSkip() : watchPeriod(Number(b.dataset.p));
   });
