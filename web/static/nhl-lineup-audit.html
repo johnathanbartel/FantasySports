@@ -71,9 +71,21 @@ async function load() {
       ${d.games.map(g => { const st = STATUS[g.status] || ['', g.status, '']; return `<tr><td>#${g.daily_game_id}</td><td>W${g.window_index} · ${esc(g.start)} to ${esc(g.end)} <span class="muted">(${g.stored_games_in_window} real games stored)</span></td>
         <td><span class="pill2 ${st[0]}" title="${esc(st[2])}">${esc(st[1])}</span>${g.repaired ? '<div class="muted" style="font-size:12px">repaired ' + esc(g.repaired.at.replace('T', ' ')) + ' UTC</div>' : ''}</td>
         <td class="num">${g.published_periods}</td><td>${sideHtml(g.sides.away)}${sideHtml(g.sides.home)}</td>
-        <td><a href="/static/nhl-box.html?daily_game_id=${g.daily_game_id}">Box score</a></td></tr>`; }).join('')}
+        <td><a href="/static/nhl-box.html?daily_game_id=${g.daily_game_id}">Box score</a>
+          ${g.status === 'locked, differs' ? `<div style="margin-top:6px"><button type="button" class="btn btn-primary" data-resim="${g.daily_game_id}" style="font-size:11px;padding:4px 10px">Void and re-simulate</button></div>` : ''}</td></tr>`; }).join('')}
       </tbody></table></div>`;
+    document.querySelectorAll('[data-resim]').forEach(b => { b.onclick = () => resim(Number(b.dataset.resim)); });
   } catch (e) { $('err').textContent = (e && e.message) || 'Could not load the audit.'; $('err').style.display = 'block'; $('out').innerHTML = ''; }
+}
+
+async function resim(id) {
+  if (!confirm(`Void game #${id} and simulate it again?\n\nIts events and everyone's watched progress are deleted. It is then simulated again from the stored feed with a lineup resolved on the full schedule, so every score, shot and highlight in it can change. This cannot be undone.`)) return;
+  try {
+    const r = await FSC.post(`/simulator/games/${id}/resimulate`);
+    $('err').style.display = 'none';
+    alert(r.message || 'Done.');
+    load();
+  } catch (e) { $('err').textContent = (e && (e.message || e.detail)) || 'Could not re-simulate this game.'; $('err').style.display = 'block'; }
 }
 if (!LEAGUE_ID) { $('err').textContent = 'Open this page with ?league_id=…'; $('err').style.display = 'block'; $('out').innerHTML = ''; }
 else load();

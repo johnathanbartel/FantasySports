@@ -356,6 +356,23 @@ def main() -> None:
             check((evs[-1].home_shots, evs[-1].away_shots) == (shot_events["home"], shot_events["away"]), "the shot total equals the shot events in the highlights (goals from invented credit add none)")
             check((box["shots_on_goal"]["home"], box["shots_on_goal"]["away"]) == (evs[-1].home_shots, evs[-1].away_shots), "the box score page's shot total equals the highlights")
             check(side_rows == {"home": evs[-1].home_shots, "away": evs[-1].away_shots}, "the box score's per-period rows add up to the same number")
+        # ---- void and re-simulate -----------------------------------------------------------------------------------------------------------
+        with SessionLocal() as db:
+            dg = db.get(SeriesDailyGame, dg_id)
+            check(service.reset_simulation(db, dg) is True, "a simulation can be voided")
+            db.commit()
+        with SessionLocal() as db:
+            dg = db.get(SeriesDailyGame, dg_id)
+            sim_gone = service.get_sim(db, dg_id) is None
+            check(sim_gone and dg.status == "SCHEDULED" and (dg.home_score, dg.away_score) == (0, 0) and dg.series.status == "SCHEDULED",
+                  "voiding clears the simulation and returns the game and its series to scheduled")
+            check(db.query(SimulatorEvent).count() == 0, "...and deletes the events")
+        service.utcnow = lambda: at(TUE, 23, 0)
+        tick(at(TUE, 23, 0))
+        with SessionLocal() as db:
+            sim = service.get_sim(db, dg_id)
+            check(sim is not None and sim.status == "FINAL" and sim.published_periods == 3 and sim.provenance["window_state"]["schedule_verified"] is True,
+                  "the next tick simulates it again from the stored feed, on a verified lineup, all the way to final")
         print("period-by-period watching checks passed")
 
 

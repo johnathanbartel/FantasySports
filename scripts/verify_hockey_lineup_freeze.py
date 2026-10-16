@@ -203,6 +203,42 @@ def main() -> None:
             a = lineup_audit.lineup_audit(db, db.query(League).first().id)[0]
             check(a["status"] == "locked, differs", "an unverified lineup with published periods that differs from the full schedule is reported as locked")
             db.rollback()
+        # ---- the re-simulate endpoint: commissioner only, and only for a game the audit calls locked and wrong -------------------------------------
+        import types
+        from fastapi.testclient import TestClient
+        from fantasy_sports.api.auth import current_user
+        from fantasy_sports.api.main import app
+        with SessionLocal() as db:
+            commissioner_id = db.query(League).first().commissioner_user_id
+            other = User(email="o@example.com", display_name="O")
+            db.add(other)
+            db.commit()
+            other_id = other.id
+        client = TestClient(app)
+
+        def as_user(uid):
+            app.dependency_overrides[current_user] = lambda: types.SimpleNamespace(id=uid, email="x", display_name="x")
+
+        as_user(other_id)
+        check(client.post(f"/simulator/games/{dg_id}/resimulate").status_code == 403, "a player who is not the commissioner is refused")
+        as_user(commissioner_id)
+        r = client.post(f"/simulator/games/{dg_id}/resimulate")
+        check(r.status_code == 409 and r.json()["detail"]["code"] == "NOT_NEEDED", "the commissioner is refused for a game whose lineup is fine")
+        with SessionLocal() as db:                  # make the game look like the bad case: old freeze, a period published, lineup differs
+            sim = service.get_sim(db, dg_id)
+            prov = dict(sim.provenance)
+            state = {k: v for k, v in prov["window_state"].items() if k != "schedule_verified"}
+            state["lineup"] = {side: ids[:-2] for side, ids in state["lineup"].items()}
+            prov["window_state"] = state
+            service.update_provenance(db, sim, prov)
+            sim.published_periods = 1
+            db.commit()
+        check(audit()["status"] == "locked, differs", "(the audit now calls it locked and wrong)")
+        r = client.post(f"/simulator/games/{dg_id}/resimulate")
+        check(r.status_code == 200 and r.json()["status"] == "reset", "the commissioner can void it")
+        with SessionLocal() as db:
+            check(service.get_sim(db, dg_id) is None and db.get(SeriesDailyGame, dg_id).status == "SCHEDULED", "its simulation is gone, ready to be simulated again")
+        app.dependency_overrides.clear()
         print("lineup freeze checks passed")
 
 
