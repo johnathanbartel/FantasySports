@@ -203,27 +203,27 @@ def main() -> None:
             a = lineup_audit.lineup_audit(db, db.query(League).first().id)[0]
             check(a["status"] == "locked, differs", "an unverified lineup with published periods that differs from the full schedule is reported as locked")
             db.rollback()
-        # ---- the re-simulate endpoint: commissioner only, and only for a game the audit calls locked and wrong -------------------------------------
-        import types
-        from fastapi.testclient import TestClient
-        from fantasy_sports.api.auth import current_user
-        from fantasy_sports.api.main import app
+        # ---- the operator scripts (never the web app): audit is read-only, re-simulation is a dry run unless --yes ---------------------------------
+        import contextlib
+        import io
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import audit_hockey_lineups
+        import resimulate_hockey_games
+
         with SessionLocal() as db:
-            commissioner_id = db.query(League).first().commissioner_user_id
-            other = User(email="o@example.com", display_name="O")
-            db.add(other)
-            db.commit()
-            other_id = other.id
-        client = TestClient(app)
+            league_id = db.query(League).first().id
 
-        def as_user(uid):
-            app.dependency_overrides[current_user] = lambda: types.SimpleNamespace(id=uid, email="x", display_name="x")
+        def run(module, *argv):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = module.main([str(x) for x in argv])
+            return code, buf.getvalue()
 
-        as_user(other_id)
-        check(client.post(f"/simulator/games/{dg_id}/resimulate").status_code == 403, "a player who is not the commissioner is refused")
-        as_user(commissioner_id)
-        r = client.post(f"/simulator/games/{dg_id}/resimulate")
-        check(r.status_code == 409 and r.json()["detail"]["code"] == "NOT_NEEDED", "the commissioner is refused for a game whose lineup is fine")
+        code, out = run(audit_hockey_lineups, "--league", league_id)
+        check(code == 0 and "3 window games" in out and "[frozen, differs]" in out, "the audit script prints every window game with its status")
+        code, out = run(audit_hockey_lineups, "--league", league_id + 999)
+        check(code == 2 and f"{league_id}:" in out, "a wrong league id is refused and the real league ids are listed (a game id is not a league id)")
+
         with SessionLocal() as db:                  # make the game look like the bad case: old freeze, a period published, lineup differs
             sim = service.get_sim(db, dg_id)
             prov = dict(sim.provenance)
@@ -234,11 +234,18 @@ def main() -> None:
             sim.published_periods = 1
             db.commit()
         check(audit()["status"] == "locked, differs", "(the audit now calls it locked and wrong)")
-        r = client.post(f"/simulator/games/{dg_id}/resimulate")
-        check(r.status_code == 200 and r.json()["status"] == "reset", "the commissioner can void it")
+        code, out = run(resimulate_hockey_games, "--league", league_id)
         with SessionLocal() as db:
-            check(service.get_sim(db, dg_id) is None and db.get(SeriesDailyGame, dg_id).status == "SCHEDULED", "its simulation is gone, ready to be simulated again")
-        app.dependency_overrides.clear()
+            check(code == 0 and "DRY RUN" in out and service.get_sim(db, dg_id) is not None, "without --yes the re-simulation only reports and changes nothing")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--game", dg_id + 1000, "--yes")
+        with SessionLocal() as db:
+            check("Nothing to do" in out and service.get_sim(db, dg_id) is not None, "another game id is left alone, even with --yes")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--yes")
+        with SessionLocal() as db:
+            check("Voided 1 game" in out and service.get_sim(db, dg_id) is None and db.get(SeriesDailyGame, dg_id).status == "SCHEDULED",
+                  "with --yes the flagged game is voided, ready to be simulated again")
+        code, out = run(resimulate_hockey_games, "--league", league_id, "--yes")
+        check("Nothing to do" in out, "a game that is not flagged is never touched")
         print("lineup freeze checks passed")
 
 

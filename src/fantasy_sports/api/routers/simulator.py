@@ -91,37 +91,6 @@ def read_state(daily_game_id: int, db: Session = Depends(get_db), user: User = D
     return _state_out(view, game)
 
 
-@router.get("/leagues/{league_id}/lineup-audit")
-def read_lineup_audit(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """Every window game of the league: the lineup that was frozen against what the pecking order gives on the schedule stored
-    now. Read-only."""
-    from fantasy_sports.sports.hockey.simulator import lineup_audit
-    try:
-        return {"league_id": league_id, "games": lineup_audit.lineup_audit(db, league_id)}
-    except (ValueError, KeyError) as e:
-        raise HTTPException(400, str(e))
-
-
-@router.post("/games/{daily_game_id}/resimulate")
-def resimulate_game(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    """Commissioner only. Voids a window game that was simulated from a wrong lineup (the lineup audit says "locked, differs"):
-    its events and every viewer's progress are deleted and the next sync simulates it again from the stored feed, with the lineup
-    resolved on the full schedule. Refused for any other game."""
-    game = _game(db, daily_game_id)
-    if game.window_index is None:
-        raise HTTPException(409, {"code": "NOT_WINDOW_GAME", "message": "Only NHL window games can be simulated again"})
-    league_id = game.series.league_id
-    assert_commissioner(db, user, league_id)
-    from fantasy_sports.sports.hockey.simulator import lineup_audit
-    audit = lineup_audit.lineup_audit(db, league_id, only_game_id=daily_game_id)
-    if not audit or audit[0]["status"] != "locked, differs":
-        raise HTTPException(409, {"code": "NOT_NEEDED", "message": "This game's lineup is not flagged as locked and wrong by the lineup audit"})
-    service.reset_simulation(db, game)
-    db.commit()
-    return {"status": "reset", "daily_game_id": daily_game_id,
-            "message": "The simulation was voided. It is simulated again on the next sync, from the stored feed."}
-
-
 @router.get("/games/{daily_game_id}/live-box")
 def read_live_box(daily_game_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Transparency view of an NHL window matchup: which real periods fell in which fantasy period and the credit earned
