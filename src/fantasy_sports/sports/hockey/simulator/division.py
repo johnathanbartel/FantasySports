@@ -76,18 +76,24 @@ class Division:
 
     # ---- construction ------------------------------------------------------------------------------------------
     @classmethod
-    def build(cls, games: Iterable[CountingGame]) -> "Division":
-        pooled = []
+    def build(cls, games: Iterable[CountingGame], late: Iterable[int] = ()) -> "Division":
+        """`late` are the asset ids of substitutes added after earlier fantasy periods were published (a starter who got no
+        ice time was replaced, window_engine.apply_substitutions). Periods already published cannot change, so a late
+        substitute's three real periods are not pooled: they all go into the LAST fantasy period, which makes it larger."""
+        late = frozenset(late)
+        pooled, extra = [], []
         for g in games:
             for n in (1, 2, 3):
-                pooled.append((g.kickoff_at + (n - 1) * REAL_PERIOD, g.game_id, g.asset_id, n))
+                (extra if g.asset_id in late else pooled).append((g.kickoff_at + (n - 1) * REAL_PERIOD, g.game_id, g.asset_id, n))
         pooled.sort()
+        extra.sort()
         total = len(pooled)
         if total % PERIODS:
             raise InputError("the pooled real periods must come in threes")
         size = total // PERIODS
         slots = [RealPeriodSlot(asset, game, n, start, (i // size) + 1 if size else 1)
                  for i, (start, game, asset, n) in enumerate(pooled)]
+        slots += [RealPeriodSlot(asset, game, n, start, PERIODS) for start, game, asset, n in extra]
         return cls(slots)
 
     @classmethod

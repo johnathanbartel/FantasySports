@@ -28,7 +28,7 @@ from fantasy_sports.platform.db.models.core import (
     DraftableAsset, Game, League, LeagueSeries, LeagueUniverse, Player, RealTeam, SeriesDailyGame, Universe, Week,
 )
 from fantasy_sports.platform.simulator import service
-from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, NhlStandingsSnapshot, Shot, ShotCredit
+from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, NhlStandingsSnapshot, PlayerGameToi, Shot, ShotCredit
 from fantasy_sports.sports.hockey.pipeline import (
     BlockXgEstimator, EventRecord, ShotRecord, process_game, week_start,
     window_of, window_dates,
@@ -37,6 +37,7 @@ from fantasy_sports.sports.hockey.simulator import loader
 
 SCHEDULE_URL = "https://api-web.nhle.com/v1/schedule/{date}"
 PBP_URL = "https://api-web.nhle.com/v1/gamecenter/{game}/play-by-play"
+BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game}/boxscore"
 ROSTER_URL = "https://api-web.nhle.com/v1/roster/{team}/current"
 STANDINGS_URL = "https://api-web.nhle.com/v1/standings/{date}"
 HEADERS = {"User-Agent": "FantasySportsPlatform-NHLSync/1.0"}
@@ -187,6 +188,56 @@ def ensure_standings_snapshot(db: Session, nhl: Universe, as_of: datetime.date) 
     return store_standings_snapshot(db, nhl, as_of, fetch_standings(as_of))
 
 
+def parse_toi_seconds(value) -> int:
+    """"MM:SS" (or "H:MM:SS") -> seconds; anything unreadable is 0."""
+    try:
+        parts = [int(p) for p in str(value).split(":")]
+    except (TypeError, ValueError):
+        return 0
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return max(seconds, 0)
+
+
+def parse_boxscore_toi(payload: dict | None) -> dict[str, int]:
+    """NHL player id (str) -> ice time in seconds, for every player the boxscore lists (forwards, defense and goalies of both
+    teams; a dressed backup goalie who never played is listed with 0). Healthy scratches are not listed. Empty when the payload
+    has no player stats. Pure."""
+    out: dict[str, int] = {}
+    stats = (payload or {}).get("playerByGameStats") or {}
+    for side in ("homeTeam", "awayTeam"):
+        for group in ("forwards", "defense", "goalies"):
+            for row in (stats.get(side) or {}).get(group) or []:
+                if row.get("playerId") is not None:
+                    out[str(row["playerId"])] = parse_toi_seconds(row.get("toi"))
+    return out
+
+
+def store_game_toi(db: Session, game_id: int, toi_by_ref: dict[str, int], asset_by_ref: dict[str, int]) -> int:
+    """Store a game's ice times (insert-only: a game that already has rows is left alone). Returns the rows added."""
+    if not toi_by_ref or db.query(PlayerGameToi.id).filter_by(game_id=game_id).first():
+        return 0
+    rows = [PlayerGameToi(game_id=game_id, draftable_asset_id=asset_by_ref[ref], toi_seconds=secs)
+            for ref, secs in sorted(toi_by_ref.items()) if ref in asset_by_ref]
+    db.add_all(rows)
+    db.flush()
+    return len(rows)
+
+
+def ensure_game_toi(db: Session, game: Game, nhl_game_id, asset_by_ref: dict[str, int]) -> str:
+    """Fetch and store the boxscore ice times of a FINAL game that has none yet. A failed fetch stores nothing (so nobody is
+    treated as having sat out) and is tried again on the next ingest. Returns what happened, for the ingest report."""
+    if game.status != "final":
+        return "not final"
+    if db.query(PlayerGameToi.id).filter_by(game_id=game.id).first():
+        return "kept"
+    toi = parse_boxscore_toi(_fetch_json(BOXSCORE_URL.format(game=nhl_game_id)))
+    if not toi:
+        return "FETCH FAILED: the boxscore could not be read"
+    return f"stored {store_game_toi(db, game.id, toi, asset_by_ref)} ice times"
+
+
 def _shot_clock_seconds(period: int, clock_str: str) -> int:
     try:
         minutes, seconds = clock_str.split(":")
@@ -217,7 +268,8 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         pass
     has_shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).count() > 0 if game_ids else False
     all_final = bool(games_for_day) and all(g.status == "final" for g in games_for_day)
-    if has_shots and all_final:
+    have_toi = {r[0] for r in db.query(PlayerGameToi.game_id).filter(PlayerGameToi.game_id.in_(game_ids)).distinct()} if game_ids else set()
+    if has_shots and all_final and have_toi >= set(game_ids):
         report["schedule"] = "skipped: every game is final and stored"
         return len(games_for_day)
 
@@ -334,6 +386,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 existing_shot_count = db.query(Shot).filter_by(game_id=game.id).count()
                 if existing_shot_count > 0 and game.status == "final":
                     game_report["pbp"] = "kept: final and already stored"
+                    game_report["toi"] = ensure_game_toi(db, game, nhl_game_id, asset_by_ref)
                     games_inserted += 1
                     continue
 
@@ -347,6 +400,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 stored_events = db.query(GameEvent.id).filter_by(game_id=game.id).count()
                 if stored_events and stored_events == n_plays:
                     game_report["pbp"] = f"unchanged: {n_plays} events already stored"
+                    game_report["toi"] = ensure_game_toi(db, game, nhl_game_id, asset_by_ref)
                     games_inserted += 1
                     continue
 
@@ -507,6 +561,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
                 db.add_all(event_credit_rows)
                 db.flush()
                 game_report["pbp"] = f"stored {len(events_to_add)} events, {len(shots_to_add)} shots"
+                game_report["toi"] = ensure_game_toi(db, game, nhl_game_id, asset_by_ref)
                 games_inserted += 1
         except Exception as exc:
             game_report["error"] = f"{type(exc).__name__}: {exc}"[:200]

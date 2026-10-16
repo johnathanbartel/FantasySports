@@ -135,3 +135,18 @@ class NhlStandingsSnapshot(Base):
     points: Mapped[int] = mapped_column(Integer)
     games_played: Mapped[int] = mapped_column(Integer, default=0)
     fetched_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PlayerGameToi(Base):
+    """Ice time of one dressed player in one real game, read from the NHL boxscore once the game is final. A game whose
+    boxscore was stored has a row for every player who was dressed (a backup goalie who never played shows 0), and no row for
+    a healthy scratch. So for a game with any row, "got no ice time" = no row, or a row with 0 seconds. A game with no rows has
+    not had its boxscore stored: nothing is known about its players' ice time and nobody is treated as having sat out."""
+
+    __tablename__ = "player_game_toi"
+    __table_args__ = (UniqueConstraint("game_id", "draftable_asset_id", name="uq_player_game_toi"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    toi_seconds: Mapped[int] = mapped_column(Integer, default=0)

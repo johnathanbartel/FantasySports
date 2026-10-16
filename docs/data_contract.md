@@ -268,6 +268,10 @@ Disabled-by-default interfaces for AI commentary, shared music and video/audio c
 
 Separate league mode with contests, pairings, per-contest salaries, draft/submitted rosters and a fixed cap; migration `d6f0b4c8e2a5` (adds `leagues.league_mode` and six tables). The cap-adjustment formula is an open product decision and is not implemented; salaries are a commissioner-supplied input. Full rules, routes and the decision record are in `docs/weekly_redraft.md`. Verification: `scripts/verify_weekly_redraft.py`.
 
+### NHL ice time
+
+Table `player_game_toi` (migration `b9e4a1c7d3f6`): one row per player per final real game - `game_id`, `draftable_asset_id`, `toi_seconds`. Unique on `(game_id, draftable_asset_id)`. Filled from the NHL boxscore (`/gamecenter/{id}/boxscore`, `playerByGameStats`) by `nhl_daily_sync.ensure_game_toi` while the slate is ingested, once the game is final. Every dressed player has a row (a backup goalie who never played has 0); a healthy scratch has none. A game with no rows has no stored boxscore and nobody counts as having sat out of it. `window_engine.sat_out` reads it: a starter with no ice time in his counting game is replaced by the next player on his pecking order (docs/hockey_spec.md section 6.5). The parser was written from the boxscore's documented shape and has only been exercised offline; the first live ingest should be checked.
+
 ### NHL series release gate (FS-034)
 
 `scripts/verify_hockey_series_e2e.py` (12 teams, 24 rounds, 1 human + 11 AI, built from `alembic upgrade head`) and `scripts/run_hockey_release_gate.py` (full command matrix). Go/no-go, defects fixed, deferred items and deployment impact are in `docs/hockey_series_release_checklist.md`.

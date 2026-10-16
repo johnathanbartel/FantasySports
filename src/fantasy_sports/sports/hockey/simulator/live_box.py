@@ -186,8 +186,9 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         out.update(state="no_counting_games", note="No starter has a game in this window.", players=[], periods=[])
         return out
 
-    division = Division.build(counting)
-    n = len(counting)
+    late = {a for a in (wstate or {}).get("late") or [] if a in assets}       # replacements added after periods were published
+    division = Division.build(counting, late=late)
+    n = len(counting) - len(late)
     # Credit as the engine reads it: the value model, except for a game that published periods under the earlier fixed-total model.
     use_value = sim is None or (sim.published_periods or 0) == 0 or prov.get("model") == "value"
     credits_for = loader._value_lines_for if use_value else loader._credits_for
