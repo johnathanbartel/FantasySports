@@ -115,8 +115,10 @@ def build_period(inputs: HockeyGameInputs, division: Division, period: int, seed
     ledger_only = build_ledger(only)
     norm = normalize_through(ledger_through, noise_unit(seed, daily_game_id), period, prev["home_score"], prev["away_score"])
     rng = derive_rng(seed, daily_game_id, f"story:{period}")
+    filler = derive_rng(seed, daily_game_id, f"filler:{period}")      # its own stream: the story's draws are unchanged
     events = build_period_events(
-        only, ledger_only, {"home": norm.add_home, "away": norm.add_away}, norm.tiebreak_side, rng, division, period, prev)
+        only, ledger_only, {"home": norm.add_home, "away": norm.add_away}, norm.tiebreak_side, rng, division, period, prev,
+        filler_rng=filler)
     if (events[-1].home_score, events[-1].away_score) != (norm.home_goals, norm.away_goals):
         raise InputError("period events do not add up to the normalized goals")
     summary = {

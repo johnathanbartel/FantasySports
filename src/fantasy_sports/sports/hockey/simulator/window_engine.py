@@ -188,7 +188,8 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         chosen = games[rec["game_id"]] if rec else min(cands, key=lambda g: (g.kickoff_at, g.id))   # projected until locked
         at_home = real_team_of[aid] == chosen.home_team_id
         counting.append(CountingGame(aid, assets[aid].full_name, side_of[aid], chosen.id, chosen.kickoff_at,
-                                     f"vs {labels.get(chosen.away_team_id, '')}" if at_home else f"@ {labels.get(chosen.home_team_id, '')}"))
+                                     f"vs {labels.get(chosen.away_team_id, '')}" if at_home else f"@ {labels.get(chosen.home_team_id, '')}",
+                                     assets[aid].position or ""))
     division = Division.build(counting)
     n = len(counting)
 

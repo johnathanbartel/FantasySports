@@ -256,6 +256,32 @@ def main() -> None:
         act(service.skip, at(TUE, 22, 30))
         v = view(at(TUE, 22, 30))
         check(v.is_complete and v.provenance and v.home_score is not None, "skipping to the box score completes the game")
+
+        # ---- filler shots: realism only ----------------------------------------------------------------------------------------
+        with SessionLocal() as db:
+            sim = service.get_sim(db, dg_id)
+            evs = service._events(db, sim)
+            goalies = {f1[6], f2[6]}
+            filler = [(e.period, e.detail["asset_id"], e.team_side, e.home_score, e.away_score) for e in evs if (e.detail or {}).get("origin") == "filler"]
+            by_player = {}
+            for per, a, side, hs, as_ in filler:
+                by_player[(per, a)] = by_player.get((per, a), 0) + 1
+            last = evs[-1]
+            norm = sim.provenance["normalization"]
+            check(filler and all(1 <= n <= 3 for n in by_player.values()), "every skater who played in a period has 1 to 3 filler shots in it")
+            check(not any(a in goalies for _, a, *_ in filler), "goalies get none")
+            check(all(e.kind == "shot" and (e.detail or {}).get("fabricated") for e in evs if (e.detail or {}).get("origin") == "filler"), "filler events are shots, labelled fabricated")
+            check((last.home_score, last.away_score) == (norm["home_goals"], norm["away_goals"]), "the final score is still the normalized goals: filler never scores")
+            for a, b in zip(evs, evs[1:]):
+                if (b.detail or {}).get("origin") == "filler":
+                    assert (a.home_score, a.away_score) == (b.home_score, b.away_score), "a filler shot changed the score"
+            check(True, "...and no filler shot moved the score")
+            check(last.home_shots >= len([f for f in filler if f[2] == "home"]) and last.away_shots >= len([f for f in filler if f[2] == "away"]), "filler shots are counted in the shot totals")
+            players = {(per, a) for per, a, *_ in filler}
+            check({per for per, _ in players} == {1, 2, 3}, "all three periods have filler")
+            with SessionLocal() as db2:
+                again = service._events(db2, service.get_sim(db2, dg_id))
+                check([e.headline for e in again] == [e.headline for e in evs], "the published events are stable")
         print("period-by-period watching checks passed")
 
 

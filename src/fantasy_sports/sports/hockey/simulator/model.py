@@ -88,6 +88,7 @@ class CountingGame:
     game_id: int
     kickoff_at: datetime.datetime
     opponent: str = ""         # e.g. "vs BOS" / "@ BOS"
+    position: str = ""         # C / LW / RW / D / G; only used to leave goalies out of the filler shots (timeline.py)
 
 
 @dataclass(frozen=True)
