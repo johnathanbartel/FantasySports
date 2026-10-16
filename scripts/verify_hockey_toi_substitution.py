@@ -203,6 +203,16 @@ def main() -> None:
         with SessionLocal() as db:
             rows = {a: s for a, s in db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=ids["B"])}
             check(rows[f1["G1"]] == 0 and f1["G2"] not in rows and f2["D1"] not in rows and rows[f1["G3"]] == 1100, "game B's ice times are stored")
+        import contextlib
+        import io
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import audit_hockey_toi
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            audit_hockey_toi.main(["--game", str(dg_id)])
+        report = buf.getvalue()
+        check("sat_out=True" in report and "One G2" in report and "SAT OUT TOO, skipped" in report and "ok, would be the replacement" in report,
+              "the read-only audit explains the choice: the second goalie sat out too, the third would be the replacement")
         tick(at(SUN, 23, 59))
         after = state()
         lineup1 = after["lineup"]["home"]

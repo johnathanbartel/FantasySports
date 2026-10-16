@@ -23,6 +23,7 @@ def explain(db, dg, state, side, asset_id) -> None:
     skipped or accepted. Read-only."""
     from fantasy_sports.platform import pecking_order as po
     from fantasy_sports.platform.db.models.core import Team
+    from fantasy_sports.sports.hockey.models import PlayerGameToi
     from fantasy_sports.sports.hockey.simulator import window_engine as we
 
     team = db.get(Team, dg.home_team_id if side == "home" else dg.away_team_id)
@@ -41,8 +42,22 @@ def explain(db, dg, state, side, asset_id) -> None:
             print(f"      - player {pid}: not on the active roster (dropped or on the injured list)")
             continue
         aid, pl = roster[pid]
-        why = ("already in the lineup" if aid in taken else "his real team has no game in the window" if pl.real_team_id not in window_real
-               else "ok - would be the replacement")
+        if aid in taken:
+            why = "already in the lineup"
+        elif pl.real_team_id not in window_real:
+            why = "his real team has no game in the window"
+        else:
+            import datetime
+            from fantasy_sports.platform.simulator import wallclock
+            now = wallclock.utc_to_local(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), we.CLOCK_TIMEZONE)
+            relevant = list(games.values())
+            game = we._counting_game_of(db, universe_id, aid, pl, relevant, games, dict(state["selections"]), now)
+            if game is None:
+                why = "his counting game is not decided yet: ok, would be the replacement"
+            else:
+                rows = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=game.id).all())
+                detail = f"game {game.id} status={game.status} toi={rows.get(aid)} game_has_toi_rows={bool(rows)}"
+                why = f"{detail}: " + ("SAT OUT TOO, skipped" if we.sat_out(db, game, aid) else "ok, would be the replacement")
         print(f"      - {pl.full_name}: {why}")
 
 
