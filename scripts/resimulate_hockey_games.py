@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--league", type=int, required=True, help="league id (not a game id)")
     parser.add_argument("--game", type=int, action="append", help="only this daily game id (repeatable); default: every flagged game")
+    parser.add_argument("--since", help="only windows ending on or after this date (YYYY-MM-DD); default: the last 7 days")
     parser.add_argument("--yes", action="store_true", help="actually void the games (default is a dry run)")
     args = parser.parse_args(argv)
 
@@ -41,7 +42,11 @@ def main(argv: list[str] | None = None) -> int:
         if db.get(League, args.league) is None:
             print(f"No league {args.league}. (Is that a league id and not a game id? scripts/audit_hockey_lineups.py lists the leagues.)")
             return 2
-        done = lineup_audit.resimulate_locked(db, args.league, args.game, execute=args.yes)
+        import datetime
+        since = datetime.date.fromisoformat(args.since) if args.since else datetime.date.today() - datetime.timedelta(days=7)
+        print(f"Looking at windows ending on or after {since}...", flush=True)
+        done = lineup_audit.resimulate_locked(db, args.league, args.game, execute=args.yes, since=since,
+                                              progress=lambda n, total, gid: print(f"  {n}/{total} (game #{gid})", flush=True))
         if args.yes:
             db.commit()
         else:

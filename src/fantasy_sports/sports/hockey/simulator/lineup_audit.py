@@ -36,16 +36,20 @@ def _names(db: Session, asset_ids) -> list[str]:
     return out
 
 
-def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None) -> list[dict]:
-    """One entry per window game of the league (or only `only_game_id`). Read-only."""
+def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None, since: datetime.date | None = None,
+                 progress=None) -> list[dict]:
+    """One entry per window game of the league (or only `only_game_id`; or only windows ending on or after `since`). Read-only.
+    `progress(done, total, daily_game_id)` is called after each game: the audit reads a lot per game, which is slow on a remote database."""
     universe_id = window_engine._universe_id(db, league_id)
     rows = (db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
             .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.window_index.isnot(None))
             .order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all())
     if only_game_id is not None:
         rows = [r for r in rows if r.id == only_game_id]
+    if since is not None:
+        rows = [r for r in rows if (r.calendar_date_end or r.calendar_date) >= since]
     out = []
-    for dg in rows:
+    for index, dg in enumerate(rows, start=1):
         home, away = db.get(Team, dg.home_team_id), db.get(Team, dg.away_team_id)
         games = window_engine.window_games(db, universe_id, dg.calendar_date, dg.calendar_date_end or dg.calendar_date)
         rosters = {"home": po.roster_players(db, home.id), "away": po.roster_players(db, away.id)}
@@ -81,15 +85,18 @@ def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None) -
                     "end": (dg.calendar_date_end or dg.calendar_date).isoformat(), "game_status": dg.status,
                     "published_periods": published, "schedule_verified_at_freeze": verified, "stored_games_in_window": len(games),
                     "repaired": state.get("lineup_repaired"), "status": status, "sides": sides})
+        if progress is not None:
+            progress(index, len(rows), dg.id)
     return out
 
 
-def resimulate_locked(db: Session, league_id: int, game_ids: list[int] | None = None, execute: bool = False) -> list[dict]:
+def resimulate_locked(db: Session, league_id: int, game_ids: list[int] | None = None, execute: bool = False,
+                      since: datetime.date | None = None, progress=None) -> list[dict]:
     """Void the simulation of every window game the audit calls "locked, differs" (or only those of `game_ids`), so the next
     window-engine sync simulates it again from the stored feed on a lineup resolved on the full schedule. A dry run (the default)
     only reports. Games in any other state are never touched. Flushes, does not commit. Returns what was (or would be) done."""
     out = []
-    for entry in lineup_audit(db, league_id):
+    for entry in lineup_audit(db, league_id, since=since, progress=progress):
         if game_ids is not None and entry["daily_game_id"] not in game_ids:
             continue
         if entry["status"] != "locked, differs":
