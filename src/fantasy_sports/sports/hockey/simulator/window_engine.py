@@ -142,9 +142,11 @@ def _last_totals(db: Session, sim) -> dict[str, int]:
 
 
 def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, seed: int | None = None,
-         ingest: dict | None = None) -> TickResult:
+         ingest: dict | None = None, schedule_verified: bool = True) -> TickResult:
     """Do whatever is due for this window game at `now_utc`. Flushes; the caller commits. `ingest` (day -> what the feed
-    ingest just did, see nhl_daily_sync.ingest_daily_slate_if_needed) is kept in the provenance for the live box score."""
+    ingest just did, see nhl_daily_sync.ingest_daily_slate_if_needed) is kept in the provenance for the live box score.
+    `schedule_verified` says the stored games cover every day of the window: a lineup is never frozen, and an older unverified one
+    is resolved again once (while nothing is published), on a schedule that may be partial."""
     if daily_game.window_index is None or daily_game.calendar_date_end is None:
         raise model.InputError("window_engine works on window rows only")
     if daily_game.status == "FINAL":
@@ -168,9 +170,11 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
     if sim is None:
         if now < first_kickoff:
             return TickResult("waiting", 0, f"locks at {first_kickoff.isoformat()}")
+        if not schedule_verified:
+            return TickResult("waiting", 0, "waiting for the NHL schedule of the whole window before the lineup is frozen")
         window_real = {t for g in relevant for t in (g.home_team_id, g.away_team_id)}
         lineup = {"home": freeze_lineup(db, home, window_real), "away": freeze_lineup(db, away, window_real)}
-        state = {"lineup": lineup, "selections": {}, "locked_at": first_kickoff.isoformat()}
+        state = {"lineup": lineup, "selections": {}, "locked_at": first_kickoff.isoformat(), "schedule_verified": True}
         opening = SimEventInput(1, "period_start", 1, 0, None, 0, 0, 0, 0, "Period 1 begins", {})
         base = {"adapter": ADAPTER_ID, "adapter_version": ADAPTER_VERSION, "seed": seed, "published": "by_period",
                 "teams": {"home": {"team_id": home.id, "name": home.name}, "away": {"team_id": away.id, "name": away.name}},
@@ -183,6 +187,18 @@ def tick(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.datetime, s
         opened = True
     prov = dict(sim.provenance or {})
     state = prov["window_state"]
+
+    # ---- a lineup frozen before the whole schedule was known (older games) is resolved again, once, while nothing is published ----
+    if (sim.published_periods or 0) == 0 and schedule_verified and not state.get("schedule_verified"):
+        window_real = {t for g in relevant for t in (g.home_team_id, g.away_team_id)}
+        now_lineup = {"home": freeze_lineup(db, home, window_real), "away": freeze_lineup(db, away, window_real)}
+        if {k: set(v) for k, v in now_lineup.items()} != {k: set(v) for k, v in state["lineup"].items()}:
+            kept = {a for side_ids in now_lineup.values() for a in side_ids}
+            state = state | {"lineup": now_lineup, "selections": {k: v for k, v in state["selections"].items() if int(k) in kept},
+                             "lineup_repaired": {"at": now_utc.isoformat(timespec="seconds"), "was": state["lineup"]}}
+        state = state | {"schedule_verified": True}
+        prov["window_state"] = state
+        service.update_provenance(db, sim, prov)
 
     # ---- the starters, their candidate games and (when locked) counting games ---------------------------------------
     side_of, assets, real_team_of = {}, {}, {}

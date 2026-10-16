@@ -36,6 +36,7 @@
       <a href="/static/dashboard.html">My leagues</a>
       <a href="#" id="nav-league">League home</a>
       <a href="#" id="nav-game">Highlights</a>
+      <a href="#" id="nav-audit">Lineup audit</a>
       <a href="#" aria-current="page">Live box score</a>
     </div>
   </div>
@@ -171,7 +172,7 @@ async function load() {
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString() + '.';
     if (d.state === 'live') { /* league/nav links need ids */ }
     const g = await FSC.api(`/simulator/games/${GAME_ID}/state`).catch(() => null);
-    if (g && g.league_id) { $('nav-league').href = `/static/league.html?league_id=${g.league_id}`; $('back-board').href = `/static/league.html?league_id=${g.league_id}&tab=scoreboard`; }
+    if (g && g.league_id) { $('nav-league').href = `/static/league.html?league_id=${g.league_id}`; $('back-board').href = `/static/league.html?league_id=${g.league_id}&tab=scoreboard`; $('nav-audit').href = `/static/nhl-lineup-audit.html?league_id=${g.league_id}`; }
     $('nav-game').href = `/static/nhl-game.html?daily_game_id=${GAME_ID}`;
   } catch (e) { $('err').textContent = (e && e.message) || 'Could not load the box score.'; $('err').style.display = 'block'; }
   timer = setTimeout(load, 15000);

@@ -515,19 +515,25 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
     return games_inserted
 
 
-def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: datetime.date) -> None:
-    """Ensure upcoming games in this week are recorded with kickoff times and 'scheduled' status so Pecking Order resolves properly."""
+def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: datetime.date, force: bool = False,
+                                 dates: set[datetime.date] | None = None) -> bool:
+    """Ensure upcoming games in this week are recorded with kickoff times and 'scheduled' status so Pecking Order resolves properly.
+
+    Without `force` the week is only fetched while fewer than 15 of its games are stored, which says nothing about whether
+    every day is complete: a lineup frozen on such a week missed players whose games were not stored yet. With `force` the NHL
+    schedule is always read; `dates` limits what is written to those days. Returns whether the schedule was read and (when
+    `dates` is given) covers every one of them."""
     w_start = week_start(target_date)
     w_end = w_start + datetime.timedelta(days=7)
     start_dt = datetime.datetime.combine(w_start, datetime.time.min)
     end_dt = datetime.datetime.combine(w_end, datetime.time.min)
     count = db.query(Game).filter(Game.universe_id == nhl.id, Game.kickoff_at >= start_dt, Game.kickoff_at < end_dt).count()
-    if count >= 15:
-        return
+    if not force and count >= 15:
+        return True
 
     sched_data = _fetch_json(SCHEDULE_URL.format(date=w_start.isoformat()))
     if not sched_data:
-        return
+        return False
 
     teams = db.query(RealTeam).filter_by(universe_id=nhl.id).all()
     teams_by_ref = {t.external_ref: t for t in teams if t.external_ref}
@@ -552,6 +558,7 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
         db.add(week)
         db.flush()
 
+    covered: set[datetime.date] = set()
     for day_obj in sched_data.get("gameWeek", []):
         day_str = day_obj.get("date")
         if not day_str:
@@ -560,6 +567,9 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
             d_date = datetime.date.fromisoformat(day_str)
         except Exception:
             continue
+        if dates is not None and d_date not in dates:
+            continue
+        covered.add(d_date)
         for g_meta in day_obj.get("games", []):
             away_abbrev = g_meta.get("awayTeam", {}).get("abbrev")
             home_abbrev = g_meta.get("homeTeam", {}).get("abbrev")
@@ -611,6 +621,7 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
                 )
                 db.add(new_game)
     db.flush()
+    return dates is None or dates <= covered
 
 
 def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | None = None) -> int:
@@ -689,6 +700,29 @@ def sync_nhl_roster_callups(db: Session, nhl: Universe, teams: list[RealTeam] | 
     if activated_count or birth_dates_set:
         db.commit()
     return activated_count
+
+
+_SCHEDULE_VERIFIED: dict[tuple, float] = {}
+
+
+def _verify_window_schedule(db: Session, nhl: Universe, dg: SeriesDailyGame) -> bool:
+    """Read the NHL schedule for every day of a window and store its games, so the lineup that is about to be frozen sees ALL
+    of the window's games. True when the schedule was read and covers every day (cached for a minute per process)."""
+    import time
+    key = (dg.calendar_date, dg.calendar_date_end)
+    if time.monotonic() - _SCHEDULE_VERIFIED.get(key, -1e9) < 60:
+        return True
+    days = {dg.calendar_date + datetime.timedelta(days=i) for i in range(((dg.calendar_date_end or dg.calendar_date) - dg.calendar_date).days + 1)}
+    try:
+        with db.begin_nested():
+            ok = seed_week_schedule_if_needed(db, nhl, dg.calendar_date, force=True, dates=days)
+    except Exception:
+        logging.getLogger(__name__).exception("window schedule check failed for %s", key)
+        ok = False
+    if ok:
+        db.commit()
+        _SCHEDULE_VERIFIED[key] = time.monotonic()
+    return ok
 
 
 def _record_tick_error(db: Session, dg: SeriesDailyGame, error: Exception) -> None:
@@ -784,9 +818,12 @@ def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: date
             day += datetime.timedelta(days=1)
         first, last = dg.calendar_date.isoformat(), (dg.calendar_date_end or dg.calendar_date).isoformat()
         mine = {k: v for k, v in reports.items() if first <= k <= last}
+        sim = service.get_sim(db, dg.id)
+        # A lineup is frozen once, so before it is (or while nothing has been published yet) the whole window's schedule must be known.
+        verified = _verify_window_schedule(db, nhl, dg) if (sim is None or (sim.published_periods or 0) == 0) else True
         try:
             with db.begin_nested():
-                window_engine.tick(db, dg, now_utc, ingest=mine or None)
+                window_engine.tick(db, dg, now_utc, ingest=mine or None, schedule_verified=verified)
         except Exception as e:
             logging.getLogger(__name__).exception("window tick failed for game %s", dg.id)
             _record_tick_error(db, dg, e)
