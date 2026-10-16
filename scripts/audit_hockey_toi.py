@@ -23,6 +23,7 @@ def explain(db, dg, state, side, asset_id) -> None:
     skipped or accepted. Read-only."""
     from fantasy_sports.platform import pecking_order as po
     from fantasy_sports.platform.db.models.core import Team
+    from fantasy_sports.sports.hockey.models import PlayerGameToi
     from fantasy_sports.sports.hockey.simulator import window_engine as we
 
     team = db.get(Team, dg.home_team_id if side == "home" else dg.away_team_id)
@@ -41,8 +42,22 @@ def explain(db, dg, state, side, asset_id) -> None:
             print(f"      - player {pid}: not on the active roster (dropped or on the injured list)")
             continue
         aid, pl = roster[pid]
-        why = ("already in the lineup" if aid in taken else "his real team has no game in the window" if pl.real_team_id not in window_real
-               else "ok - would be the replacement")
+        if aid in taken:
+            why = "already in the lineup"
+        elif pl.real_team_id not in window_real:
+            why = "his real team has no game in the window"
+        else:
+            import datetime
+            from fantasy_sports.platform.simulator import wallclock
+            now = wallclock.utc_to_local(datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None), we.CLOCK_TIMEZONE)
+            relevant = list(games.values())
+            game = we._counting_game_of(db, universe_id, aid, pl, relevant, games, dict(state["selections"]), now)
+            if game is None:
+                why = "his counting game is not decided yet: ok, would be the replacement"
+            else:
+                rows = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=game.id).all())
+                detail = f"game {game.id} status={game.status} toi={rows.get(aid)} game_has_toi_rows={bool(rows)}"
+                why = f"{detail}: " + ("SAT OUT TOO, skipped" if we.sat_out(db, game, aid) else "ok, would be the replacement")
         print(f"      - {pl.full_name}: {why}")
 
 
@@ -71,7 +86,23 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         state = sim.provenance["window_state"]
         print(f"Game #{dg.id} window {dg.calendar_date}..{dg.calendar_date_end}, published periods {sim.published_periods or 0}")
-        print(f"Replacements recorded: {state.get('subs') or 'none'}")
+        print(f"Replacements recorded: {len(state.get('subs') or [])}")
+        universe_id = window_engine._universe_id(db, dg.series.league_id)
+        window = window_engine.window_games(db, universe_id, dg.calendar_date, dg.calendar_date_end)
+
+        def label(asset_id):
+            a = db.get(DraftableAsset, asset_id)
+            return a.player.full_name if a is not None and a.player is not None else f"asset {asset_id}"
+
+        for sub in state.get("subs") or []:
+            out_asset = db.get(DraftableAsset, sub["out"])
+            team_id = out_asset.player.real_team_id if out_asset is not None and out_asset.player is not None else None
+            print(f"  {sub['side']}: {label(sub['out'])} OUT -> {label(sub['in'])} IN ({sub['mode']}, counting game {sub['game_id']}, at {sub['at']})")
+            for g in window:
+                if team_id in (g.home_team_id, g.away_team_id):
+                    rows = dict(db.query(PlayerGameToi.draftable_asset_id, PlayerGameToi.toi_seconds).filter_by(game_id=g.id).all())
+                    mark = "  <- counting game" if g.id == sub["game_id"] else ""
+                    print(f"      {label(sub['out'])} in game {g.id} ({g.kickoff_at:%m-%d %H:%M}, {g.status}): toi={rows.get(sub['out'])}{mark}")
         for side in ("home", "away"):
             print(f"\n{side}:")
             for aid in state["lineup"][side]:
