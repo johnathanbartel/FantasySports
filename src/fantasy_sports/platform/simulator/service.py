@@ -186,6 +186,28 @@ def _finalize(db: Session, sim: SimulatorGame, events: list[SimulatorEvent], at:
     db.flush()
 
 
+def reset_simulation(db: Session, daily_game: SeriesDailyGame) -> bool:
+    """Void a game's simulation completely so it can be simulated again from scratch: its events, every viewer's progress and the
+    simulation record are deleted and the daily game goes back to SCHEDULED with a blank scoreboard. Published events are immutable
+    in normal use (the ORM refuses to change them), so this is a deliberate bulk delete, only for the commissioner's repair of a game
+    that was simulated from a wrong lineup. Flushes, does not commit. Returns whether there was a simulation to void."""
+    sim = get_sim(db, daily_game.id)
+    db.flush()
+    if sim is not None:
+        db.query(SimulatorReveal).filter_by(simulator_game_id=sim.id).delete(synchronize_session=False)
+        db.query(SimulatorEvent).filter_by(simulator_game_id=sim.id).delete(synchronize_session=False)
+        db.query(SimulatorGame).filter_by(id=sim.id).delete(synchronize_session=False)
+    db.expire_all()
+    dg = db.get(SeriesDailyGame, daily_game.id)
+    dg.status, dg.home_score, dg.away_score, dg.current_period, dg.seconds_remaining = "SCHEDULED", 0, 0, 0, 1200
+    db.flush()
+    series = db.get(LeagueSeries, dg.series_id)
+    siblings = db.query(SeriesDailyGame).filter_by(series_id=series.id).all()
+    series.status = "SCHEDULED" if all(g.status == "SCHEDULED" for g in siblings) else "IN_PROGRESS"
+    db.flush()
+    return sim is not None
+
+
 def finalize_now(db: Session, sim: SimulatorGame, now: datetime.datetime) -> None:
     """Close a live game ahead of its schedule (e.g. every real game is already final). Idempotent."""
     if sim.status == st.LIVE:
@@ -525,5 +547,5 @@ def final_view(db: Session, sim: SimulatorGame, user_id: int, now: datetime.date
 __all__ = [
     "ContractError", "SimulatorError", "publish_script", "start_game", "sync", "view_state", "view_events",
     "watch", "progress", "skip", "final_view", "get_sim", "unpublished_state", "utcnow", "finalize_now",
-    "append_period", "update_provenance",
+    "append_period", "update_provenance", "reset_simulation",
 ]

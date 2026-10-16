@@ -34,11 +34,13 @@ def _names(db: Session, asset_ids) -> list[str]:
     return out
 
 
-def lineup_audit(db: Session, league_id: int) -> list[dict]:
+def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None) -> list[dict]:
     universe_id = window_engine._universe_id(db, league_id)
     rows = (db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
             .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.window_index.isnot(None))
             .order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all())
+    if only_game_id is not None:
+        rows = [r for r in rows if r.id == only_game_id]
     out = []
     for dg in rows:
         home, away = db.get(Team, dg.home_team_id), db.get(Team, dg.away_team_id)
