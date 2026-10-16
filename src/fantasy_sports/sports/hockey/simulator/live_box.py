@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from fantasy_sports.platform import pecking_order as po
 from fantasy_sports.platform.db.models.core import DraftableAsset, SeriesDailyGame, Team
 from fantasy_sports.platform.simulator import service
-from fantasy_sports.sports.hockey.models import GameEvent
+from fantasy_sports.sports.hockey.models import GameEvent, Shot
 from fantasy_sports.sports.hockey.simulator import loader, window_engine
 from fantasy_sports.sports.hockey.simulator.division import REAL_PERIOD, Division, is_overtime, real_period_of
 from fantasy_sports.sports.hockey.simulator.model import PERIODS, ROLES, CountingGame
@@ -120,6 +120,12 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
         lineup = {"home": window_engine.freeze_lineup(db, home, window_real), "away": window_engine.freeze_lineup(db, away, window_real)}
         stored_sel, frozen = {}, False
     out["lineup_frozen"] = frozen
+    out["ingest"] = prov.get("ingest") or {}
+    out["real_games"] = [{
+        "game_id": g.id, "kickoff": g.kickoff_at.isoformat(), "matchup": f"{labels.get(g.away_team_id, '')} @ {labels.get(g.home_team_id, '')}",
+        "status": g.status, "events_stored": db.query(GameEvent.id).filter_by(game_id=g.id).count(),
+        "shots_stored": db.query(Shot.id).filter_by(game_id=g.id).count(), "feed_period": _feed_period(db, g.id)}
+        for g in sorted(relevant, key=lambda g: (g.kickoff_at, g.id))]
     out["lineups"] = _lineups(db, {"home": home, "away": away}, rosters, lineup, games, labels,
                               {t for g in relevant for t in (g.home_team_id, g.away_team_id)})
     out["published_periods"] = (sim.published_periods or 0) if sim is not None else 0

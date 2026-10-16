@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import math
 import urllib.request
 from zoneinfo import ZoneInfo
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po, series_schedule
@@ -193,8 +195,15 @@ def _shot_clock_seconds(period: int, clock_str: str) -> int:
         return 0
 
 
-def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: datetime.date) -> int:
-    """Fetches and stores real NHL games for target_date from the NHL API if not already stored. Returns count of games stored."""
+def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: datetime.date, report: dict | None = None) -> int:
+    """Fetches and stores real NHL games for target_date from the NHL API if not already stored. Returns count of games stored.
+
+    Every game is ingested in its own savepoint, so one game whose feed cannot be read never rolls back the rest of the day,
+    and `report` (when given) says what happened to each game: it is shown on the live box score instead of vanishing into a
+    log. A game whose stored plays already equal the feed's is left alone (no delete and re-insert of identical rows)."""
+    report = report if report is not None else {}
+    report.update(day=target_date.isoformat(), at=service.utcnow().isoformat(timespec="seconds"), schedule=None, games=[])
+    report_games = report["games"]
     start_day = datetime.datetime.combine(target_date, datetime.time.min)
     end_day = start_day + datetime.timedelta(days=1)
     games_for_day = db.query(Game).filter(
@@ -209,17 +218,21 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
     has_shots = db.query(Shot).filter(Shot.game_id.in_(game_ids)).count() > 0 if game_ids else False
     all_final = bool(games_for_day) and all(g.status == "final" for g in games_for_day)
     if has_shots and all_final:
+        report["schedule"] = "skipped: every game is final and stored"
         return len(games_for_day)
 
     sched_data = _fetch_json(SCHEDULE_URL.format(date=target_date.isoformat()))
     if not sched_data:
+        report["schedule"] = "FETCH FAILED: the NHL schedule could not be read (unreachable, blocked or empty)"
         return 0
 
     game_week = sched_data.get("gameWeek", [])
     today_block = next((day for day in game_week if day.get("date") == target_date.isoformat()), None)
     if not today_block or not today_block.get("games"):
+        report["schedule"] = "the NHL schedule has no games for this date"
         return 0
 
+    report["schedule"] = "ok"
     games_today = today_block["games"]
 
     teams = db.query(RealTeam).filter_by(universe_id=nhl.id).all()
@@ -313,174 +326,191 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
             db.add(game)
             db.flush()
 
-        # If already final and has shots, no need to re-fetch PBP
-        existing_shot_count = db.query(Shot).filter_by(game_id=game.id).count()
-        if existing_shot_count > 0 and game.status == "final":
-            games_inserted += 1
-            continue
+        game_report = {"nhl_id": nhl_game_id, "matchup": f"{away_abbrev} @ {home_abbrev}", "state": raw_state, "pbp": None, "error": None}
+        report_games.append(game_report)
+        try:
+            with db.begin_nested():
+                # If already final and has shots, no need to re-fetch PBP
+                existing_shot_count = db.query(Shot).filter_by(game_id=game.id).count()
+                if existing_shot_count > 0 and game.status == "final":
+                    game_report["pbp"] = "kept: final and already stored"
+                    games_inserted += 1
+                    continue
 
-        pbp_data = _fetch_json(PBP_URL.format(game=nhl_game_id))
-        if not pbp_data:
-            games_inserted += 1
-            continue
+                pbp_data = _fetch_json(PBP_URL.format(game=nhl_game_id))
+                if not pbp_data:
+                    game_report["pbp"] = "FETCH FAILED: the play-by-play could not be read"
+                    games_inserted += 1
+                    continue
+                n_plays = sum(1 for pl in pbp_data.get("plays", []) if pl.get("typeDescKey") in EVENT_TYPES
+                              and pl.get("periodDescriptor", {}).get("periodType") != "SO")
+                stored_events = db.query(GameEvent.id).filter_by(game_id=game.id).count()
+                if stored_events and stored_events == n_plays:
+                    game_report["pbp"] = f"unchanged: {n_plays} events already stored"
+                    games_inserted += 1
+                    continue
 
-        # If re-syncing an existing game, clear prior live shots/events/credits before re-inserting
-        if existing_shot_count > 0:
-            shot_ids = [s[0] for s in db.query(Shot.id).filter_by(game_id=game.id).all()]
-            event_ids = [e[0] for e in db.query(GameEvent.id).filter_by(game_id=game.id).all()]
-            if shot_ids:
-                db.query(ShotCredit).filter(ShotCredit.shot_id.in_(shot_ids)).delete(synchronize_session=False)
-                db.query(Shot).filter(Shot.id.in_(shot_ids)).delete(synchronize_session=False)
-            if event_ids:
-                db.query(EventCredit).filter(EventCredit.event_id.in_(event_ids)).delete(synchronize_session=False)
-                db.query(GameEvent).filter(GameEvent.id.in_(event_ids)).delete(synchronize_session=False)
-            db.flush()
-
-        team_by_nhl_id = {
-            pbp_data["homeTeam"]["id"]: home_team.id,
-            pbp_data["awayTeam"]["id"]: away_team.id,
-        }
-        for spot in pbp_data.get("rosterSpots", []):
-            p_id_str = str(spot["playerId"])
-            p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
-            existing_player = players_by_ref.get(p_id_str)
-            if existing_player:
-                if not existing_player.active or existing_player.real_team_id != p_team_id:
-                    existing_player.active = True
-                    existing_player.real_team_id = p_team_id
+                # If re-syncing an existing game, clear prior live shots/events/credits before re-inserting
+                if existing_shot_count > 0 or stored_events > 0:       # plays stored before the first shot must be cleared too
+                    shot_ids = [s[0] for s in db.query(Shot.id).filter_by(game_id=game.id).all()]
+                    event_ids = [e[0] for e in db.query(GameEvent.id).filter_by(game_id=game.id).all()]
+                    if shot_ids:
+                        db.query(ShotCredit).filter(ShotCredit.shot_id.in_(shot_ids)).delete(synchronize_session=False)
+                        db.query(Shot).filter(Shot.id.in_(shot_ids)).delete(synchronize_session=False)
+                    if event_ids:
+                        db.query(EventCredit).filter(EventCredit.event_id.in_(event_ids)).delete(synchronize_session=False)
+                        db.query(GameEvent).filter(GameEvent.id.in_(event_ids)).delete(synchronize_session=False)
                     db.flush()
-                if p_id_str not in asset_by_ref:
-                    new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=existing_player.id)
-                    db.add(new_asset)
-                    db.flush()
-                    asset_by_ref[p_id_str] = new_asset.id
-            else:
-                first = spot.get("firstName", {}).get("default", "")
-                last = spot.get("lastName", {}).get("default", "")
-                p_name = f"{first} {last}".strip() or f"Player {p_id_str}"
-                pos = POSITION_MAP.get(spot.get("positionCode"), "C")
-                new_player = Player(
-                    universe_id=nhl.id, real_team_id=p_team_id, full_name=p_name, position=pos,
-                    external_ref=p_id_str, active=True,
-                )
-                db.add(new_player)
+
+                team_by_nhl_id = {
+                    pbp_data["homeTeam"]["id"]: home_team.id,
+                    pbp_data["awayTeam"]["id"]: away_team.id,
+                }
+                for spot in pbp_data.get("rosterSpots", []):
+                    p_id_str = str(spot["playerId"])
+                    p_team_id = team_by_nhl_id.get(spot.get("teamId"), home_team.id)
+                    existing_player = players_by_ref.get(p_id_str)
+                    if existing_player:
+                        if not existing_player.active or existing_player.real_team_id != p_team_id:
+                            existing_player.active = True
+                            existing_player.real_team_id = p_team_id
+                            db.flush()
+                        if p_id_str not in asset_by_ref:
+                            new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=existing_player.id)
+                            db.add(new_asset)
+                            db.flush()
+                            asset_by_ref[p_id_str] = new_asset.id
+                    else:
+                        first = spot.get("firstName", {}).get("default", "")
+                        last = spot.get("lastName", {}).get("default", "")
+                        p_name = f"{first} {last}".strip() or f"Player {p_id_str}"
+                        pos = POSITION_MAP.get(spot.get("positionCode"), "C")
+                        new_player = Player(
+                            universe_id=nhl.id, real_team_id=p_team_id, full_name=p_name, position=pos,
+                            external_ref=p_id_str, active=True,
+                        )
+                        db.add(new_player)
+                        db.flush()
+                        players_by_ref[p_id_str] = new_player
+                        new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=new_player.id)
+                        db.add(new_asset)
+                        db.flush()
+                        asset_by_ref[p_id_str] = new_asset.id
+
+                shot_records = []
+                event_records = []
+                shots_to_add = []
+                events_to_add = []
+
+                for play in pbp_data.get("plays", []):
+                    kind = play.get("typeDescKey")
+                    if kind not in EVENT_TYPES:
+                        continue
+                    if play.get("periodDescriptor", {}).get("periodType") == "SO":
+                        continue
+
+                    period = play.get("periodDescriptor", {}).get("number", 1)
+                    clock_str = play.get("timeInPeriod", "00:00")
+                    game_seconds = _shot_clock_seconds(period, clock_str)
+                    d = play.get("details", {})
+                    owner_nhl_id = d.get("eventOwnerTeamId")
+                    shooting_team_id = home_team.id if owner_nhl_id == pbp_data["homeTeam"]["id"] else away_team.id
+                    defending_team_id = away_team.id if shooting_team_id == home_team.id else home_team.id
+
+                    if kind == "goal":
+                        refs = (d.get("scoringPlayerId"), d.get("assist1PlayerId"), d.get("assist2PlayerId"))
+                    elif kind == "blocked-shot":
+                        refs = (d.get("blockingPlayerId"), d.get("shootingPlayerId"), None)
+                    elif kind == "hit":
+                        refs = (d.get("hittingPlayerId"), d.get("hitteePlayerId"), None)
+                    else:
+                        refs = (d.get("shootingPlayerId"), None, None)
+
+                    act_id = asset_by_ref.get(str(refs[0])) if refs[0] else None
+                    sec_id = asset_by_ref.get(str(refs[1])) if refs[1] else None
+                    ter_id = asset_by_ref.get(str(refs[2])) if refs[2] else None
+
+                    x_coord = d.get("xCoord")
+                    y_coord = d.get("yCoord")
+                    zone_code = d.get("zoneCode")
+                    shot_type = d.get("shotType")
+
+                    is_goal = kind == "goal"
+                    is_empty_net = False
+                    pre_shot_xg = _calculate_xg(x_coord, y_coord, is_goal, is_empty_net)
+
+                    if kind in ("goal", "shot-on-goal"):
+                        goalie_ref = d.get("goalieInNetId")
+                        goalie_asset_id = asset_by_ref.get(str(goalie_ref)) if goalie_ref else None
+                        shot_row = Shot(
+                            game_id=game.id, source="nhl_api", external_shot_id=f"{nhl_game_id}:{play.get('eventId', len(shots_to_add))}",
+                            shooting_team_id=shooting_team_id, goalie_team_id=defending_team_id,
+                            shooter_asset_id=act_id, goalie_asset_id=goalie_asset_id,
+                            pre_shot_xg=pre_shot_xg, is_goal=is_goal, is_empty_net=is_empty_net,
+                            period=period, clock=str(game_seconds), shot_type=shot_type,
+                            strength_state="ev",
+                        )
+                        shots_to_add.append(shot_row)
+                        shot_records.append(ShotRecord(
+                            shot_id=len(shots_to_add), shooting_team_id=shooting_team_id, goalie_team_id=defending_team_id,
+                            shooter_asset_id=act_id, goalie_asset_id=goalie_asset_id,
+                            pre_shot_xg=pre_shot_xg, is_goal=is_goal, is_empty_net=is_empty_net, game_seconds=game_seconds,
+                        ))
+
+                    evt_row = GameEvent(
+                        game_id=game.id, source="nhl_api", external_event_id=f"{nhl_game_id}:{play.get('eventId', len(events_to_add))}",
+                        event_type=kind, period=period, game_seconds=game_seconds,
+                        team_id=shooting_team_id, actor_ref=str(refs[0]) if refs[0] else None,
+                        secondary_ref=str(refs[1]) if refs[1] else None, tertiary_ref=str(refs[2]) if refs[2] else None,
+                        actor_asset_id=act_id, secondary_asset_id=sec_id, tertiary_asset_id=ter_id,
+                        x_coord=x_coord, y_coord=y_coord, zone_code=zone_code, shot_type=shot_type,
+                    )
+                    events_to_add.append(evt_row)
+                    event_records.append(EventRecord(
+                        event_id=len(events_to_add), event_type=kind, team_id=shooting_team_id,
+                        game_seconds=game_seconds, actor_asset_id=act_id, secondary_asset_id=sec_id, tertiary_asset_id=ter_id,
+                        x=x_coord, y=y_coord,
+                    ))
+
+                db.add_all(shots_to_add)
+                db.add_all(events_to_add)
                 db.flush()
-                players_by_ref[p_id_str] = new_player
-                new_asset = DraftableAsset(universe_id=nhl.id, asset_type="player", player_id=new_player.id)
-                db.add(new_asset)
+
+                # Update IDs
+                for idx, s_row in enumerate(shots_to_add):
+                    shot_records[idx] = ShotRecord(
+                        shot_id=s_row.id, shooting_team_id=shot_records[idx].shooting_team_id,
+                        goalie_team_id=shot_records[idx].goalie_team_id, shooter_asset_id=shot_records[idx].shooter_asset_id,
+                        goalie_asset_id=shot_records[idx].goalie_asset_id, pre_shot_xg=shot_records[idx].pre_shot_xg,
+                        is_goal=shot_records[idx].is_goal, is_empty_net=shot_records[idx].is_empty_net,
+                        game_seconds=shot_records[idx].game_seconds,
+                    )
+                for idx, e_row in enumerate(events_to_add):
+                    event_records[idx] = EventRecord(
+                        event_id=e_row.id, event_type=event_records[idx].event_type, team_id=event_records[idx].team_id,
+                        game_seconds=event_records[idx].game_seconds, actor_asset_id=event_records[idx].actor_asset_id,
+                        secondary_asset_id=event_records[idx].secondary_asset_id, tertiary_asset_id=event_records[idx].tertiary_asset_id,
+                        x=event_records[idx].x, y=event_records[idx].y,
+                    )
+
+                estimator = BlockXgEstimator.fit(event_records) if event_records else None
+                result = process_game(shot_records, event_records, estimator, teams=(home_team.id, away_team.id))
+                shot_credit_rows = [
+                    ShotCredit(shot_id=row.shot_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
+                    for row in result.credits
+                ]
+                event_credit_rows = [
+                    EventCredit(event_id=row.event_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
+                    for row in result.event_credits
+                ]
+                db.add_all(shot_credit_rows)
+                db.add_all(event_credit_rows)
                 db.flush()
-                asset_by_ref[p_id_str] = new_asset.id
-
-        shot_records = []
-        event_records = []
-        shots_to_add = []
-        events_to_add = []
-
-        for play in pbp_data.get("plays", []):
-            kind = play.get("typeDescKey")
-            if kind not in EVENT_TYPES:
-                continue
-            if play.get("periodDescriptor", {}).get("periodType") == "SO":
-                continue
-
-            period = play.get("periodDescriptor", {}).get("number", 1)
-            clock_str = play.get("timeInPeriod", "00:00")
-            game_seconds = _shot_clock_seconds(period, clock_str)
-            d = play.get("details", {})
-            owner_nhl_id = d.get("eventOwnerTeamId")
-            shooting_team_id = home_team.id if owner_nhl_id == pbp_data["homeTeam"]["id"] else away_team.id
-            defending_team_id = away_team.id if shooting_team_id == home_team.id else home_team.id
-
-            if kind == "goal":
-                refs = (d.get("scoringPlayerId"), d.get("assist1PlayerId"), d.get("assist2PlayerId"))
-            elif kind == "blocked-shot":
-                refs = (d.get("blockingPlayerId"), d.get("shootingPlayerId"), None)
-            elif kind == "hit":
-                refs = (d.get("hittingPlayerId"), d.get("hitteePlayerId"), None)
-            else:
-                refs = (d.get("shootingPlayerId"), None, None)
-
-            act_id = asset_by_ref.get(str(refs[0])) if refs[0] else None
-            sec_id = asset_by_ref.get(str(refs[1])) if refs[1] else None
-            ter_id = asset_by_ref.get(str(refs[2])) if refs[2] else None
-
-            x_coord = d.get("xCoord")
-            y_coord = d.get("yCoord")
-            zone_code = d.get("zoneCode")
-            shot_type = d.get("shotType")
-
-            is_goal = kind == "goal"
-            is_empty_net = False
-            pre_shot_xg = _calculate_xg(x_coord, y_coord, is_goal, is_empty_net)
-
-            if kind in ("goal", "shot-on-goal"):
-                goalie_ref = d.get("goalieInNetId")
-                goalie_asset_id = asset_by_ref.get(str(goalie_ref)) if goalie_ref else None
-                shot_row = Shot(
-                    game_id=game.id, source="nhl_api", external_shot_id=f"{nhl_game_id}:{play.get('eventId', len(shots_to_add))}",
-                    shooting_team_id=shooting_team_id, goalie_team_id=defending_team_id,
-                    shooter_asset_id=act_id, goalie_asset_id=goalie_asset_id,
-                    pre_shot_xg=pre_shot_xg, is_goal=is_goal, is_empty_net=is_empty_net,
-                    period=period, clock=str(game_seconds), shot_type=shot_type,
-                    strength_state="ev",
-                )
-                shots_to_add.append(shot_row)
-                shot_records.append(ShotRecord(
-                    shot_id=len(shots_to_add), shooting_team_id=shooting_team_id, goalie_team_id=defending_team_id,
-                    shooter_asset_id=act_id, goalie_asset_id=goalie_asset_id,
-                    pre_shot_xg=pre_shot_xg, is_goal=is_goal, is_empty_net=is_empty_net, game_seconds=game_seconds,
-                ))
-
-            evt_row = GameEvent(
-                game_id=game.id, source="nhl_api", external_event_id=f"{nhl_game_id}:{play.get('eventId', len(events_to_add))}",
-                event_type=kind, period=period, game_seconds=game_seconds,
-                team_id=shooting_team_id, actor_ref=str(refs[0]) if refs[0] else None,
-                secondary_ref=str(refs[1]) if refs[1] else None, tertiary_ref=str(refs[2]) if refs[2] else None,
-                actor_asset_id=act_id, secondary_asset_id=sec_id, tertiary_asset_id=ter_id,
-                x_coord=x_coord, y_coord=y_coord, zone_code=zone_code, shot_type=shot_type,
-            )
-            events_to_add.append(evt_row)
-            event_records.append(EventRecord(
-                event_id=len(events_to_add), event_type=kind, team_id=shooting_team_id,
-                game_seconds=game_seconds, actor_asset_id=act_id, secondary_asset_id=sec_id, tertiary_asset_id=ter_id,
-                x=x_coord, y=y_coord,
-            ))
-
-        db.add_all(shots_to_add)
-        db.add_all(events_to_add)
-        db.flush()
-
-        # Update IDs
-        for idx, s_row in enumerate(shots_to_add):
-            shot_records[idx] = ShotRecord(
-                shot_id=s_row.id, shooting_team_id=shot_records[idx].shooting_team_id,
-                goalie_team_id=shot_records[idx].goalie_team_id, shooter_asset_id=shot_records[idx].shooter_asset_id,
-                goalie_asset_id=shot_records[idx].goalie_asset_id, pre_shot_xg=shot_records[idx].pre_shot_xg,
-                is_goal=shot_records[idx].is_goal, is_empty_net=shot_records[idx].is_empty_net,
-                game_seconds=shot_records[idx].game_seconds,
-            )
-        for idx, e_row in enumerate(events_to_add):
-            event_records[idx] = EventRecord(
-                event_id=e_row.id, event_type=event_records[idx].event_type, team_id=event_records[idx].team_id,
-                game_seconds=event_records[idx].game_seconds, actor_asset_id=event_records[idx].actor_asset_id,
-                secondary_asset_id=event_records[idx].secondary_asset_id, tertiary_asset_id=event_records[idx].tertiary_asset_id,
-                x=event_records[idx].x, y=event_records[idx].y,
-            )
-
-        estimator = BlockXgEstimator.fit(event_records) if event_records else None
-        result = process_game(shot_records, event_records, estimator, teams=(home_team.id, away_team.id))
-        shot_credit_rows = [
-            ShotCredit(shot_id=row.shot_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
-            for row in result.credits
-        ]
-        event_credit_rows = [
-            EventCredit(event_id=row.event_id, draftable_asset_id=row.asset_id, role=row.role, credit_points=row.points)
-            for row in result.event_credits
-        ]
-        db.add_all(shot_credit_rows)
-        db.add_all(event_credit_rows)
-        db.flush()
-        games_inserted += 1
+                game_report["pbp"] = f"stored {len(events_to_add)} events, {len(shots_to_add)} shots"
+                games_inserted += 1
+        except Exception as exc:
+            game_report["error"] = f"{type(exc).__name__}: {exc}"[:200]
+            logging.getLogger(__name__).exception("play-by-play ingest failed for NHL game %s", nhl_game_id)
 
     return games_inserted
 
@@ -684,6 +714,31 @@ def sync_window_game(db: Session, dg: SeriesDailyGame) -> None:
         _sync_window_rows(db, league_id, nhl, current_eastern_date(), only_game_id=dg.id)
 
 
+INGEST_MIN_INTERVAL = datetime.timedelta(seconds=20)
+
+
+def _try_ingest_lock(db: Session, day: datetime.date) -> bool:
+    """One request ingests a given day at a time. Two requests ingesting the same live slate at once delete and re-insert the
+    same rows and collide on the unique keys, which used to roll the whole day back, over and over. On PostgreSQL this takes
+    a transaction-scoped advisory lock (released at the next commit); elsewhere (SQLite in tests) there is nothing to race."""
+    if db.get_bind().dialect.name != "postgresql":
+        return True
+    key = 7_310_000 + day.toordinal() % 100_000
+    return bool(db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": key}).scalar())
+
+
+def _ingest_recent(db: Session, dg: SeriesDailyGame, day: datetime.date, now_utc: datetime.datetime) -> bool:
+    """Whether this window's engine already recorded an ingest of `day` within INGEST_MIN_INTERVAL (any request, any server)."""
+    sim = service.get_sim(db, dg.id)
+    at = (((sim.provenance or {}).get("ingest") or {}).get(day.isoformat()) or {}).get("at") if sim is not None else None
+    if not at:
+        return False
+    try:
+        return now_utc - datetime.datetime.fromisoformat(at) < INGEST_MIN_INTERVAL
+    except ValueError:
+        return False
+
+
 def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: datetime.date, only_game_id: int | None = None) -> None:
     """Window games (docs/hockey_spec.md 6.5): ingest every day of each open window up to today, then let the window
     engine do whatever is due - open the game at the first kickoff, select counting games, publish the periods that
@@ -703,27 +758,39 @@ def _sync_window_rows(db: Session, league_id: int, nhl: Universe, today_et: date
         rows = [r for r in rows if r.id == only_game_id]
     now_utc = service.utcnow()
     ingested: set[datetime.date] = set()
+    reports: dict[str, dict] = {}
     for dg in rows:
         last_day = min(dg.calendar_date_end or dg.calendar_date, today_et)
         day = dg.calendar_date
         while day <= last_day:
             if day not in ingested:
                 ingested.add(day)
-                try:
-                    # A savepoint, so a failed ingest (e.g. two requests ingesting the same live slate at once and hitting
-                    # the game_events unique key) rolls back only itself. Without it Postgres aborts the whole request.
-                    with db.begin_nested():
-                        ingest_daily_slate_if_needed(db, nhl, day)
-                        db.flush()
-                except Exception:
-                    logging.getLogger(__name__).exception("slate ingest failed for %s", day)
+                if _ingest_recent(db, dg, day, now_utc):
+                    pass                                    # another request ingested this day a moment ago
+                elif not _try_ingest_lock(db, day):
+                    logging.getLogger(__name__).info("slate ingest for %s is already running elsewhere", day)
+                else:
+                    report: dict = {}
+                    try:
+                        # A savepoint, so a failed ingest rolls back only itself (Postgres otherwise aborts the whole request).
+                        with db.begin_nested():
+                            ingest_daily_slate_if_needed(db, nhl, day, report)
+                            db.flush()
+                    except Exception as exc:
+                        logging.getLogger(__name__).exception("slate ingest failed for %s", day)
+                        report["error"] = f"{type(exc).__name__}: {exc}"[:200]
+                    reports[day.isoformat()] = report
+                    db.commit()                             # keep what arrived even if this request is cut short, and free the day's lock
             day += datetime.timedelta(days=1)
+        first, last = dg.calendar_date.isoformat(), (dg.calendar_date_end or dg.calendar_date).isoformat()
+        mine = {k: v for k, v in reports.items() if first <= k <= last}
         try:
             with db.begin_nested():
-                window_engine.tick(db, dg, now_utc)
+                window_engine.tick(db, dg, now_utc, ingest=mine or None)
         except Exception as e:
             logging.getLogger(__name__).exception("window tick failed for game %s", dg.id)
             _record_tick_error(db, dg, e)
+        db.commit()
     db.commit()
 
 
