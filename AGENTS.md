@@ -31,6 +31,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 
 | Script | Purpose | Venv | External API / .env | Writes DB |
 |---|---|---|---|---|
+| `scripts/audit_hockey_lineups.py` | Read-only audit of every NHL window game in one league: frozen lineup vs what the pecking order gives on today's schedule; pass `--league` (a league id, not a game id) | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | No (read-only; PostgreSQL transaction opened READ ONLY) |
 | `scripts/audit_scored_week.py` | Read-only realism audit of one scored week (team scores vs real games, credit-vs-real correlation, standings tie-out); pass a throwaway DB, `--league`, `--week` | `.venv-api` | No | No (read-only) |
 | `scripts/convert_to_window_rows.py` | Moves NHL schedules from one game per day to one per fantasy window; unplayed windows collapse and their simulations are discarded, played days are untouched (dry run default; `--yes` applies; run after `alembic upgrade head`) | `.venv-api` | No | Yes (`DATABASE_URL`; destructive for unplayed windows with `--yes`) |
 | `scripts/delete_all_leagues.py` | Deletes leagues and child records from SQLite DBs (dry run default; `--yes` executes) | `.venv-api` | No (unverified in docstring) | Yes (destructive with `--yes`) |
@@ -40,6 +41,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/ingest_nhl_daily_slate.py` | Ingests real NHL schedule, plays, shots and credits for a specific date slate | `.venv` | Yes (NHL API; no key) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_season_points.py` | Ingests full-season stat lines from CFBD and stores ESPN standard points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_week_scores.py` | Scores real games for season weeks (games, plays, credits, weekly scores) | `.venv` | Yes (CFBD API; `CFBD_API_KEY` unverified in docstring) | Yes (`DATABASE_URL`) |
+| `scripts/resimulate_hockey_games.py` | Voids NHL window games the audit calls "locked, differs" so the next sync simulates them again on the full-schedule lineup (dry run default; `--yes` executes; operator-run, never agent-run against production) | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | Yes (`DATABASE_URL`; destructive with `--yes`: deletes the voided games' events and viewers' progress) |
 | `scripts/run_nfl_mock_run.py` | NFL Timed Auction Draft (12 AI teams) plus one scored week, then runs the realism audit | `.venv-api` | No | Yes (throwaway copy `nfl_mock_run.db` of `nfl_score_run.db`) |
 | `scripts/run_mock_auction_draft.py` | Runs timed auction draft end-to-end via FastAPI TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
 | `scripts/run_mock_commissioner_mode.py` | Tests commissioner mode entitlement, draft simulation, and lineup rules | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |

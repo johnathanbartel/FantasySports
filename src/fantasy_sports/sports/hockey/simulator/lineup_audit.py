@@ -11,7 +11,9 @@ the window were not all stored when it froze shows up here by name, together wit
   * locked, differs    frozen on a possibly partial schedule and periods are already published: published events never change
   * frozen, differs    frozen on the full schedule; today's pecking order differs only because it was edited since (not an error)
 
-Nothing here writes anything.
+`audit` is read-only. `resimulate_locked` is the one operation that deletes (a game's simulation, so it can be simulated again);
+it only touches games the audit calls "locked, differs", does nothing unless `execute` is true, and is run by an operator from
+scripts/resimulate_hockey_games.py (never from the web app).
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ def _names(db: Session, asset_ids) -> list[str]:
 
 
 def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None) -> list[dict]:
+    """One entry per window game of the league (or only `only_game_id`). Read-only."""
     universe_id = window_engine._universe_id(db, league_id)
     rows = (db.query(SeriesDailyGame).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
             .filter(LeagueSeries.league_id == league_id, SeriesDailyGame.window_index.isnot(None))
@@ -78,4 +81,23 @@ def lineup_audit(db: Session, league_id: int, only_game_id: int | None = None) -
                     "end": (dg.calendar_date_end or dg.calendar_date).isoformat(), "game_status": dg.status,
                     "published_periods": published, "schedule_verified_at_freeze": verified, "stored_games_in_window": len(games),
                     "repaired": state.get("lineup_repaired"), "status": status, "sides": sides})
+    return out
+
+
+def resimulate_locked(db: Session, league_id: int, game_ids: list[int] | None = None, execute: bool = False) -> list[dict]:
+    """Void the simulation of every window game the audit calls "locked, differs" (or only those of `game_ids`), so the next
+    window-engine sync simulates it again from the stored feed on a lineup resolved on the full schedule. A dry run (the default)
+    only reports. Games in any other state are never touched. Flushes, does not commit. Returns what was (or would be) done."""
+    out = []
+    for entry in lineup_audit(db, league_id):
+        if game_ids is not None and entry["daily_game_id"] not in game_ids:
+            continue
+        if entry["status"] != "locked, differs":
+            out.append({"daily_game_id": entry["daily_game_id"], "action": f"left alone ({entry['status']})", "sides": entry["sides"]})
+            continue
+        if execute:
+            dg = db.get(SeriesDailyGame, entry["daily_game_id"])
+            service.reset_simulation(db, dg)
+        out.append({"daily_game_id": entry["daily_game_id"], "action": "voided" if execute else "would be voided", "sides": entry["sides"],
+                    "published_periods": entry["published_periods"]})
     return out
