@@ -60,22 +60,21 @@ SYNC_EVERY_SECONDS = 15
 
 def _drive_window_engine(db: Session, game: SeriesDailyGame) -> None:
     """A game page that is open is what is watching the game, so it must also be what moves it: ingest the feed and let
-    the window engine publish what is due, at most every SYNC_EVERY_SECONDS per league and server process. Without this
+    the window engine publish what is due, at most every SYNC_EVERY_SECONDS per game and server process. Without this
     a period waits for someone to open the league page. Never raises."""
     import logging
     import time
     if game.window_index is None or game.status == "FINAL":
         return
-    league_id = game.series.league_id
     now = time.monotonic()
-    if now - _LAST_SYNC.get(league_id, -1e9) < SYNC_EVERY_SECONDS:
+    if now - _LAST_SYNC.get(game.id, -1e9) < SYNC_EVERY_SECONDS:
         return
-    _LAST_SYNC[league_id] = now
+    _LAST_SYNC[game.id] = now
     try:
-        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
-        auto_sync_league_scoreboard(db, league_id)
+        from fantasy_sports.platform.nhl_daily_sync import sync_window_game
+        sync_window_game(db, game)
     except Exception:
-        logging.getLogger(__name__).exception("game page sync failed for league %s", league_id)
+        logging.getLogger(__name__).exception("game page sync failed for game %s", game.id)
         db.rollback()
 
 
