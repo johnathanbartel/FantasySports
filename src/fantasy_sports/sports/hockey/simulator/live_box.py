@@ -126,11 +126,16 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
     out["sim_status"] = sim.status if sim is not None else None
 
     side_of, assets, real_team_of = {}, {}, {}
+    left_roster: dict[str, list[str]] = {"home": [], "away": []}
     for side in ("home", "away"):
         by_asset = {aid: pl for _, (aid, pl) in rosters[side].items()}
         for aid in lineup[side]:
-            if aid in by_asset:
-                side_of[aid], assets[aid], real_team_of[aid] = side, by_asset[aid], by_asset[aid].real_team_id
+            pl = window_engine.frozen_player(db, by_asset, aid)
+            if pl is None:
+                continue
+            if aid not in by_asset:
+                left_roster[side].append(pl.full_name)
+            side_of[aid], assets[aid], real_team_of[aid] = side, pl, pl.real_team_id
 
     counting: list[CountingGame] = []
     chosen: dict[int, int] = {}
@@ -144,7 +149,7 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
             if aid not in assets:
                 asset = db.get(DraftableAsset, aid)
                 dropped[side].append({"player": asset.player.full_name if asset is not None and asset.player is not None else f"asset {aid}",
-                                      "reason": "no longer on the active roster (dropped, traded, or on the injured list since the lock)"})
+                                      "reason": "no longer exists as a player"})
     for aid in sorted(assets):
         cands = [g for g in relevant if real_team_of[aid] in (g.home_team_id, g.away_team_id)]
         if not cands:
@@ -170,6 +175,7 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
                            for g in sorted(cands, key=lambda g: (g.kickoff_at, g.id))]}
     for side in ("home", "away"):
         out["lineups"][side]["dropped_from_matchup"] = dropped[side]
+        out["lineups"][side]["left_roster_still_counted"] = left_roster[side]
     if not counting:
         out.update(state="no_counting_games", note="No starter has a game in this window.", players=[], periods=[])
         return out

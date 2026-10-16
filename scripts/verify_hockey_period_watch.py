@@ -124,6 +124,10 @@ def main() -> None:
             ids = {k: g.id for k, g in games.items()}
 
 
+        def prov_after_il():
+            with SessionLocal() as db:
+                return dict(service.get_sim(db, dg_id).provenance)
+
         def tick(local: datetime.datetime):
             with SessionLocal() as db:
                 dg = db.get(SeriesDailyGame, dg_id)
@@ -198,6 +202,17 @@ def main() -> None:
         early = v.home_shots + v.away_shots
         check([p["phase"] for p in v.period_phases] == ["in_progress", "upcoming", "upcoming"], "Period 1 is in progress, the others not started")
         check(not v.can_skip and events_for(at(SUN, 13, 30))[1] == 0, "nothing can be skipped to or fetched while no period is published")
+
+        # ---- a frozen starter leaves the active roster after the lock: the game must keep running (it used to raise KeyError) ----------------
+        with SessionLocal() as db:
+            d4 = db.query(Player).filter_by(full_name="One D4").one()
+            fan1 = db.query(Team).filter_by(name="Fan1").one()
+            entry = [e for e in db.query(RosterEntry).filter_by(team_id=fan1.id) if e.draftable_asset.player_id == d4.id][0]
+            entry.on_injured_list = True
+            db.commit()
+        r = tick(at(SUN, 13, 35))
+        check(r.status in ("idle", "opened"), "the engine ticks normally after a frozen starter goes on the injured list")
+        check("engine_error" not in prov_after_il(), "...and records no error")
 
         # ---- the engine's read-outs can fail without stopping the game, and it says so ---------------------------------------------
         def prov_now():
