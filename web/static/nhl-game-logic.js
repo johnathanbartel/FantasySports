@@ -207,7 +207,8 @@
     switch (p.phase) {
       case 'upcoming': return {title: `Period ${n}`, detail: 'Not started', tone: 'idle', action: null};
       case 'in_progress': return {title: `Period ${n} in progress`, detail: `${mmss(Math.max(0, p.seconds_remaining - (elapsedSinceReadSeconds || 0)))} left`, tone: 'live', action: null};
-      case 'simulating': return {title: `Intermission`, detail: `Period ${n} is being simulated…`, tone: 'sim', action: null};
+      case 'simulating': return {title: `Intermission`, tone: 'sim', action: null, percent: Math.max(0, Math.min(100, p.percent || 0)),
+        detail: p.waiting_for ? `Waiting for period ${p.waiting_for} to finish simulating.` : 'The Zamboni is currently on the simulator.'};
       case 'ready': return {title: firstReady === n ? `Watch period ${n} now!` : `Period ${n} ready`, detail: firstReady === n ? 'Highlights are ready. Watching updates the score.' : `Watch period ${firstReady} first.`, tone: firstReady === n ? 'ready' : 'idle', action: firstReady === n ? 'watch' : null};
       default: return {title: `Period ${n}`, detail: 'Watched', tone: 'done', action: 'replay'};
     }
@@ -216,7 +217,7 @@
   function firstReadyPeriod(phases) { const p = (phases || []).find(x => x.phase === 'ready'); return p ? p.period : null; }
 
   // Everything the hub needs to decide whether to redraw (not just refresh the clock).
-  function phaseSignature(state) { return (state.period_phases || []).map(p => p.phase).join('|') + '#' + (state.shown_seq || 0) + '#' + state.status; }
+  function phaseSignature(state) { return (state.period_phases || []).map(p => p.phase + (p.phase === 'simulating' ? ':' + (p.percent || 0) : '')).join('|') + '#' + (state.shown_seq || 0) + '#' + state.status; }
 
   // The events of one period (its period_start through its period_end / game_end).
   function periodEvents(events, period) { return (events || []).filter(e => e.period === period); }

@@ -111,6 +111,7 @@ function render(d) {
   <section class="card sec"><h2>Summary</h2>
     <div class="sum">
       <div><span class="muted">Scoreboard</span><br><b>${esc(n.away)} ${d.scoreboard.away} – ${d.scoreboard.home} ${esc(n.home)}</b></div>
+      <div><span class="muted">Shots on goal (live)</span><br><b>${esc(n.away)} ${d.shots_on_goal.away} · ${esc(n.home)} ${d.shots_on_goal.home}</b></div>
       <div><span class="muted">Status</span><br><b>${esc(d.status)}</b></div>
       <div><span class="muted">Fantasy periods published</span><br><b>${pub} of 3</b></div>
       <div><span class="muted">Earned credit</span><br><b>${esc(n.away)} ${pts(d.side_credit.away)} · ${esc(n.home)} ${pts(d.side_credit.home)}</b></div>

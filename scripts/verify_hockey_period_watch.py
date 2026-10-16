@@ -194,6 +194,8 @@ def main() -> None:
         check(v.progressive and not v.veiled and v.status == "LIVE", "a window game has no spoiler veil")
         check(v.period == 1 and v.seconds_remaining is not None and 0 < v.seconds_remaining < 1200, "the live clock is public before the viewer has watched anything")
         check(v.home_score is None and v.away_score is None, "...but the score is hidden")
+        check(v.home_shots is not None and v.away_shots is not None, "...while shots on goal are public")
+        early = v.home_shots + v.away_shots
         check([p["phase"] for p in v.period_phases] == ["in_progress", "upcoming", "upcoming"], "Period 1 is in progress, the others not started")
         check(not v.can_skip and events_for(at(SUN, 13, 30))[1] == 0, "nothing can be skipped to or fetched while no period is published")
 
@@ -204,12 +206,19 @@ def main() -> None:
         v = view(at(SUN, 20, 5))
         check(v.period_phases[0]["phase"] == "simulating" and v.published_periods == 0, "Period 1 is over but not published: it is simulating (the Zamboni)")
         check(v.period == 2 or v.period == 1, "the clock keeps running")
+        sim_pct = v.period_phases[0]["percent"]
+        check(0 <= sim_pct < 100, "the Zamboni meter shows how much of the feed has arrived (not done yet)")
+        before_publish = v.home_shots + v.away_shots
+        check(before_publish >= early and before_publish > 0, "shots on goal have built up during the period, before anything is published")
+        later = view(at(SUN, 19, 40))
+        check(early <= later.home_shots + later.away_shots <= before_publish, "shot totals only climb as the clock advances")
 
         # ---- published, not watched ----------------------------------------------------------------------------------------
         set_game("B", event_period=2)
         tick(at(SUN, 20, 5))
         v = view(at(SUN, 20, 5))
         check(v.period_phases[0]["phase"] == "ready" and v.home_score is None, "Period 1 is ready to watch and the score is still hidden")
+        check(v.home_shots + v.away_shots >= before_publish, "publishing never lowers the shot count")
         check(v.can_skip, "...and the viewer may reveal what has been simulated")
         check(events_for(at(SUN, 20, 5)) == ([], 0) or events_for(at(SUN, 20, 5))[1] == 0, "without watching, no events are served")
         check(refuses(service.progress, at(SUN, 20, 5), 1) == "NOT_WATCHING", "progress needs a watch first")

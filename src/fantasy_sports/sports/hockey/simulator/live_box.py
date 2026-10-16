@@ -208,7 +208,9 @@ def live_box_score(db: Session, daily_game: SeriesDailyGame, now_utc: datetime.d
             "published_total": round(stored, 4), "expected_published": round(published_total, 4),
             "ties_out": abs(stored - published_total) < 1e-3})
 
+    shots = service.live_shots(sim, service._events(db, sim), now_utc) if sim is not None else (0, 0)
     out.update(
+        shots_on_goal={"home": shots[0], "away": shots[1]},
         state="live", players=players, periods=periods, counting_games=n, real_periods_pooled=division.pooled,
         chunk_size=division.chunk_size, real_periods_begun=begun,
         side_credit={s: round(sum(p["credit"][s] for p in periods), 4) for s in ("home", "away")},
