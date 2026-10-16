@@ -1438,6 +1438,21 @@ async function renderTrades() {
       <div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">
         ${picks.map(k => pickRow(name, k)).join('') || `<p class="muted" style="margin:0;font-size:12px">${who} no tradeable draft picks.</p>`}
       </div></div>`;
+  // CFG-06: why a trade is waiting or blocked (the server decides; this only shows it), plus the commissioner's sign-off.
+  const eligibilityNote = (tr) => {
+    const el = tr.eligibility;
+    if (!el) return '';
+    const needsSignOff = (el.approval_requirements || []).includes('ELIMINATED_FREE_LEAGUE_TRADE');
+    const lines = (el.explanations || []).map(x => `<div>${esc(x)}</div>`).join('');
+    const missing = (el.missing_prerequisites || []).length ? `<div class="muted">Still needed: ${esc(el.missing_prerequisites.join(', '))}.</div>` : '';
+    const signed = tr.commissioner_decision ? `<div>Commissioner: <b>${tr.commissioner_decision === 'approve' ? 'signed off' : 'rejected'}</b>.</div>` : '';
+    const buttons = (isCommissioner && needsSignOff && !tr.commissioner_decision) ? `
+      <div style="display:flex;gap:var(--space-2);margin-top:6px">
+        <button type="button" class="btn btn-primary btn-sm" data-commish-decide="${tr.id}" data-decision="approve">Sign off</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-commish-decide="${tr.id}" data-decision="reject" style="color:var(--color-danger)">Reject</button>
+      </div>` : '';
+    return (lines || missing || signed || buttons) ? `<div class="note" style="font-size:12px;margin-bottom:var(--space-2)">${lines}${missing}${signed}${buttons}</div>` : '';
+  };
   const assetPill = (a) => `
     <span class="tag tag-neutral" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;margin:2px">
       ${posTag(a.position)} <strong>${esc(a.display_name)}</strong>
@@ -1487,6 +1502,7 @@ async function renderTrades() {
               </div>
             </div>
 
+            ${eligibilityNote(tr)}
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--space-2);padding-top:var(--space-2);border-top:1px solid var(--color-divider)">
               <div style="font-size:12px">
                 ${hasVoted ? `<span style="color:var(--color-accent);font-weight:600">Your team voted: ${tr.user_vote === 'approve' ? 'Approved ✓' : 'Rejected ✗'}</span>` : '<span class="muted">Your vote is needed for this trade.</span>'}
@@ -1605,8 +1621,10 @@ async function renderTrades() {
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:var(--space-2)">
+        <button type="button" class="btn btn-secondary" id="btn-check-trade" ${can ? '' : 'disabled'}>Check Eligibility</button>
         <button type="button" class="btn btn-primary" id="btn-submit-trade" ${can ? '' : 'disabled'}>Submit Trade Proposal</button>
       </div>
+      <div id="trade-eligibility" class="note" style="display:none;font-size:13px;margin-top:var(--space-2)"></div>
     </div>
 
     <!-- Completed / Past Trades -->
@@ -1621,6 +1639,7 @@ async function renderTrades() {
               <span class="muted">to</span>
               <strong>${esc(tr.counterparty_team_name)}</strong> for ${tradeText(tr.receive_assets, tr.receive_picks)}
             </div>
+            ${tr.failure_reason ? `<div class="muted" style="flex-basis:100%;font-size:12px">${esc(tr.failure_reason)}</div>` : ''}
             <span class="muted" style="font-size:12px">${tr.resolved_at ? new Date(tr.resolved_at).toLocaleDateString() : ''}</span>
           </div>
         `).join('') : '<p class="muted" style="margin:var(--space-2) 0">No completed trades yet.</p>'}
@@ -1634,6 +1653,39 @@ async function renderTrades() {
     tradeSelectedOppId = Number($('trade-opp').value);
     renderTrades();
   };
+
+  const readTradeForm = () => {
+    const ids = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(c => Number(c.value));
+    const picks = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(c => {
+      const [season, round, original_team_id] = c.value.split('|').map(Number);
+      return {season, round, original_team_id};
+    });
+    return {proposer_team_id: t.id, counterparty_team_id: tradeSelectedOppId, send_asset_ids: ids('trade-send-chk'),
+            receive_asset_ids: ids('trade-recv-chk'), send_picks: picks('trade-send-pick'), receive_picks: picks('trade-recv-pick')};
+  };
+  $('btn-check-trade').onclick = async () => {
+    showError(''); showResult('');
+    const box = $('trade-eligibility');
+    try {
+      const el = await FSC.post(`/leagues/${LEAGUE_ID}/trades/preview`, readTradeForm());
+      const blocked = el.status === 'BLOCKED' || el.status === 'AWAITING_PAYMENT';
+      box.style.display = '';
+      box.innerHTML = `<b>${blocked ? 'This trade cannot be submitted yet.' : 'This trade can be submitted.'}</b>`
+        + (el.explanations || []).map(x => `<div>${esc(x)}</div>`).join('');
+    } catch (e) { showError(e.message); }
+  };
+
+  document.querySelectorAll('[data-commish-decide]').forEach(btn => {
+    btn.onclick = async () => {
+      showError(''); showResult('');
+      try {
+        const res = await FSC.post(`/trades/${Number(btn.dataset.commishDecide)}/commissioner-decision`, {decision: btn.dataset.decision});
+        showResult(res.status === 'accepted' ? 'Signed off - the league had already approved, so the trade executed.'
+          : res.status === 'rejected' ? 'Trade rejected.' : 'Signed off. The trade still needs league majority approval.');
+        await renderTrades();
+      } catch (e) { showError(e.message); }
+    };
+  });
 
   $('btn-submit-trade').onclick = async () => {
     showError(''); showResult('');
@@ -1665,7 +1717,9 @@ async function renderTrades() {
       if (res.status === 'accepted') {
         showResult('Trade approved and executed!');
       } else if (res.status === 'voting') {
-        showResult(`Trade proposed to ${esc(res.counterparty_team_name)}! Requires league majority approval before executing.`);
+        showResult((res.eligibility?.approval_requirements || []).includes('ELIMINATED_FREE_LEAGUE_TRADE')
+          ? 'Trade proposed. It stays pending until a league majority approves it and the commissioner signs off.'
+          : `Trade proposed to ${esc(res.counterparty_team_name)}! Requires league majority approval before executing.`);
       } else {
         showResult(`Trade proposal sent to ${esc(res.counterparty_team_name)}.`);
       }
@@ -1997,6 +2051,15 @@ async function renderLeagueSettings() {
       : (picksOn ? `<p>Draft picks can be traded${(isKeeper || isDynasty) ? ' for the next ' + lg.pick_trade_seasons + ' draft' + (lg.pick_trade_seasons === 1 ? '' : 's') : ' for the next draft'}.</p>` : `<p>Draft pick trading is turned off in this league.</p>`))
       + `<p class="muted">${isKeeper || isDynasty ? 'Pick rounds follow the rookie rounds you set when starting a new season (3 until then). ' : ''}Turning it off stops new pick trades; picks already traded stay with their new owners.</p></div>`;
   }
+  const paid = lg.league_type === 'PAID';
+  html += `<div class="card"><h3>League Type &amp; Trade Rules</h3>` + (isCommissioner
+    ? `<p><label>League type <select id="league-type"><option value="FREE"${paid ? '' : ' selected'}>Free</option><option value="PAID"${paid ? ' selected' : ''}>Paid</option></select></label>
+         <label> Annual dues $ <input id="league-dues" type="number" min="1" step="1" value="${lg.annual_dues_cents ? lg.annual_dues_cents / 100 : ''}" style="width:6em"></label></p>
+       <p><label>Trade deadline <input id="trade-deadline" type="datetime-local" value="${utcToLocalInput(lg.trade_deadline)}"></label></p>
+       <p><button type="button" class="btn btn-primary" id="league-type-save">Save</button></p>`
+    : `<p>${paid ? 'Paid league - $' + (lg.annual_dues_cents / 100).toFixed(2) + ' annual dues.' : 'Free league - no dues.'}</p>
+       <p>Trade deadline: <b>${lg.trade_deadline ? esc(fmtUtc(lg.trade_deadline)) : 'none'}</b></p>`)
+    + `<p class="muted">${paid ? 'Eliminated teams, and teams trading away future picks, must have the relevant seasons dues paid first.' : 'Eliminated teams can trade only for future draft picks, with majority league approval and the commissioner sign-off.'} Once dues are recorded or trades are pending, the type can change only in the offseason.</p></div>`;
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
   if (lg.offseason) {
     html += keeperPhase
@@ -2033,6 +2096,10 @@ async function renderLeagueSettings() {
     points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10)})), 'Standings and playoff settings saved.'));
   on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', Object.assign(
     {pick_trading_enabled: $('pick-trading-enabled').checked}, $('pick-trade-seasons') ? {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)} : {}))), 'Pick trading saved.'));
+  on('league-type-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
+    league_type: $('league-type').value,
+    annual_dues_cents: $('league-dues').value === '' ? null : Math.round(parseFloat($('league-dues').value) * 100),
+    trade_deadline: localInputToUtc($('trade-deadline').value)})), 'League type and trade rules saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Start season ${lg.season_number + 1}? This archives season ${lg.season_number} and opens the offseason. It clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;

@@ -101,6 +101,7 @@ class League(Base):
             "league_format IN ('traditional_redraft', 'future_pick_redraft', 'keeper', 'dynasty')",
             name="ck_league_format",
         ),
+        CheckConstraint("league_type IN ('FREE', 'PAID')", name="ck_league_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -158,6 +159,11 @@ class League(Base):
     # The commissioner can switch pick trading off (Future Draft Pick Redraft, Keeper and Dynasty). Picks already traded stay
     # with their owners and still go to them in the draft.
     pick_trading_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # CFG-06 (platform/trade_eligibility.py): FREE or PAID. A PAID league charges annual_dues_cents per franchise per season;
+    # dues gate some trades. trade_deadline (naive UTC, NULL = none) blocks every trade once passed.
+    league_type: Mapped[str] = mapped_column(String(4), default="FREE", server_default="FREE")
+    annual_dues_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trade_deadline: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     # Hockey standings (platform/series_standings.py): sorted by points (points_per_win / points_per_tie) or win percentage.
     standings_mode: Mapped[str] = mapped_column(String(10), default="points", server_default="points")
     points_per_win: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
@@ -326,6 +332,9 @@ class Team(Base):
     # Trait system design TBD - just a JSON hook for now, e.g.
     # {"aggression": 0.8, "reactive_to_trends": true}.
     personality_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The season_number in which this franchise was mathematically eliminated from championship contention (NULL = active).
+    # Written only by the elimination calculation (platform/elimination.py); never accepted from a client.
+    eliminated_season: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     league: Mapped["League"] = relationship(back_populates="teams")
@@ -1051,6 +1060,7 @@ class Trade(Base):
       'declined': counterparty declined the trade.
       'rejected': trade was voted down by the league.
       'cancelled': proposer withdrew the trade.
+      'blocked': an eligibility recheck refused it (platform/trade_eligibility.py); failure_reason says why.
     """
 
     __tablename__ = "trades"
@@ -1062,6 +1072,8 @@ class Trade(Base):
     status: Mapped[str] = mapped_column(String(20), default="proposed")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Why the trade was blocked (status 'blocked'): recorded when the last eligibility recheck refused it.
+    failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     league: Mapped["League"] = relationship(foreign_keys=[league_id])
     proposer_team: Mapped["Team"] = relationship(foreign_keys=[proposer_team_id])
@@ -1102,6 +1114,48 @@ class TradedPick(Base):
     round: Mapped[int] = mapped_column(Integer)
     original_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     owner_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+
+
+class TradeApproval(Base):
+    """A special approval on a trade, separate from ordinary votes (TradeVote): today only the commissioner's sign-off
+    (approval_type ELIMINATED_FREE_LEAGUE_TRADE) on a free-league trade that involves an eliminated team."""
+
+    __tablename__ = "trade_approvals"
+    __table_args__ = (
+        UniqueConstraint("trade_id", "approval_type", name="uq_trade_approval_type"),
+        CheckConstraint("decision IN ('approve', 'reject')", name="ck_trade_approval_decision"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("trades.id"), index=True)
+    approval_type: Mapped[str] = mapped_column(String(40))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    decision: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class SeasonDues(Base):
+    """One payment record for a franchise's league dues for one season. The credit belongs to the franchise (team), so it
+    survives a change of manager. A season is secured when the confirmed ('paid') amounts reach the league's annual dues.
+    status: pending | paid | failed | refunded | disputed - only 'paid' counts. Rows are never deleted (audit trail)."""
+
+    __tablename__ = "season_dues"
+    __table_args__ = (
+        UniqueConstraint("league_id", "payment_reference", name="uq_season_dues_reference"),
+        CheckConstraint("status IN ('pending', 'paid', 'failed', 'refunded', 'disputed')", name="ck_season_dues_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    season_number: Mapped[int] = mapped_column(Integer)
+    required_cents: Mapped[int] = mapped_column(Integer)      # the league's annual dues when this row was recorded
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    payment_reference: Mapped[str] = mapped_column(String(120))
+    recorded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
 
 
 class TradeVote(Base):

@@ -7,13 +7,15 @@ from __future__ import annotations
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_can_manage_team, current_user, optional_user
+from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import pick_trading, trades
-from fantasy_sports.platform.db.models.core import DraftableAsset, League, RealTeam, Team, Trade, TradeVote, User
+from fantasy_sports.platform import dues, pick_trading, trade_eligibility, trades
+from fantasy_sports.platform.db.models.core import (
+    DraftableAsset, League, RealTeam, SeasonDues, Team, Trade, TradeVote, User,
+)
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.player_rates import rates_by_asset
@@ -70,6 +72,40 @@ class TradeVoteOut(BaseModel):
     created_at: datetime.datetime
 
 
+class EligibilityOut(BaseModel):
+    status: str
+    approval_requirements: list[str] = []
+    payment_requirements: list[dict] = []
+    blocking_codes: list[str] = []
+    explanations: list[str] = []
+    missing_prerequisites: list[str] = []
+
+
+class CommissionerDecisionRequest(BaseModel):
+    decision: str  # "approve" | "reject"
+
+
+class DuesRecordRequest(BaseModel):
+    season_number: int
+    amount_cents: int
+    status: str = "paid"
+    payment_reference: str = Field(min_length=1, max_length=120)
+
+
+class DuesStatusRequest(BaseModel):
+    status: str
+
+
+class DuesOut(BaseModel):
+    id: int
+    team_id: int
+    season_number: int
+    required_cents: int
+    amount_cents: int
+    status: str
+    payment_reference: str
+
+
 class TradeOut(BaseModel):
     id: int
     league_id: int
@@ -93,6 +129,9 @@ class TradeOut(BaseModel):
     majority_needed: int
     total_teams: int
     user_vote: str | None = None
+    eligibility: EligibilityOut | None = None
+    failure_reason: str | None = None
+    commissioner_decision: str | None = None
 
 
 def _format_trade(db: Session, trade: Trade, active_user: User | None = None) -> TradeOut:
@@ -161,6 +200,7 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
                 break
 
     is_ai = p_team.is_ai_owned or c_team.is_ai_owned
+    approval = trade_eligibility.commissioner_approval(db, trade.id)
 
     return TradeOut(
         id=trade.id,
@@ -185,6 +225,9 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
         majority_needed=majority_needed,
         total_teams=total_teams,
         user_vote=user_vote,
+        eligibility=EligibilityOut(**trade_eligibility.evaluate_trade(db, trade).as_dict()),
+        failure_reason=trade.failure_reason,
+        commissioner_decision=approval.decision if approval else None,
     )
 
 
@@ -340,3 +383,118 @@ def cancel_trade_proposal(
         raise HTTPException(400, str(e))
 
     return _format_trade(db, trade, user)
+
+
+def _picks_in(items: list[PickRefIn]) -> list[tuple[int, int, int]]:
+    return [(p.season, p.round, p.original_team_id) for p in items]
+
+
+@router.post("/leagues/{league_id}/trades/preview", response_model=EligibilityOut)
+def preview_trade_eligibility(
+    league_id: int,
+    payload: TradeProposeRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """What would happen if this trade were submitted now: shown to the manager before they submit it."""
+    proposer_team = assert_can_manage_team(db, user, payload.proposer_team_id)
+    counterparty_team = db.get(Team, payload.counterparty_team_id)
+    league = db.get(League, league_id)
+    if league is None or proposer_team.league_id != league_id or not counterparty_team or counterparty_team.league_id != league_id:
+        raise HTTPException(404, "Teams not found in this league")
+    res = trade_eligibility.evaluate_proposal(
+        db, league, proposer_team, counterparty_team, payload.send_asset_ids, payload.receive_asset_ids,
+        _picks_in(payload.send_picks), _picks_in(payload.receive_picks))
+    return EligibilityOut(**res.as_dict())
+
+
+@router.get("/leagues/{league_id}/trades/{trade_id}/eligibility", response_model=EligibilityOut)
+def trade_eligibility_status(
+    league_id: int, trade_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    res = trade_eligibility.validate_trade_eligibility(db, trade_id, league_id, user.id)
+    if "NOT_AUTHORIZED" in res.blocking_codes:
+        raise HTTPException(403, res.message())
+    if "TRADE_NOT_FOUND" in res.blocking_codes:
+        raise HTTPException(404, res.message())
+    return EligibilityOut(**res.as_dict())
+
+
+@router.post("/trades/{trade_id}/commissioner-decision", response_model=TradeOut)
+def commissioner_decision(
+    trade_id: int,
+    payload: CommissionerDecisionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """The commissioner signs off on (or rejects) a free-league trade involving an eliminated team."""
+    trade = db.get(Trade, trade_id)
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    try:
+        trade = trades.commissioner_decide(db, trade, user.id, payload.decision)
+        db.commit()
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return _format_trade(db, trade, user)
+
+
+def _dues_out(r: SeasonDues) -> DuesOut:
+    return DuesOut(id=r.id, team_id=r.team_id, season_number=r.season_number, required_cents=r.required_cents,
+                   amount_cents=r.amount_cents, status=r.status, payment_reference=r.payment_reference)
+
+
+@router.get("/leagues/{league_id}/dues", response_model=list[DuesOut])
+def list_dues(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """The commissioner sees every payment record; a manager sees their own franchises'."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    q = db.query(SeasonDues).filter_by(league_id=league_id)
+    if league.commissioner_user_id != user.id:
+        mine = [t.id for t in db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id)]
+        if not mine:
+            raise HTTPException(403, "You are not in this league")
+        q = q.filter(SeasonDues.team_id.in_(mine))
+    return [_dues_out(r) for r in q.order_by(SeasonDues.id)]
+
+
+@router.post("/leagues/{league_id}/teams/{team_id}/dues", response_model=DuesOut)
+def record_dues(
+    league_id: int, team_id: int, payload: DuesRecordRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: records a franchise's dues payment for a season (idempotent on the payment reference)."""
+    league = assert_commissioner(db, user, league_id)
+    team = db.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    try:
+        row = dues.record_payment(db, league, team, payload.season_number, payload.amount_cents, payload.status,
+                                  payload.payment_reference, user.id)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return _dues_out(row)
+
+
+@router.post("/leagues/{league_id}/dues/{dues_id}/status", response_model=DuesOut)
+def set_dues_status(
+    league_id: int, dues_id: int, payload: DuesStatusRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: moves a payment record to another status (e.g. paid -> refunded)."""
+    league = assert_commissioner(db, user, league_id)
+    row = db.get(SeasonDues, dues_id)
+    if row is None or row.league_id != league_id:
+        raise HTTPException(404, "Payment record not found")
+    try:
+        dues.set_status(db, league, row, payload.status, user.id)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return _dues_out(row)
