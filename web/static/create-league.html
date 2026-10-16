@@ -148,6 +148,76 @@
         <span class="hint" id="draft-scheduled-hint">Optional - you can set this later, but teams will see "not yet scheduled" until you do.</span>
       </div>
 
+      <h2 style="margin:var(--space-5) 0 var(--space-1);font-size:18px">League settings</h2>
+      <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">These are the same settings the commissioner can change later on the League Settings tab.</p>
+
+      <div class="field">
+        <label for="league-format">League format</label>
+        <select id="league-format" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="traditional_redraft">Traditional Redraft</option>
+          <option value="future_pick_redraft">Future Draft Pick Redraft</option>
+          <option value="keeper">Keeper</option>
+          <option value="dynasty">Dynasty</option>
+        </select>
+        <span class="hint" id="league-format-hint"></span>
+      </div>
+
+      <div id="keeper-settings-fields" style="display:none">
+        <div class="field">
+          <label for="keeper-style">Keeper draft style</label>
+          <select id="keeper-style" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+            <option value="rookie_resign">Rookie draft only</option>
+            <option value="combined">Rookies and refills combined</option>
+            <option value="separate">Separate rookie and refill drafts</option>
+          </select>
+          <span class="hint">Teams that keep their whole roster only get the rookie draft; teams that keep less get this style.</span>
+        </div>
+        <div style="display:flex;gap:var(--space-4)">
+          <div class="field" style="flex:1">
+            <label for="keeper-limit">Most players a team can keep</label>
+            <input type="number" id="keeper-limit" min="0" max="100" placeholder="whole roster">
+            <span class="hint">Leave blank to let teams keep their whole roster.</span>
+          </div>
+          <div class="field" style="flex:1">
+            <label for="keeper-deadline">Keeper deadline</label>
+            <input type="datetime-local" id="keeper-deadline">
+            <span class="hint">Needed (as a future date) before the first rollover. Teams that haven't picked by then are trimmed automatically.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="field" id="pick-trade-field" style="display:none">
+        <label for="pick-trade-seasons">Seasons of draft picks that can be traded</label>
+        <input type="number" id="pick-trade-seasons" min="1" max="10" value="2">
+        <span class="hint">Keeper and Dynasty leagues can trade picks for this many upcoming drafts.</span>
+      </div>
+
+      <div id="hockey-settings-fields" style="display:none">
+        <div class="field">
+          <label for="standings-mode">Standings are sorted by</label>
+          <select id="standings-mode" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+            <option value="points" selected>Points</option>
+            <option value="win_pct">Win Percentage</option>
+          </select>
+          <span class="hint">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential.</span>
+        </div>
+        <div style="display:flex;gap:var(--space-4)">
+          <div class="field" style="flex:1">
+            <label for="points-win">Points for a win</label>
+            <input type="number" id="points-win" min="0" max="20" value="3">
+          </div>
+          <div class="field" style="flex:1">
+            <label for="points-tie">Points for a tie</label>
+            <input type="number" id="points-tie" min="0" max="20" value="1">
+          </div>
+        </div>
+        <div class="field">
+          <label for="playoff-teams">How many teams make the playoffs?</label>
+          <input type="number" id="playoff-teams" min="1">
+          <span class="hint" id="playoff-teams-hint"></span>
+        </div>
+      </div>
+
       <button class="btn btn-primary btn-block" id="create-league-btn">Continue to team setup</button>
     </div>
 
@@ -330,6 +400,51 @@ function updateUniverse() {
   if (pro) document.querySelector('input[name=draft-type][value=snake]').checked = true;
   updateRosterRounds();
   updateDraftTypeCards();
+  updateSettingsFields();
+}
+
+const FORMAT_HINTS = {
+  traditional_redraft: "Rosters reset each season. The next season's draft order is randomly selected on draft day.",
+  future_pick_redraft: "Rosters reset each season. The next season's draft is a snake draft in reverse order of the standings, and teams can trade next draft's picks.",
+  keeper: "Owners keep part of their roster (or all of it). The next draft is in reverse order of the standings, not a snake.",
+  dynasty: "Teams keep their whole roster and hold a rookie draft in reverse order of the standings, not a snake.",
+};
+
+// Shows the League Settings that apply to the chosen sport and format (the same ones the League Settings tab edits later).
+function updateSettingsFields() {
+  const format = document.getElementById('league-format').value;
+  const keeper = format === 'keeper', dynasty = format === 'dynasty';
+  document.getElementById('league-format-hint').textContent = FORMAT_HINTS[format] || '';
+  document.getElementById('keeper-settings-fields').style.display = keeper ? 'block' : 'none';
+  document.getElementById('pick-trade-field').style.display = (keeper || dynasty) ? 'flex' : 'none';
+  document.getElementById('hockey-settings-fields').style.display = isNhl() ? 'block' : 'none';
+  const size = Number(document.getElementById('league-size').value) || 0;
+  const def = Math.max(1, Math.floor(size * 0.33 + 0.5));
+  document.getElementById('playoff-teams').placeholder = String(def);
+  document.getElementById('playoff-teams-hint').textContent =
+    `Leave blank for the default: ${def} (33% of ${size} teams, rounded). Division winners take the top seeds and the rest of the field is seeded by rank (wild cards).`;
+}
+document.getElementById('league-format').onchange = updateSettingsFields;
+document.getElementById('league-size').oninput = updateSettingsFields;
+
+function leagueSettingsPayload() {
+  const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+  const format = document.getElementById('league-format').value;
+  const out = {league_format: format};
+  if (format === 'keeper') {
+    out.keeper_draft_style = document.getElementById('keeper-style').value;
+    out.keeper_limit = num('keeper-limit');
+    const deadline = document.getElementById('keeper-deadline').value;
+    out.keeper_deadline = deadline ? new Date(deadline).toISOString() : null;
+  }
+  if (format === 'keeper' || format === 'dynasty') out.pick_trade_seasons = num('pick-trade-seasons') || 2;
+  if (isNhl()) {
+    out.standings_mode = document.getElementById('standings-mode').value;
+    out.points_per_win = num('points-win') ?? 3;
+    out.points_per_tie = num('points-tie') ?? 1;
+    out.playoff_teams = num('playoff-teams');
+  }
+  return out;
 }
 
 function selectedDraftType() {
@@ -508,6 +623,7 @@ document.getElementById('create-league-btn').onclick = async () => {
         draft_type: draftType,
         draft_scheduled_at: scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
         recruiting_period_seconds: Math.max(1, Math.round(Number(document.getElementById('period-length').value) * Number(document.getElementById('period-unit').value))),
+        ...leagueSettingsPayload(),
       }),
     });
 
