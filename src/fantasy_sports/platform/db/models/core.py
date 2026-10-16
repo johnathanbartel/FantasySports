@@ -155,6 +155,9 @@ class League(Base):
     offseason_refill_rounds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Pick trading (platform/pick_trading.py): how many upcoming drafts' picks Keeper / Dynasty teams can trade.
     pick_trade_seasons: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # The commissioner can switch pick trading off (Future Draft Pick Redraft, Keeper and Dynasty). Picks already traded stay
+    # with their owners and still go to them in the draft.
+    pick_trading_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     # Hockey standings (platform/series_standings.py): sorted by points (points_per_win / points_per_tie) or win percentage.
     standings_mode: Mapped[str] = mapped_column(String(10), default="points", server_default="points")
     points_per_win: Mapped[int] = mapped_column(Integer, default=3, server_default="3")

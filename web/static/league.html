@@ -1398,7 +1398,7 @@ async function renderTrades() {
     tradeSelectedOppId = otherTeams[0]?.id || null;
   }
 
-  const picksTrade = ['future_pick_redraft', 'keeper', 'dynasty'].includes(ov.league_format);
+  const picksTrade = !!ov.pick_trading_on;
   const [tradeList, myRoster, oppRoster, myPicks, oppPicks] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/trades`),
     api(`/teams/${t.id}/roster`),
@@ -1965,7 +1965,7 @@ async function renderLeagueSettings() {
         ? `<p><label>Draft style <select id="keeper-style">${KEEPER_STYLES.map(([v, l]) => `<option value="${v}"${v === lg.keeper_draft_style ? ' selected' : ''}>${l}</option>`).join('')}</select></label></p>
            <p><label>Most players a team can keep <input id="keeper-limit" type="number" min="0" max="100" value="${lg.keeper_limit ?? ''}" placeholder="whole roster" style="width:8em"></label></p>
            <p><label>Keeper deadline <input id="keeper-deadline" type="datetime-local" value="${utcToLocalInput(lg.keeper_deadline)}"></label>
-              <button id="keeper-settings-save">Save</button></p>`
+              <button type="button" class="btn btn-primary" id="keeper-settings-save">Save</button></p>`
         : `<p>Draft style: ${esc(style[1])}. ${esc(style[2])}</p><p>Most players a team can keep: ${lg.keeper_limit ?? 'its whole roster'}</p>`)
       + `<p><b>Keeper deadline:</b> ${lg.keeper_deadline ? esc(fmtUtc(lg.keeper_deadline)) : '<span class="muted">not set yet</span>'}</p>`
       + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
@@ -1982,30 +1982,33 @@ async function renderLeagueSettings() {
             <label> Points for a tie <input id="points-tie" type="number" min="0" max="20" value="${lg.points_per_tie}" style="width:4em"></label>
             <span class="muted">(used when sorting by points)</span></p>
          <p><label>Playoff teams <input id="playoff-teams" type="number" min="1" max="${nTeams}" value="${inUse}" style="width:4em"></label>
-            <button id="standings-save">Save</button></p>
+            <button type="button" class="btn btn-primary" id="standings-save">Save</button></p>
          ${lg.playoff_teams ? '' : `<p class="note">How many teams should make the playoffs? Until you choose, the default is ${defPlayoff} (33% of ${nTeams} teams, rounded). Pick a number and save.</p>`}`
       : `<p>Standings are sorted by <b>${lg.standings_mode === 'points' ? 'points (' + lg.points_per_win + ' for a win, ' + lg.points_per_tie + ' for a tie)' : 'win percentage'}</b>.</p>
          <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}.</p>`)
       + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential. The division winners take the top seeds and the rest of the field is seeded by rank (wild cards).</p></div>`;
   }
-  if (isKeeper || isDynasty) {
+  if (lg.league_format !== 'traditional_redraft') {
+    const picksOn = lg.pick_trading_enabled;
     html += `<div class="card"><h3>Draft Pick Trading</h3>` + (isCommissioner
-      ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label> <button id="pick-trade-save">Save</button></p>`
-      : `<p>Picks for the next ${lg.pick_trade_seasons} draft${lg.pick_trade_seasons === 1 ? '' : 's'} can be traded.</p>`)
-      + `<p class="muted">Pick rounds follow the rookie rounds you set when rolling over (3 until then).</p></div>`;
+      ? `<p><label><input id="pick-trading-enabled" type="checkbox"${picksOn ? ' checked' : ''}> Allow teams to trade draft picks</label></p>`
+        + ((isKeeper || isDynasty) && picksOn ? `<p><label>Seasons of draft picks that can be traded <input id="pick-trade-seasons" type="number" min="1" max="10" value="${lg.pick_trade_seasons}" style="width:4em"></label></p>` : '')
+        + `<p><button type="button" class="btn btn-primary" id="pick-trade-save">Save</button></p>`
+      : (picksOn ? `<p>Draft picks can be traded${(isKeeper || isDynasty) ? ' for the next ' + lg.pick_trade_seasons + ' draft' + (lg.pick_trade_seasons === 1 ? '' : 's') : ' for the next draft'}.</p>` : `<p>Draft pick trading is turned off in this league.</p>`))
+      + `<p class="muted">${isKeeper || isDynasty ? 'Pick rounds follow the rookie rounds you set when starting a new season (3 until then). ' : ''}Turning it off stops new pick trades; picks already traded stay with their new owners.</p></div>`;
   }
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
   if (lg.offseason) {
     html += keeperPhase
       ? `<p>Keeper selection is open until <b>${esc(fmtUtc(lg.keeper_deadline))}</b>. Teams that haven't picked by then are trimmed automatically: the players with the fewest games played last season are released.</p>`
       : `<p class="muted">Keepers are set. Each draft starts once every team that takes part has roster room for it - teams that kept their whole roster drop players first.</p>`;
-    if (isCommissioner && keeperPhase) html += `<p><button id="keeper-finalize">Close keepers now</button></p>`;
+    if (isCommissioner && keeperPhase) html += `<p><button type="button" class="btn btn-secondary" id="keeper-finalize">Close keepers now</button></p>`;
   } else if (isCommissioner) {
     html += `<p>When the championship is complete, start the new season. That archives this season and opens the offseason.</p>`
       + (keepsRosters ? `<p><label>Rookie draft rounds <input id="rollover-rounds" type="number" min="1" max="60" value="${lg.offseason_draft_rounds || 3}" style="width:4em"></label>
            ${needsRefill ? `<label> Refill rounds <input id="rollover-refill" type="number" min="1" max="60" value="${lg.offseason_refill_rounds || 3}" style="width:4em"></label>` : ''}
          </p>${isKeeper && !lg.keeper_deadline ? '<p class="muted">Set the keeper deadline in Keeper Settings above before rolling over.</p>' : ''}` : '')
-      + `<button id="rollover-btn"${seasonStatus.championship_complete ? '' : ' disabled'}>Start New Season</button>`
+      + `<p><button type="button" class="btn btn-primary" id="rollover-btn"${seasonStatus.championship_complete ? '' : ' disabled'}>Start New Season</button></p>`
       + (seasonStatus.championship_complete ? '' : `<p class="muted" style="margin-top:var(--space-2)">${esc(seasonStatus.reason || '')}</p>`);
   }
   html += `</div><div id="keeper-pick-card"></div>`;
@@ -2028,7 +2031,8 @@ async function renderLeagueSettings() {
   on('standings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
     points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10)})), 'Standings and playoff settings saved.'));
-  on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)})), 'Pick trading saved.'));
+  on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', Object.assign(
+    {pick_trading_enabled: $('pick-trading-enabled').checked}, $('pick-trade-seasons') ? {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)} : {}))), 'Pick trading saved.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Start season ${lg.season_number + 1}? This archives season ${lg.season_number} and opens the offseason. It clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;
@@ -2053,7 +2057,7 @@ async function renderKeeperPicks(lg) {
       <table><tr><th>Keep</th><th>Player</th><th>Pos</th><th>GP last season</th></tr>${k.players.map(p => `<tr>
         <td><input type="checkbox" class="keeper-box" data-team="${t.id}" value="${p.draftable_asset_id}"${p.kept ? ' checked' : ''}></td>
         <td>${esc(p.display_name)}</td><td>${esc(p.position || '')}</td><td>${p.games_played}</td></tr>`).join('')}</table>
-      <button class="keeper-save" data-team="${t.id}">Save keepers</button></div>`;
+      <button type="button" class="btn btn-primary keeper-save" data-team="${t.id}">Save keepers</button></div>`;
   }
   if (!teams.length && isCommissioner) html = `<div class="card"><p class="muted">Owners pick their own keepers. AI teams are trimmed automatically when keepers close.</p></div>`;
   $('keeper-pick-card').innerHTML = html;

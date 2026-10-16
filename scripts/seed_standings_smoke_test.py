@@ -185,6 +185,8 @@ assert (made["standings_mode"], made["points_per_win"], made["points_per_tie"], 
 assert made["keeper_deadline"].startswith("2099-06-01T12:00:00"), made["keeper_deadline"]
 plain = create().json()
 assert (plain["league_format"], plain["standings_mode"], plain["points_per_win"], plain["points_per_tie"], plain["playoff_teams"])     == ("traditional_redraft", "points", 3, 1, None), plain
+assert plain["pick_trading_enabled"] is True, "pick trading is on by default"
+assert create(league_format="keeper", pick_trading_enabled=False).json()["pick_trading_enabled"] is False
 assert create(playoff_teams=13).status_code == 400, "more playoff teams than the league has"
 assert create(standings_mode="bogus").status_code == 422
 assert create(league_format="bogus").status_code == 422

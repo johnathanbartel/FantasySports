@@ -27,8 +27,14 @@ TRADEABLE_FORMATS = ("future_pick_redraft", "keeper", "dynasty")
 DEFAULT_ROOKIE_PICK_ROUNDS = 3
 
 
-def enabled(league: League) -> bool:
+def format_supports(league: League) -> bool:
+    """Whether this league's format has tradeable picks at all (Traditional Redraft's order is random)."""
     return league.league_format in TRADEABLE_FORMATS
+
+
+def enabled(league: League) -> bool:
+    """Picks can be traded: the format supports it and the commissioner hasn't switched it off."""
+    return format_supports(league) and bool(league.pick_trading_enabled)
 
 
 def next_draft_season(league: League) -> int:
@@ -65,6 +71,8 @@ def draft_started(db: Session, league_id: int, season: int) -> bool:
 
 def pick_available(db: Session, league: League, season: int, rnd: int, original_team_id: int) -> str | None:
     """None if the pick can be traded, else why not."""
+    if format_supports(league) and not league.pick_trading_enabled:
+        return "Draft pick trading is turned off in this league"
     if not enabled(league):
         return "Draft picks can't be traded in this league format"
     if season not in tradeable_seasons(league):
