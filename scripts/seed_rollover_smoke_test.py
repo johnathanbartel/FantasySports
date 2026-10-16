@@ -17,6 +17,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None).start()
 patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None).start()
+# Starting a new season waits for the championship, which these leagues can't play yet: the tests stand in for it.
+import fantasy_sports.platform.season_rollover as _season_rollover
+
+_real_championship_status = _season_rollover.championship_status
+patch("fantasy_sports.platform.season_rollover.championship_status", return_value=(True, "")).start()
 
 db_path = Path(os.environ.get("ROLLOVER_SMOKE_DB", "rollover_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
@@ -151,6 +156,16 @@ assert client.patch(f"/leagues/{lid}/settings", json={"league_format": "bogus"},
 assert client.get(f"/leagues/{lid}").json()["league_format"] == "dynasty"
 assert client.post(f"/leagues/{lid}/rollover", json={}, headers=H_OTHER).status_code == 403
 assert client.post(f"/leagues/{lid}/rollover", json={}, headers=H).status_code == 409, "draft not finished"
+# Start New Season is locked until the championship is complete (real status: these leagues have no playoffs yet).
+with patch("fantasy_sports.platform.season_rollover.championship_status", return_value=(False, "not yet")):
+    resp = client.post(f"/leagues/{lid}/rollover", json={}, headers=H)
+    assert resp.status_code == 409 and "not yet" in resp.json()["detail"], resp.text
+    assert client.get(f"/leagues/{lid}/season-status").json()["championship_complete"] is False
+    assert client.get(f"/leagues/{lid}/season-status").json()["reason"] == "not yet"
+assert client.get(f"/leagues/{lid}/season-status").json()["championship_complete"] is True, "the test's stand-in"
+from fantasy_sports.platform.db.models.core import League as _League
+_done, _why = _real_championship_status(db, db.get(_League, lid))
+assert _done is False and "playoffs" in _why, "no league can complete a championship until playoffs exist"
 assert client.patch(f"/leagues/{lid}/settings", json={"keeper_limit": 7}, headers=H).json()["keeper_limit"] == 7
 assert client.patch(f"/leagues/{lid}/settings", json={"keeper_limit": None}, headers=H).json()["keeper_limit"] is None
 

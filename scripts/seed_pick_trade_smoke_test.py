@@ -16,6 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 patch("fantasy_sports.platform.nhl_daily_sync._fetch_json", return_value=None).start()
 patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None).start()
+# Starting a new season waits for the championship, which these leagues can't play yet: the tests stand in for it.
+import fantasy_sports.platform.season_rollover as _season_rollover
+
+_real_championship_status = _season_rollover.championship_status
+patch("fantasy_sports.platform.season_rollover.championship_status", return_value=(True, "")).start()
 
 db_path = Path(os.environ.get("PICK_TRADE_SMOKE_DB", "pick_trade_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
