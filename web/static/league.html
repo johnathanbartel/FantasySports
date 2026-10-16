@@ -1793,7 +1793,7 @@ async function renderSchedule() {
     board = `
       <div style="display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-3)">
         <select id="sched-week" class="inp">${withGames.map(w => `<option value="${w.id}"${w.id === wk.id ? ' selected' : ''}>Week ${w.week_number}${w.week_number === state.championship_week ? ' - conference championships' : ''} - ${w.start_date || ''}${w.scored ? '' : ' (not played)'}</option>`).join('')}</select>
-        <span class="muted" style="font-size:13px">Team scores are fantasy points (starters only), scaled so a league's season average matches the NCAA's. Player numbers are raw EPA credit. ${wk.locked ? 'This week is over: lineups are locked' + (canActForAi ? ' - as a commissioner-mode commissioner you can still change them.' : '.') : 'Each player locks the moment his own game starts: after that he can't be moved, signed, dropped or traded.'}</span></div>
+        <span class="muted" style="font-size:13px">Team scores are fantasy points (starters only), scaled so a league's season average matches the NCAA's. Player numbers are raw EPA credit. ${wk.locked ? 'This week is over: lineups are locked' + (canActForAi ? ' - as a commissioner-mode commissioner you can still change them.' : '.') : 'Each player locks the moment his own game starts: after that he cannot be moved, signed, dropped or traded.'}</span></div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-3)">${list.map(card).join('')}</div>
       <div id="m-detail" style="margin-top:var(--space-5)"></div>`;
     view._list = list; view._wk = wk;
