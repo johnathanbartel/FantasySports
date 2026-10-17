@@ -642,6 +642,7 @@ class SeriesDailyGameOut(ORMModel):
     status: str
     owner_watched: bool = False
     highlights_ready: bool = False   # the viewer has a simulated period of this game they have not watched yet
+    first_start_at: str | None = None   # UTC ISO instant the first segment of the first period begins (wall-clock games)
 
 
 

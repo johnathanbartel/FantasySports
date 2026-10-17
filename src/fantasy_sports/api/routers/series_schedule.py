@@ -18,7 +18,7 @@ from fantasy_sports.platform.db.models.core import (
     Game, League, LeagueSeries, LeagueUniverse, SimulatorEvent, SimulatorGame, SimulatorReveal, Team, Universe, User,
 )
 from fantasy_sports.platform.db.session import get_db
-from fantasy_sports.platform.simulator import service, state as st
+from fantasy_sports.platform.simulator import service, state as st, wallclock
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["series-schedule"])
@@ -85,9 +85,15 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                 sim = sim_by_dg.get(g.id)
                 g.home_shots = 0
                 g.away_shots = 0
+                g.first_start_at = None
                 if sim:
                     sim_evs = events_by_sim.get(sim.id, [])
                     shape = service.shape_of(sim)
+                    if shape.wall_clock is not None:
+                        starts = [s for period in shape.wall_clock.periods for s in period]
+                        if starts:
+                            first_utc = wallclock.local_to_utc(min(starts), shape.wall_clock.timezone)
+                            g.first_start_at = first_utc.isoformat() + "Z"
                     if sim.status == "FINAL":
                         totals = st.totals_through(sim_evs, len(sim_evs))
                         g.home_shots = totals.home_shots
