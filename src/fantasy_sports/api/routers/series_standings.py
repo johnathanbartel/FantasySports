@@ -56,7 +56,8 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
                               points_per_win=rules.points_win, points_per_tie=rules.points_tie, playoff_teams=field_size,
                               tiebreakers=list(rules.tiebreakers), playoff_byes=playoff_rules.byes,
                               division_winners_qualify=playoff_rules.division_winners_qualify,
-                              division_winners_seeded_first=playoff_rules.division_winners_seeded_first, standings=[
+                              division_winners_seeded_first=playoff_rules.division_winners_seeded_first,
+                              playoff_consolation=playoff_rules.consolation, standings=[
         SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], wins=r.wins, losses=r.losses,
                           ties=r.ties, goals_for=r.goals_for,
                           goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins,

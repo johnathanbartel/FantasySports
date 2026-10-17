@@ -176,6 +176,9 @@ class League(Base):
     playoff_byes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     division_winners_qualify: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     division_winners_seeded_first: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # What an eliminated team does in the playoffs: False = its season ends when it is eliminated (the default); True = it plays
+    # consolation matchups. Consolation games are playoff-stage, so they never count toward elimination (platform/elimination.py).
+    playoff_consolation: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")

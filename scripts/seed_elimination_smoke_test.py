@@ -169,6 +169,21 @@ check(not orows[A]["eliminated"] and abs(sum(r["playoff_probability"] for r in o
       "probabilities add up to the two-team field")
 check(client.get(f"/leagues/{lid}/playoff-odds?simulations=5").status_code == 422, "simulation count is bounded")
 
+# --- consolation matchups: a setting only, and never a factor in elimination ------------------------------------------------
+check(client.get(f"/leagues/{lid}").json()["playoff_consolation"] is False, "a league's season ends at elimination by default")
+before = flags()
+resp = client.patch(f"/leagues/{lid}/settings", json={"playoff_consolation": True}, headers=H)
+check(resp.status_code == 200 and resp.json()["playoff_consolation"] is True, "the commissioner can turn consolation matchups on")
+check(flags() == before, "turning consolation on changes nobody's elimination status")
+check(client.get(f"/leagues/{lid}/series-standings").json()["playoff_consolation"] is True, "the standings report the setting")
+check(client.patch(f"/leagues/{lid}/settings", json={"playoff_consolation": False}, headers=H).json()["playoff_consolation"] is False,
+      "and back to season-ends-at-elimination")
+check(client.patch(f"/leagues/{lid}/settings", json={"playoff_consolation": True}, headers=H_OTHER).status_code == 403,
+      "only the commissioner changes it")
+resp = client.post("/leagues", json={**base, "name": "Consolation", "playoff_consolation": True}, headers=H)
+check(resp.status_code == 200 and resp.json()["playoff_consolation"] is True, "the wizard can create a league with consolation matchups")
+check(flags() == before, "creating it changes nothing in the first league")
+
 # --- the hook: finalising a game runs the proof ----------------------------------------------------------------------------
 fake_game = SimpleNamespace(status="LIVE", home_score=0, away_score=0, current_period=0, seconds_remaining=1200, series_id=1)
 series = SimpleNamespace(id=1, league_id=77, status="IN_PROGRESS")
