@@ -71,6 +71,10 @@ class LeagueCreateRequest(BaseModel):
     points_per_win: int = Field(default=3, ge=0, le=20)
     points_per_tie: int = Field(default=1, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # None = 33% of the teams, rounded
+    tiebreakers: list[str] | None = None                                # None = the default order (platform/tiebreakers.py)
+    playoff_byes: int = Field(default=0, ge=0, le=32)
+    division_winners_qualify: bool = True
+    division_winners_seeded_first: bool = True
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
@@ -96,6 +100,10 @@ class LeagueSettingsRequest(BaseModel):
     points_per_win: int | None = Field(default=None, ge=0, le=20)
     points_per_tie: int | None = Field(default=None, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # send null to go back to the default
+    tiebreakers: list[str] | None = None                                # send null to go back to the default order
+    playoff_byes: int | None = Field(default=None, ge=0, le=32)
+    division_winners_qualify: bool | None = None
+    division_winners_seeded_first: bool | None = None
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
@@ -188,6 +196,10 @@ class LeagueOut(ORMModel):
     points_per_win: int
     points_per_tie: int
     playoff_teams: int | None
+    tiebreakers: list[str] | None
+    playoff_byes: int
+    division_winners_qualify: bool
+    division_winners_seeded_first: bool
 
 
 class RolloverRequest(BaseModel):
@@ -789,6 +801,8 @@ class SeriesStandingOut(BaseModel):
     win_pct: float = 0.0
     seed: int | None = None             # playoff seed, None if the team is outside the playoff field
     division_winner: bool = False
+    bye: bool = False                   # holds a first-round bye in the current standings
+    eliminated: bool = False            # mathematically out of the playoffs (platform/elimination.py)
 
 
 class SeriesStandingsOut(BaseModel):
@@ -799,6 +813,10 @@ class SeriesStandingsOut(BaseModel):
     points_per_win: int = 3
     points_per_tie: int = 1
     playoff_teams: int = 0              # the field size in use (the league's setting, or the default)
+    tiebreakers: list[str] = []         # the tiebreaker order in use
+    playoff_byes: int = 0
+    division_winners_qualify: bool = True
+    division_winners_seeded_first: bool = True
     standings: list[SeriesStandingOut]
 
 

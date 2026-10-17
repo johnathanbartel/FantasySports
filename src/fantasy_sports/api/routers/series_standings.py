@@ -13,7 +13,8 @@ from fantasy_sports.api.auth import assert_commissioner, current_user, optional_
 from fantasy_sports.api.schemas import (
     GameScoreOut, GameScoresOut, RivalriesOut, RivalryOut, SeriesStandingOut, SeriesStandingsOut,
 )
-from fantasy_sports.platform import game_score, playoffs, series_standings, spoilers
+from fantasy_sports.platform import elimination, game_score, playoffs, series_standings, spoilers
+from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.db.models.core import League, LeagueSeries, SeriesDailyGame, Team, User
 from fantasy_sports.platform.db.session import get_db
 
@@ -41,14 +42,20 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
     league = db.get(League, league_id)
     teams = db.query(Team).filter_by(league_id=league_id).all()
     names = {t.id: t.name for t in teams}
-    rules = series_standings.rules_for(league)
+    division_of = {t.id: t.division_id for t in teams}
+    rules = series_standings.rules_for(league, division_of)
     rows = series_standings.compute_standings(team_ids, series, games, as_of, rules=rules)
-    field_size = playoffs.effective_playoff_teams(league, len(teams))
-    field = {f["team_id"]: f for f in playoffs.seed_teams([r.team_id for r in rows], {t.id: t.division_id for t in teams}, field_size)}
-    order = (f"{'points' if rules.mode == 'points' else 'win percentage'} desc, goal_diff desc, h2h_wins desc, goals_for desc, "
-             "goals_against asc, team_id asc")
+    playoff_rules = playoffs.rules_for(league, len(teams))
+    field_size = playoff_rules.teams
+    field = {f["team_id"]: f for f in playoffs.seed_teams([r.team_id for r in rows], division_of, playoff_rules)}
+    out_teams = {t.id for t in teams if elimination.is_eliminated(league, t)}
+    order = (f"{'points' if rules.mode == 'points' else 'win percentage'} desc"
+             + "".join(f", {k} {'asc' if k == 'goals_against' else 'desc'}" for k in rules.tiebreakers) + ", team_id asc")
     return SeriesStandingsOut(league_id=league_id, as_of=as_of, tiebreak_order=order, standings_mode=rules.mode,
-                              points_per_win=rules.points_win, points_per_tie=rules.points_tie, playoff_teams=field_size, standings=[
+                              points_per_win=rules.points_win, points_per_tie=rules.points_tie, playoff_teams=field_size,
+                              tiebreakers=list(rules.tiebreakers), playoff_byes=playoff_rules.byes,
+                              division_winners_qualify=playoff_rules.division_winners_qualify,
+                              division_winners_seeded_first=playoff_rules.division_winners_seeded_first, standings=[
         SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], wins=r.wins, losses=r.losses,
                           ties=r.ties, goals_for=r.goals_for,
                           goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins,
@@ -56,7 +63,8 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
                           away_wins=r.away_wins, away_losses=r.away_losses, away_ties=r.away_ties,
                           games_played=r.games_played, points=r.points, win_pct=round(r.win_pct, 4),
                           seed=field[r.team_id]["seed"] if r.team_id in field else None,
-                          division_winner=bool(field.get(r.team_id, {}).get("division_winner"))) for r in rows])
+                          division_winner=bool(field.get(r.team_id, {}).get("division_winner")),
+                          bye=bool(field.get(r.team_id, {}).get("bye")), eliminated=r.team_id in out_teams) for r in rows])
 
 
 def _rivalry_out(league_id: int, p: series_standings.PairRecord) -> RivalryOut:

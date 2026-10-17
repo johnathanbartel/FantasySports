@@ -8,10 +8,11 @@ Rules:
   * Every day is an individual game. Regular-season standings count daily games only; who wins a multi-day
     series does not matter until the playoffs, so series results never enter the standings.
   * Only FINAL daily games count. A game with equal scores is a tie (neither W nor L).
-  * Ranking (best first): W-L record (wins desc, then losses asc), goal differential desc, head-to-head
-    victories desc, goals for desc, goals against asc, team id asc. Head-to-head victories are daily wins
-    over the other teams tied on W-L and goal differential. Teams equal on every key except team id share a
-    rank (id only orders them).
+  * Ranking (best first): the league's primary number (points or win percentage), then its tiebreakers in the order the
+    commissioner chose (platform/tiebreakers.py; by default goal differential, head-to-head victories, goals for, goals
+    against), then team id. Head-to-head victories are daily wins over the other teams tied so far. Teams equal on every key
+    except team id share a rank (id only orders them). With no rules the original order is used: wins desc, losses asc, then
+    the default tiebreakers.
   * Series results are still derived for rivalry history (a series is decided when all its games are FINAL
     and the side with more daily wins takes it; equal wins is a tie) but are informational only.
   * Rivalry pairs are keyed (league_id, low team id, high team id). Team ids are league-scoped, so two
@@ -19,11 +20,13 @@ Rules:
 """
 
 import datetime
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from fantasy_sports.platform import tiebreakers as tb
 from fantasy_sports.platform.db.models.core import LeagueSeries, SeriesDailyGame, Team
 
 RANK_KEYS = "wins desc, losses asc, goal_diff desc, h2h_wins desc, goals_for desc, goals_against asc, team_id asc"
@@ -57,14 +60,24 @@ class SeriesRecord:
 
 @dataclass(frozen=True)
 class StandingsRules:
-    """How a league ranks its teams: by points (points_win per win, points_tie per tie) or by win percentage."""
+    """How a league ranks its teams: by points (points_win per win, points_tie per tie) or by win percentage, then by its
+    tiebreakers in order. division_of (team id -> division id) is needed only by the division record tiebreaker."""
     mode: str = "points"            # "points" | "win_pct"
     points_win: int = 3
     points_tie: int = 1
+    tiebreakers: tuple[str, ...] = tb.DEFAULT_ORDER
+    division_of: Mapping[int, int | None] | None = field(default=None, compare=False, hash=False)
+    draw_seed: str = ""             # fixes the random draw tiebreaker for this league and season
 
 
-def rules_for(league) -> StandingsRules:
-    return StandingsRules(league.standings_mode, league.points_per_win, league.points_per_tie)
+def rules_for(league, division_of: Mapping[int, int | None] | None = None) -> StandingsRules:
+    return StandingsRules(league.standings_mode, league.points_per_win, league.points_per_tie, tb.order_for(league),
+                          division_of, f"{league.id}:{league.season_number}")
+
+
+def league_rules(db: Session, league) -> StandingsRules:
+    """rules_for with the league's divisions loaded, so every tiebreaker can be applied."""
+    return rules_for(league, {t.id: t.division_id for t in db.query(Team.id, Team.division_id).filter_by(league_id=league.id)})
 
 
 @dataclass
@@ -81,7 +94,10 @@ class TeamStanding:
     away_wins: int = 0
     away_losses: int = 0
     away_ties: int = 0
-    h2h_wins: int = 0  # wins over the other teams tied with this one on W-L and goal differential
+    h2h_wins: int = 0  # wins over the other teams tied with this one when the head-to-head tiebreaker was applied
+    div_wins: int = 0   # record in games against teams in the same division
+    div_losses: int = 0
+    div_ties: int = 0
     rank: int = 0
     points: int = 0
     win_pct: float = 0.0
@@ -170,10 +186,13 @@ def _winner(g: GameRecord) -> int | None:
 def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: list[GameRecord],
                       as_of: datetime.date | None = None, rules: StandingsRules | None = None) -> list[TeamStanding]:
     """Without rules, the original order (wins, then losses). With a league's rules the order is by points or win percentage,
-    then goal differential, then the head-to-head and goal tiebreaks."""
+    then the league's tiebreakers (see rank_standings)."""
     rows = {t: TeamStanding(t) for t in team_ids}
     results: list[tuple[int, int]] = []  # (winner, loser) per decided game
+    division_of = rules.division_of if rules and rules.division_of else {}
     for g in _counted(games, as_of):
+        same_division = (division_of.get(g.home_team_id) is not None
+                         and division_of.get(g.home_team_id) == division_of.get(g.away_team_id))
         for tid, gf, ga, side in ((g.home_team_id, g.home_score, g.away_score, "home"), (g.away_team_id, g.away_score, g.home_score, "away")):
             r = rows.get(tid)
             if r is None:
@@ -183,18 +202,20 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
             result = "wins" if gf > ga else "losses" if gf < ga else "ties"
             setattr(r, result, getattr(r, result) + 1)
             setattr(r, f"{side}_{result}", getattr(r, f"{side}_{result}") + 1)
+            if same_division:
+                name = "div_" + result
+                setattr(r, name, getattr(r, name) + 1)
         w = _winner(g)
         if w is not None:
             results.append((w, g.away_team_id if w == g.home_team_id else g.home_team_id))
-    pw, pt = (rules.points_win, rules.points_tie) if rules else (3, 1)
+    if rules is not None:
+        return rank_standings(rows, results, rules)
     for r in rows.values():
-        r.points = r.wins * pw + r.ties * pt
+        r.points = r.wins * 3 + r.ties
         r.win_pct = (r.wins + 0.5 * r.ties) / r.games_played if r.games_played else 0.0
-        if rules:
-            r.primary = float(r.points) if rules.mode == "points" else r.win_pct
     buckets: dict[tuple, list[TeamStanding]] = {}
     for r in rows.values():
-        buckets.setdefault((r.primary if rules else (r.wins, r.losses), r.goal_diff), []).append(r)
+        buckets.setdefault(((r.wins, r.losses), r.goal_diff), []).append(r)
     for members in buckets.values():
         ids = {m.team_id for m in members}
         if len(ids) < 2:
@@ -209,6 +230,76 @@ def compute_standings(team_ids: list[int], series: list[SeriesRecord], games: li
         r.rank = prev_rank if key == prev_key else i
         prev_key, prev_rank = key, r.rank
     return ordered
+
+
+def rank_standings(rows: dict[int, TeamStanding], results: list[tuple[int, int]], rules: StandingsRules) -> list[TeamStanding]:
+    """Orders teams whose records are filled in: by the primary number (points or win percentage), then by each tiebreaker in
+    turn, each only separating the teams still tied after the one before. Fills in points, win_pct, primary, h2h_wins and rank.
+    results = (winner, loser) per decided game. Teams level on every key share a rank (team id only orders them)."""
+    for r in rows.values():
+        r.points = r.wins * rules.points_win + r.ties * rules.points_tie
+        r.win_pct = (r.wins + 0.5 * r.ties) / r.games_played if r.games_played else 0.0
+        r.primary = float(r.points) if rules.mode == "points" else r.win_pct
+    by_primary: dict[float, list[TeamStanding]] = {}
+    for r in rows.values():
+        by_primary.setdefault(r.primary, []).append(r)
+    ordered: list[TeamStanding] = []
+    rank = 1
+    for primary in sorted(by_primary, reverse=True):
+        for tied in _separate(by_primary[primary], rules.tiebreakers, results, rules):
+            for r in sorted(tied, key=lambda x: x.team_id):
+                r.rank = rank
+                ordered.append(r)
+            rank += len(tied)
+    return ordered
+
+
+def _separate(members: list[TeamStanding], keys: tuple[str, ...], results: list[tuple[int, int]],
+              rules: StandingsRules) -> list[list[TeamStanding]]:
+    """Best-first groups of teams that are level on every tiebreaker in keys."""
+    if len(members) < 2 or not keys:
+        return [members]
+    values = _tiebreak_values(keys[0], members, results, rules)
+    if values is None:                      # the tiebreaker does not apply to this group
+        return _separate(members, keys[1:], results, rules)
+    buckets: dict = {}
+    for m in members:
+        buckets.setdefault(values[m.team_id], []).append(m)
+    out: list[list[TeamStanding]] = []
+    for value in sorted(buckets, reverse=True):
+        out.extend(_separate(buckets[value], keys[1:], results, rules))
+    return out
+
+
+def _tiebreak_values(key: str, members: list[TeamStanding], results: list[tuple[int, int]],
+                     rules: StandingsRules) -> dict[int, float] | None:
+    """Each tied team's number on one tiebreaker (bigger is better), or None when the tiebreaker does not apply to the group."""
+    if key == "goal_differential":
+        return {m.team_id: m.goal_diff for m in members}
+    if key == "goals_for":
+        return {m.team_id: m.goals_for for m in members}
+    if key == "goals_against":
+        return {m.team_id: -m.goals_against for m in members}
+    if key == "wins":
+        return {m.team_id: m.wins for m in members}
+    if key == "head_to_head":
+        ids = {m.team_id for m in members}
+        for m in members:
+            m.h2h_wins = 0
+        by_id = {m.team_id: m for m in members}
+        for w, l in results:
+            if w in ids and l in ids:
+                by_id[w].h2h_wins += 1
+        return {m.team_id: m.h2h_wins for m in members}
+    if key == "division_record":
+        divisions = {(rules.division_of or {}).get(m.team_id) for m in members}
+        if len(divisions) != 1 or None in divisions:
+            return None
+        return {m.team_id: ((m.div_wins + 0.5 * m.div_ties) / (m.div_wins + m.div_losses + m.div_ties)
+                            if m.div_wins + m.div_losses + m.div_ties else 0.0) for m in members}
+    if key == "coin_flip":
+        return {m.team_id: tb.draw_value(rules.draw_seed, m.team_id) for m in members}
+    return None
 
 
 def compute_pair_records(series: list[SeriesRecord], games: list[GameRecord], as_of: datetime.date | None = None

@@ -43,18 +43,25 @@ def check(cond, msg):
     assert cond, msg
 
 
-# --- the elimination rule on its own -------------------------------------------------------------------------------------
-# 4 teams, 2 playoff spots. best / worst = the most / least a team can finish with.
-best = {1: 30, 2: 24, 3: 12, 4: 9}
-worst = {1: 21, 2: 15, 3: 6, 4: 3}
-check(trade_hub.eliminated_from(best, worst, {}, 2) == {3, 4}, "teams with two others guaranteed above even their best finish are out")
-check(trade_hub.eliminated_from({1: 30, 2: 24, 3: 15, 4: 9}, worst, {}, 2) == {4},
-      "a tie with a guaranteed finisher is not elimination (tiebreakers could still favour it)")
-check(trade_hub.eliminated_from(best, worst, {1: 7, 2: 7, 3: 8, 4: 8}, 2) == set(),
-      "teams 3 and 4 are out of the rank order but each can still win the weaker division, and a division winner is seeded in")
-check(trade_hub.eliminated_from(best, worst, {1: 7, 3: 7, 2: 8, 4: 8}, 2) == {3, 4},
-      "a team whose division already has a team guaranteed above its best finish is out")
-check(trade_hub.eliminated_from({1: 9, 2: 9}, {1: 0, 2: 0}, {}, 2) == set(), "nobody is out while there are spots for everyone")
+# --- the elimination rule on its own (the exact proof has its own check: scripts/verify_elimination_engine.py) ------------------
+from fantasy_sports.platform import elimination_engine as proof_engine, playoffs as playoff_rules, series_standings as standings_rules  # noqa: E402
+
+
+def proof(points, left, field_size, division_of=None):
+    """4 teams whose points are set by 3-point results against a dummy opponent, with `left` games still to play."""
+    rules = standings_rules.StandingsRules("points", 3, 1, ("goal_differential", "head_to_head"), division_of or {}, "t")
+    results = [proof_engine.Result(t, 99, 2, 1) for t, pts in points.items() for _ in range(pts // 3)]
+    return proof_engine.analyze(proof_engine.Snapshot(sorted(points) + [99], {**(division_of or {}), 99: None}, results,
+                                          [proof_engine.Fixture(a, b) for a, b in left], rules,
+                                          playoff_rules.PlayoffRules(field_size))).eliminated - {99}
+
+
+check(proof({1: 30, 2: 24, 3: 12, 4: 9}, [(1, 3), (2, 4)], 2) == {3, 4}, "teams that cannot reach the field however the games end are out")
+check(proof({1: 30, 2: 24, 3: 21, 4: 9}, [(1, 3), (2, 4)], 2) == {4},
+      "a tie with a team that may still lose is not elimination (the tiebreakers could still favour it)")
+check(proof({1: 45, 2: 42, 3: 15, 4: 18}, [(3, 4), (1, 2)], 2, {1: 1, 2: 1, 3: 2, 4: 2}) == set(),
+      "teams 3 and 4 are far behind on points but each can still win the weaker division, and a division winner is in")
+check(proof({1: 9, 2: 9}, [(1, 2)], 2) == set(), "nobody is out while there are spots for everyone")
 
 # --- the API ---------------------------------------------------------------------------------------------------------------
 Base.metadata.create_all(bind=engine)
