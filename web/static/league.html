@@ -804,9 +804,10 @@ function paintHockeyRoster() {
 
 // ---- SCOREBOARD & LIVE SCORING ----------------------------------------------------------------------
 let scoreboardAutoRefreshTimer = null;
-let activeScoreboardWindow = 1;
+let activeScoreboardWindow = null;   // null until the viewer picks a window: the scoreboard then opens on the current one
 
 async function renderScoreboard() {
+  activeScoreboardWindow = null;
   await refreshOverview();
   if (isHockey()) return renderHockeyScoreboard();
   return renderFootballScoreboard();
@@ -853,11 +854,15 @@ async function renderHockeyScoreboard() {
   const firstS = currentRoundSeries[0] || seriesList[0];
 
   const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
-  if (winDefs[0].isSkipped && activeScoreboardWindow === 1) {
-    activeScoreboardWindow = 2;
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  if (activeScoreboardWindow === null) {
+    // Default to the window that contains today; before the series starts that is the first playable one, after it the last.
+    const open = winDefs.filter(w => !w.isSkipped);
+    const inToday = open.find(w => w.startDate && todayStr >= w.startDate && todayStr <= w.endDate);
+    const upcoming = open.find(w => w.startDate && todayStr < w.startDate);
+    activeScoreboardWindow = (inToday || upcoming || open[open.length - 1] || winDefs[0]).num;
   }
   const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
-  const todayStr = new Date().toLocaleDateString('en-CA');
 
   const matchupCards = currentRoundSeries.map(s => {
     const tA = teamsById[s.team_a_id] || {id: s.team_a_id, name: 'Team ' + s.team_a_id};
@@ -905,9 +910,19 @@ async function renderHockeyScoreboard() {
     const elMin = Math.floor(elapsedSec / 60);
     const elSec = (elapsedSec % 60).toString().padStart(2, '0');
 
+    // Before the first segment of the first period begins, show when the game starts (in the viewer's time zone), not 20:00 left.
+    const startMs = dailyGame.first_start_at ? Date.parse(dailyGame.first_start_at) : NaN;
+    const notStarted = isLive && !isNaN(startMs) && Date.now() < startMs;
+    const startLabel = !isNaN(startMs)
+      ? new Date(startMs).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit', timeZoneName: 'short'})
+      : '';
+
     let periodHeader = 'Scheduled';
     let clockSubheader = '';
-    if (isLive) {
+    if (notStarted) {
+      periodHeader = `Starts ${startLabel}`;
+      clockSubheader = 'Puck Drop Pending';
+    } else if (isLive) {
       const pName = curPeriod === 1 ? '1st Period' : curPeriod === 2 ? '2nd Period' : curPeriod === 3 ? '3rd Period' : `Period ${curPeriod}`;
       periodHeader = `${pName} · ${remMin}:${remSec} left`;
       clockSubheader = `${elMin}:${elSec} elapsed in period`;
@@ -929,7 +944,7 @@ async function renderHockeyScoreboard() {
         roadGoals = '?';
         homeGoals = '?';
         isVeiled = true;
-        statusNote = isOwner ? (isLive ? 'Watch live highlights or skip to unlock score' : 'Watch highlights or skip to unlock final score') : "Owner hasn't watched highlights yet";
+        statusNote = isOwner ? (isLive ? (dailyGame.highlights_ready ? 'Watch highlights or skip to unlock score' : 'Highlights unlock when a period ends') : 'Watch highlights or skip to unlock final score') : "Owner hasn't watched highlights yet";
       } else {
         roadGoals = dailyGame.away_score != null ? dailyGame.away_score : 0;
         homeGoals = dailyGame.home_score != null ? dailyGame.home_score : 0;
@@ -944,7 +959,7 @@ async function renderHockeyScoreboard() {
         <div class="sb-head">
           <div class="sb-status" style="color:var(--color-primary)">${periodHeader}</div>
           <div style="display:flex;gap:4px;align-items:center">
-            ${isLive ? '<span class="pill" style="background:#ef4444;color:white;font-weight:700;font-size:10px">● LIVE</span>' : isFinal ? '<span class="pill good" style="font-size:10px">FINAL</span>' : ''}
+            ${notStarted ? '' : isLive ? '<span class="pill" style="background:#ef4444;color:white;font-weight:700;font-size:10px">● LIVE</span>' : isFinal ? '<span class="pill good" style="font-size:10px">FINAL</span>' : ''}
           </div>
         </div>
         <div class="sb-body">
@@ -972,7 +987,7 @@ async function renderHockeyScoreboard() {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
             ${dgId ? `
               <a href="/static/nhl-game.html?daily_game_id=${dgId}" class="btn btn-primary${dailyGame.highlights_ready ? ' hl-flash' : ''}" ${dailyGame.highlights_ready ? 'title="Highlights are ready to watch"' : ''} style="font-size:11px;padding:4px 10px">Highlights</a>
-              ${isVeiled ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
+              ${isVeiled && (dailyGame.highlights_ready || isFinal) ? `<button type="button" class="btn btn-secondary btn-skip-score" data-gid="${dgId}" style="font-size:11px;padding:4px 10px;cursor:pointer">Skip to Score</button>` : ''}
               <a href="/static/nhl-box.html?daily_game_id=${dgId}" class="btn btn-secondary" style="font-size:11px;padding:4px 10px">Box score</a>
             ` : ''}
           </div>

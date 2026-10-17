@@ -663,6 +663,7 @@ function renderPR() {
          ${pr.playing ? '<button class="btn btn-secondary" type="button" data-pr="pause">Pause</button>' : `<button class="btn btn-primary" type="button" data-pr="play" ${done ? 'disabled' : ''}>${pr.idx ? 'Resume' : 'Play'}</button>`}
          <button class="btn btn-secondary" type="button" data-pr="step" ${done ? 'disabled' : ''}>Next event</button>
          <button class="btn btn-secondary" type="button" data-pr="end" ${done ? 'disabled' : ''}>Show the whole period</button>
+         ${nextPeriodAvailable() ? `<button class="btn btn-primary" type="button" data-pr="next">Next: period ${pr.k + 1} highlights</button>` : ''}
          <button class="btn btn-secondary" type="button" data-pr="back">Back to game centre</button>
          <label class="toggle"><input type="checkbox" id="reduce" ${reduced ? 'checked' : ''}> Step manually (no animation)</label>
          ${hornToggleHtml()}
@@ -710,14 +711,45 @@ function startPR() {
 
 function pausePR() { clearTimeout(pr.timer); pr.playing = false; renderPR(); }
 
-function donePR() { clearTimeout(pr.timer); pr.playing = false; renderPR(); }
+// A finished period is saved as watched right away, so the next period (if simulated) can open from here.
+async function donePR() {
+  const p = pr;
+  clearTimeout(p.timer); p.playing = false;
+  try { state = await FSC.post(`${base}/progress`, {cursor_seq: p.evs[p.evs.length - 1].seq}); }
+  catch (e) { /* the next checkpoint retries; Back to game centre saves too */ }
+  if (pr === p) renderPR();
+}
+
+// The next period can be opened straight from this one when it is simulated and this one is watched.
+function nextPeriodAvailable() {
+  const phases = state.period_phases || [];
+  const here = phases.find(p => p.period === pr.k), next = phases.find(p => p.period === pr.k + 1);
+  return !!(here && next && here.phase === 'watched' && (next.phase === 'watched' || next.phase === 'ready'));
+}
+
+async function nextPR() {
+  if (busy || !pr || !nextPeriodAvailable()) return;
+  busy = true; showError('');
+  try {
+    const k = pr.k + 1;
+    clearTimeout(pr.timer); pr.playing = false;
+    events = G.mergeEvents([], await fetchAllEvents(0)).events;
+    const evs = G.periodEvents(events, k);
+    if (!evs.length) throw Object.assign(new Error(`Period ${k} has no highlights yet.`), {code: 'NOT_FINAL'});
+    pr = {k, evs, idx: 0, timeline: [], timer: null, playing: false};
+    renderPR();
+    if (G.replayMode(reduced) === 'auto') startPR();
+  } catch (e) { errorBanner(e); }
+  busy = false;
+}
 
 async function prAct(name) {
   if (!pr) return;
   if (name === 'play') startPR();
   else if (name === 'pause') pausePR();
   else if (name === 'step') { clearTimeout(pr.timer); pr.playing = false; revealPR(); if (pr.idx >= pr.evs.length) donePR(); }
-  else if (name === 'end') { clearTimeout(pr.timer); pr.playing = false; pr.idx = pr.evs.length; renderPR(); }
+  else if (name === 'end') { clearTimeout(pr.timer); pr.playing = false; pr.idx = pr.evs.length; renderPR(); await donePR(); }
+  else if (name === 'next') await nextPR();
   else if (name === 'back') await leavePR();
 }
 
