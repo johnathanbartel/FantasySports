@@ -820,6 +820,28 @@ class SeriesStandingsOut(BaseModel):
     standings: list[SeriesStandingOut]
 
 
+class PlayoffOddsTeamOut(BaseModel):
+    team_id: int
+    team_name: str
+    games_played: int
+    goals_for: float
+    goals_against: float
+    pythagorean: float                  # GF^x / (GF^x + GA^x) from this season's goals
+    strength: float                     # pythagorean after padding with league-average games; what the simulation uses
+    playoff_probability: float          # share of simulated seasons in the playoff field (an estimate)
+    bye_probability: float
+    mean_points: float                  # mean of the standings' primary number (points or win %) at the end of the season
+    eliminated: bool = False            # mathematically out: the exact proof, which overrides the estimate
+
+
+class PlayoffOddsOut(BaseModel):
+    league_id: int
+    simulations: int
+    pythagorean_exponent: float
+    tie_rate: float
+    teams: list[PlayoffOddsTeamOut]
+
+
 class RivalryOut(BaseModel):
     league_id: int
     team_low_id: int

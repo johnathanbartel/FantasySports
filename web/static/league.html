@@ -2338,7 +2338,11 @@ async function renderStandings() {
 
 // NHL standings: built from the simulated games the viewer may see (the same ones the scoreboard shows).
 async function renderHockeyStandings() {
-  const sres = await api(`/leagues/${LEAGUE_ID}/series-standings`);
+  const [sres, odds] = await Promise.all([api(`/leagues/${LEAGUE_ID}/series-standings`),
+    api(`/leagues/${LEAGUE_ID}/playoff-odds`).catch(() => null)]);    // the estimate is a bonus; the table works without it
+  const oddsOf = Object.fromEntries((odds?.teams || []).map(o => [o.team_id, o]));
+  const oddsPct = (o) => !o ? '<span class="muted">-</span>' : o.eliminated ? '<span class="pill">out</span>'
+    : (o.playoff_probability >= 0.995 ? '>99' : o.playoff_probability < 0.005 ? '<1' : Math.round(o.playoff_probability * 100)) + '%';
   const standings = sres.standings;
   const played = standings.some(r => r.wins + r.losses + r.ties > 0);
   const pct = (v) => v.toFixed(3).replace(/^0/, '');
@@ -2351,11 +2355,11 @@ async function renderHockeyStandings() {
   });
   const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
-    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in.</p>`
+    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in. <strong>Playoff %</strong> is an estimate, not a guarantee: the rest of the season is simulated ${odds ? odds.simulations.toLocaleString() : ''} times from each team's goals scored and against (its Pythagorean record), and only a proven "out" removes a team.</p>`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,760px),1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
-      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td></tr>`).join('')}
+      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td><td>${oddsPct(oddsOf[r.team_id])}</td></tr>`).join('')}
         </tbody></table></div></div>`; }).join('') + '</div>';
 }
 

@@ -16,12 +16,14 @@ The proof itself is platform/elimination_engine.py (pure, sport-neutral). This m
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Callable
 
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import elimination_engine as engine
+from fantasy_sports.platform import playoff_odds as playoff_odds_module
 from fantasy_sports.platform import playoffs, series_standings
 from fantasy_sports.platform.db.models.core import League, Team
 
@@ -46,12 +48,14 @@ def clear_elimination(db: Session, team: Team) -> None:
 
 # --- one adapter per sport ---------------------------------------------------------------------------------------------
 
-def _hockey_snapshot(db: Session, league: League) -> engine.Snapshot | None:
+def _hockey_snapshot(db: Session, league: League, hidden: frozenset[int] = frozenset()) -> engine.Snapshot | None:
     team_ids, _series, games = series_standings.load_league(db, league.id)
     if not games:
         return None
     known = set(team_ids)
     games = [g for g in games if g.home_team_id in known and g.away_team_id in known]
+    if hidden:      # finished games the viewer may not see yet count as unplayed
+        games = [dataclasses.replace(g, final=False) if g.game_id in hidden else g for g in games]
     results = [engine.Result(g.home_team_id, g.away_team_id, g.home_score, g.away_score) for g in games if g.final]
     remaining = [engine.Fixture(g.home_team_id, g.away_team_id) for g in games if not g.final]
     rules = series_standings.league_rules(db, league)
@@ -60,17 +64,36 @@ def _hockey_snapshot(db: Session, league: League) -> engine.Snapshot | None:
 
 
 # A league belongs to the first adapter whose test passes. The tests are how the platform already tells sports apart.
-ADAPTERS: list[tuple[Callable[[League], bool], Callable[[Session, League], "engine.Snapshot | None"]]] = [
+ADAPTERS: list[tuple[Callable[[League], bool], Callable[..., "engine.Snapshot | None"]]] = [
     (lambda league: league.series_length_days is not None, _hockey_snapshot),
 ]
 
 
-def snapshot_for(db: Session, league: League) -> engine.Snapshot | None:
-    """The league's standings situation, or None when its sport has no adapter or no schedule exists yet."""
+def snapshot_for(db: Session, league: League, hidden: frozenset[int] = frozenset()) -> engine.Snapshot | None:
+    """The league's standings situation, or None when its sport has no adapter or no schedule exists yet. `hidden` = ids of
+    finished games to treat as not yet played (a viewer's unwatched games); an adapter builds on the sport's own game ids."""
     for belongs, build in ADAPTERS:
         if belongs(league):
-            return build(db, league)
+            return build(db, league, hidden)
     return None
+
+
+def playoff_odds(db: Session, league: League, simulations: int = playoff_odds_module.DEFAULT_SIMULATIONS,
+                 seed: int | None = None, hidden: frozenset[int] = frozenset()) -> playoff_odds_module.OddsReport | None:
+    """Estimated playoff and bye chances from simulating the rest of the season (platform/playoff_odds.py). Read-only. A team's
+    chance is an estimate; only the exact proof (compute) ever eliminates a team. Each team's `eliminated` flag is filled in from it."""
+    if league.offseason:
+        return None
+    snap = snapshot_for(db, league, hidden)
+    if snap is None:
+        return None
+    report = playoff_odds_module.simulate(snap, simulations, seed)
+    proof = engine.analyze(snap)
+    for tid in proof.eliminated:
+        report.teams[tid].eliminated = True
+        report.teams[tid].playoff = 0.0         # the proof outranks the estimate
+        report.teams[tid].bye = 0.0
+    return report
 
 
 def compute(db: Session, league: League, node_budget: int = engine.DEFAULT_NODE_BUDGET) -> engine.Report | None:

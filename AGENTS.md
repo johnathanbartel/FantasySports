@@ -55,6 +55,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_conference_smoke_test.py` | Smoke test for conference tiers, team placement, and tier expansion | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_demo_league.py` | Seeds demo league with real CFBD rosters, 240-pick draft, and 3 scored weeks | `.venv` | Yes (calls CFBD API, requires `CFBD_API_KEY`; unverified in docstring) | Yes (resets `DATABASE_URL`) |
 | `scripts/seed_elimination_smoke_test.py` | Mathematical elimination end to end: flag written, permanence, settings validation, re-proof on rule change, finalisation hook | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/verify_playoff_odds.py` | Offline check of the Pythagorean/log5 playoff-probability simulation: formulas, sums to the field size, seeded repeatability, consistency with the exact elimination proof, speed | `.venv-api` | No | No (pure) |
 | `scripts/verify_elimination_engine.py` | Brute-force check that the elimination engine never eliminates a team that can still qualify; reports how many true eliminations it proves | `.venv-api` | No | No (pure) |
 | `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/verify_hockey_toi_substitution.py` | Offline check that a starter with no ice time in his counting game is replaced by the next player on the pecking order (early, late, skipped chains, unstored boxscore) | `.venv-api` | No (network functions are faked) | No (throwaway temp DB) |
@@ -78,6 +79,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_hub_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_elimination_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_elimination_engine.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/verify_playoff_odds.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/run_mock_e2e.py`
 - Path verification: run `Test-Path` in PowerShell for referenced repository file paths.
 
