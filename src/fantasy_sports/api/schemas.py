@@ -75,6 +75,7 @@ class LeagueCreateRequest(BaseModel):
     playoff_byes: int = Field(default=0, ge=0, le=32)
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
+    playoff_consolation: bool = False          # False = an eliminated team's season ends; True = it plays consolation matchups
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
@@ -104,6 +105,7 @@ class LeagueSettingsRequest(BaseModel):
     playoff_byes: int | None = Field(default=None, ge=0, le=32)
     division_winners_qualify: bool | None = None
     division_winners_seeded_first: bool | None = None
+    playoff_consolation: bool | None = None
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
@@ -200,6 +202,7 @@ class LeagueOut(ORMModel):
     playoff_byes: int
     division_winners_qualify: bool
     division_winners_seeded_first: bool
+    playoff_consolation: bool
 
 
 class RolloverRequest(BaseModel):
@@ -817,6 +820,7 @@ class SeriesStandingsOut(BaseModel):
     playoff_byes: int = 0
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
+    playoff_consolation: bool = False
     standings: list[SeriesStandingOut]
 
 

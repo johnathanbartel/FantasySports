@@ -108,7 +108,8 @@ def create_league(
     hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
                                or payload.points_per_tie != 1 or payload.playoff_teams is not None
                                or payload.tiebreakers is not None or payload.playoff_byes != 0
-                               or not payload.division_winners_qualify or not payload.division_winners_seeded_first)
+                               or not payload.division_winners_qualify or not payload.division_winners_seeded_first
+                               or payload.playoff_consolation)
     if hockey_settings_changed and not has_nhl:
         raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
     if payload.playoff_teams is not None and payload.playoff_teams > payload.size:
@@ -153,6 +154,7 @@ def create_league(
         playoff_byes=payload.playoff_byes,
         division_winners_qualify=payload.division_winners_qualify,
         division_winners_seeded_first=payload.division_winners_seeded_first,
+        playoff_consolation=payload.playoff_consolation,
     )
     db.add(league)
     db.flush()  # assigns league.id without committing yet
@@ -378,8 +380,10 @@ def update_league_settings(
                      or payload.points_per_tie is not None or "playoff_teams" in sent or "tiebreakers" in sent
                      or payload.playoff_byes is not None or payload.division_winners_qualify is not None
                      or payload.division_winners_seeded_first is not None)
-    if hockey_fields and league.series_length_days is None:
+    if (hockey_fields or payload.playoff_consolation is not None) and league.series_length_days is None:
         raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
+    if payload.playoff_consolation is not None:
+        league.playoff_consolation = payload.playoff_consolation     # no effect on elimination: no re-proof needed
     if "tiebreakers" in sent:
         if payload.tiebreakers is not None and (problem := tiebreaker_rules.validate(payload.tiebreakers)):
             raise HTTPException(400, problem)

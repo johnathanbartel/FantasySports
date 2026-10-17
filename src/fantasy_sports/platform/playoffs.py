@@ -7,6 +7,8 @@ rounded to the nearest whole team. How the field is filled and seeded is a Playo
   * division_winners_seeded_first - the division winners take the top seeds (in rank order) and the wild cards follow. Off:
     everyone is seeded by rank.
   * byes - the top seeds skip the first round.
+  * consolation - teams that are out either finish their season at elimination (the default) or play consolation matchups.
+    Consolation games are playoff-stage: they never change who is eliminated.
 Rank is the standings order the league chose (points or win %, then its tiebreakers). A league with no divisions just seeds by
 rank. Nothing here plays the playoffs - this is who is in, in what order and who has a bye.
 """
@@ -24,6 +26,7 @@ class PlayoffRules:
     byes: int = 0                           # top seeds that skip the first round
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
+    consolation: bool = False               # eliminated teams play consolation matchups instead of ending their season
 
 
 def default_playoff_teams(team_count: int) -> int:
@@ -40,7 +43,8 @@ def rules_for(league, team_count: int) -> PlayoffRules:
     teams = effective_playoff_teams(league, team_count)
     return PlayoffRules(teams, max(0, min(getattr(league, "playoff_byes", 0) or 0, teams)),
                         bool(getattr(league, "division_winners_qualify", True)),
-                        bool(getattr(league, "division_winners_seeded_first", True)))
+                        bool(getattr(league, "division_winners_seeded_first", True)),
+                        bool(getattr(league, "playoff_consolation", False)))
 
 
 def seed_teams(ranked: list[int], division_of: dict[int, int | None], playoff_teams: int | PlayoffRules) -> list[dict]:

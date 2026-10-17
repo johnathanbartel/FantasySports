@@ -233,6 +233,12 @@
           <span class="hint">The remaining spots are wild cards, taken by rank. Turn both off to seed the best teams by rank alone.</span>
         </div>
         <div class="field">
+          <label>When a team is eliminated from the playoffs</label>
+          <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="playoff-consolation" value="no" checked> Its season ends</label>
+          <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="playoff-consolation" value="yes"> It plays consolation matchups</label>
+          <span class="hint">Consolation matchups are played in the playoffs by teams that are out. They never change who is eliminated.</span>
+        </div>
+        <div class="field">
           <label>When teams are tied, break the tie by (in this order)</label>
           <div id="tiebreaker-editor"></div>
           <span class="hint">Teams are ranked on points or win percentage first. Anything still level is separated by the first tiebreaker, then the next, and so on. The playoff-elimination check uses this same order.</span>
@@ -513,6 +519,7 @@ function leagueSettingsPayload() {
     out.playoff_byes = num('playoff-byes') ?? 0;
     out.division_winners_qualify = document.getElementById('division-winners-qualify').checked;
     out.division_winners_seeded_first = document.getElementById('division-winners-first').checked;
+    out.playoff_consolation = document.querySelector('input[name=playoff-consolation]:checked').value === 'yes';
     out.tiebreakers = tbPayload(document.getElementById('tiebreaker-editor'));
   }
   return out;

@@ -10,6 +10,9 @@ The proof itself is platform/elimination_engine.py (pure, sport-neutral). This m
     team that is proven out stays out, so a normal recalculation only ever adds teams. The one exception is clear_stale=True, used
     when the proof's premises change (the commissioner edits the tiebreakers or playoff rules, or voids a finished game), which
     drops any team that is no longer proven out.
+  * only regular-season games ever enter a Snapshot. Consolation matchups (leagues.playoff_consolation) are playoff-stage games for
+    teams that are already out: they are never part of the standings, so they cannot change who is eliminated. A sport adapter
+    that stores playoff games next to regular-season ones must leave them out of its Snapshot.
   * nothing a client sends ever reaches mark_eliminated(). A low playoff probability is not elimination, so a team is active
     until the proof says otherwise.
 """

@@ -32,7 +32,8 @@ def ensure_latest_schema(engine):
                               ("trade_deadline", "DATETIME"), ("tiebreakers", "JSON"),
                               ("playoff_byes", "INTEGER DEFAULT 0 NOT NULL"),
                               ("division_winners_qualify", "BOOLEAN DEFAULT 1 NOT NULL"),
-                              ("division_winners_seeded_first", "BOOLEAN DEFAULT 1 NOT NULL")):
+                              ("division_winners_seeded_first", "BOOLEAN DEFAULT 1 NOT NULL"),
+                              ("playoff_consolation", "BOOLEAN DEFAULT 0 NOT NULL")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
 
