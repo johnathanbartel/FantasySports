@@ -159,6 +159,16 @@ f = flags()
 check(not f[C] and not f[A], "with a two-team field C can still make it: its flag was cleared by the settings change")
 check(f[B] and f[D], "B and D are out under either field")
 
+# the playoff-odds estimate: the exact proof overrides it, and it is a probability for everyone else
+odds = client.get(f"/leagues/{lid}/playoff-odds?simulations=200&seed=1").json()
+orows = {r["team_id"]: r for r in odds["teams"]}
+check(odds["simulations"] == 200 and set(orows) == {A, B, C, D}, "playoff odds cover every team")
+check(orows[B]["eliminated"] and orows[B]["playoff_probability"] == 0.0 and orows[D]["playoff_probability"] == 0.0,
+      "a proven-out team shows 0% and the eliminated flag")
+check(not orows[A]["eliminated"] and abs(sum(r["playoff_probability"] for r in odds["teams"]) - 2) < 1e-6,
+      "probabilities add up to the two-team field")
+check(client.get(f"/leagues/{lid}/playoff-odds?simulations=5").status_code == 422, "simulation count is bounded")
+
 # --- the hook: finalising a game runs the proof ----------------------------------------------------------------------------
 fake_game = SimpleNamespace(status="LIVE", home_score=0, away_score=0, current_period=0, seconds_remaining=1200, series_id=1)
 series = SimpleNamespace(id=1, league_id=77, status="IN_PROGRESS")

@@ -6,12 +6,13 @@ platform/game_score.py). Only the publish endpoint writes, and only series_daily
 import dataclasses
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user, optional_user
 from fantasy_sports.api.schemas import (
-    GameScoreOut, GameScoresOut, RivalriesOut, RivalryOut, SeriesStandingOut, SeriesStandingsOut,
+    GameScoreOut, GameScoresOut, PlayoffOddsOut, PlayoffOddsTeamOut, RivalriesOut, RivalryOut, SeriesStandingOut,
+    SeriesStandingsOut,
 )
 from fantasy_sports.platform import elimination, game_score, playoffs, series_standings, spoilers
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
@@ -65,6 +66,28 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
                           seed=field[r.team_id]["seed"] if r.team_id in field else None,
                           division_winner=bool(field.get(r.team_id, {}).get("division_winner")),
                           bye=bool(field.get(r.team_id, {}).get("bye")), eliminated=r.team_id in out_teams) for r in rows])
+
+
+@router.get("/leagues/{league_id}/playoff-odds", response_model=PlayoffOddsOut)
+def read_playoff_odds(league_id: int, simulations: int = Query(1000, ge=100, le=5000), seed: int | None = None,
+                      db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
+    """Playoff and bye chances from simulating the rest of the season on each team's Pythagorean strength. An estimate: it never
+    eliminates anyone. Games the viewer has not watched yet are treated as unplayed, so this cannot leak a result."""
+    league = _nhl_league(db, league_id)
+    _, held = spoilers.final_sims(db, league_id, user.id if user else None)
+    report = elimination.playoff_odds(db, league, simulations, seed, frozenset(dg.id for _, dg in held))
+    if report is None:
+        raise HTTPException(409, "Playoff odds need a schedule and an in-season league")
+    names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
+    rows = sorted(report.teams.values(), key=lambda o: (-o.playoff, -o.bye, o.team_id))
+    return PlayoffOddsOut(
+        league_id=league_id, simulations=report.simulations, pythagorean_exponent=report.exponent,
+        tie_rate=round(report.tie_rate, 4), teams=[
+            PlayoffOddsTeamOut(team_id=o.team_id, team_name=names.get(o.team_id, ""), games_played=o.games_played,
+                               goals_for=o.goals_for, goals_against=o.goals_against, pythagorean=round(o.pythagorean, 4),
+                               strength=round(o.strength, 4), playoff_probability=round(o.playoff, 4),
+                               bye_probability=round(o.bye, 4), mean_points=round(o.mean_points, 3), eliminated=o.eliminated)
+            for o in rows])
 
 
 def _rivalry_out(league_id: int, p: series_standings.PairRecord) -> RivalryOut:
