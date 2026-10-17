@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from fantasy_sports.platform import elimination
 from fantasy_sports.platform.db.models.core import (
     LeagueSeries, SeriesDailyGame, SimulatorEvent, SimulatorGame, SimulatorReveal,
 )
@@ -184,6 +185,7 @@ def _finalize(db: Session, sim: SimulatorGame, events: list[SimulatorEvent], at:
     siblings = db.query(SeriesDailyGame).filter_by(series_id=series.id).all()
     series.status = "FINAL" if all(g.status == "FINAL" for g in siblings) else "IN_PROGRESS"
     db.flush()
+    elimination.recalculate_league(db, series.league_id)          # a finished game can prove a team out of the playoffs
 
 
 def reset_simulation(db: Session, daily_game: SeriesDailyGame) -> bool:
@@ -205,6 +207,7 @@ def reset_simulation(db: Session, daily_game: SeriesDailyGame) -> bool:
     siblings = db.query(SeriesDailyGame).filter_by(series_id=series.id).all()
     series.status = "SCHEDULED" if all(g.status == "SCHEDULED" for g in siblings) else "IN_PROGRESS"
     db.flush()
+    elimination.recalculate_league(db, series.league_id, clear_stale=True)     # the voided result may have been part of a proof
     return sim is not None
 
 

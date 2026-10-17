@@ -220,6 +220,23 @@
           <input type="number" id="playoff-teams" min="1">
           <span class="hint" id="playoff-teams-hint"></span>
         </div>
+        <div style="display:flex;gap:var(--space-4)">
+          <div class="field" style="flex:1">
+            <label for="playoff-byes">First-round byes</label>
+            <input type="number" id="playoff-byes" min="0" max="32" value="0">
+            <span class="hint">The top seeds skip the first round. 0 = no byes.</span>
+          </div>
+        </div>
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="division-winners-qualify" checked> Division winners are guaranteed a playoff spot</label>
+          <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="division-winners-first" checked> Division winners take the top seeds (wild cards follow, by rank)</label>
+          <span class="hint">The remaining spots are wild cards, taken by rank. Turn both off to seed the best teams by rank alone.</span>
+        </div>
+        <div class="field">
+          <label>When teams are tied, break the tie by (in this order)</label>
+          <div id="tiebreaker-editor"></div>
+          <span class="hint">Teams are ranked on points or win percentage first. Anything still level is separated by the first tiebreaker, then the next, and so on. The playoff-elimination check uses this same order.</span>
+        </div>
       </div>
 
       <button class="btn btn-primary btn-block" id="create-league-btn">Continue to team setup</button>
@@ -415,6 +432,47 @@ const FORMAT_HINTS = {
 };
 
 // Shows the League Settings that apply to the chosen sport and format (the same ones the League Settings tab edits later).
+
+// ---- tiebreaker order editor ----------------------------------------------------------------------------------
+const TIEBREAKERS = [
+  ['head_to_head', 'Head-to-head', 'wins against the other teams still tied'],
+  ['division_record', 'Division record', 'win % against teams in the same division'],
+  ['wins', 'Most wins', 'the team with more wins'],
+  ['goal_differential', 'Goal differential', 'goals scored minus goals allowed'],
+  ['goals_for', 'Goals scored', 'the team that scored more'],
+  ['goals_against', 'Goals allowed', 'the team that allowed fewer'],
+  ['coin_flip', 'Random draw', 'decides every tie, so it is always last'],
+];
+const DEFAULT_TIEBREAKERS = ['goal_differential', 'head_to_head', 'goals_for', 'goals_against'];
+const tbLabel = (k) => (TIEBREAKERS.find(t => t[0] === k) || [k, k])[1];
+function tbNormalize(order) {            // the random draw can only be last
+  const o = order.filter(k => k !== 'coin_flip');
+  return order.includes('coin_flip') ? o.concat('coin_flip') : o;
+}
+function tbEditor(host, order, disabled) {
+  let cur = tbNormalize(order.slice());
+  host._order = () => cur.slice();
+  const draw = () => {
+    const off = TIEBREAKERS.map(t => t[0]).filter(k => !cur.includes(k));
+    host.innerHTML = cur.map((k, i) => `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+        <input type="checkbox" checked data-tb-off="${k}" ${disabled ? 'disabled' : ''} aria-label="Use ${esc2(tbLabel(k))}">
+        <span style="min-width:2.2em;color:var(--color-text-muted,#888)">${i + 1}.</span><span>${esc2(tbLabel(k))}</span>
+        ${disabled ? '' : `<button type="button" class="btn btn-secondary" data-tb-up="${k}" ${i === 0 || k === 'coin_flip' ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
+        <button type="button" class="btn btn-secondary" data-tb-down="${k}" ${i === cur.length - 1 || cur[i + 1] === 'coin_flip' || k === 'coin_flip' ? 'disabled' : ''} aria-label="Move down">&darr;</button>`}
+      </div>`).join('') + (off.length && !disabled ? `<div style="margin-top:6px;font-size:12px;opacity:.7">Not used:</div>` + off.map(k => `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+        <input type="checkbox" data-tb-on="${k}" aria-label="Use ${esc2(tbLabel(k))}"><span>${esc2(tbLabel(k))}</span></div>`).join('') : '');
+    host.querySelectorAll('[data-tb-off]').forEach(el => el.onchange = () => { cur = cur.filter(k => k !== el.dataset.tbOff); draw(); });
+    host.querySelectorAll('[data-tb-on]').forEach(el => el.onchange = () => { cur = tbNormalize(cur.concat(el.dataset.tbOn)); draw(); });
+    host.querySelectorAll('[data-tb-up]').forEach(el => el.onclick = () => { const i = cur.indexOf(el.dataset.tbUp); [cur[i - 1], cur[i]] = [cur[i], cur[i - 1]]; draw(); });
+    host.querySelectorAll('[data-tb-down]').forEach(el => el.onclick = () => { const i = cur.indexOf(el.dataset.tbDown); [cur[i + 1], cur[i]] = [cur[i], cur[i + 1]]; draw(); });
+  };
+  draw();
+}
+const esc2 = (s) => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const tbPayload = (host) => { const o = host._order(); return JSON.stringify(o) === JSON.stringify(DEFAULT_TIEBREAKERS) ? null : o; };
+
+tbEditor(document.getElementById('tiebreaker-editor'), DEFAULT_TIEBREAKERS, false);
+
 function updateSettingsFields() {
   const format = document.getElementById('league-format').value;
   const keeper = format === 'keeper', dynasty = format === 'dynasty';
@@ -452,6 +510,10 @@ function leagueSettingsPayload() {
     out.points_per_win = num('points-win') ?? 3;
     out.points_per_tie = num('points-tie') ?? 1;
     out.playoff_teams = num('playoff-teams');
+    out.playoff_byes = num('playoff-byes') ?? 0;
+    out.division_winners_qualify = document.getElementById('division-winners-qualify').checked;
+    out.division_winners_seeded_first = document.getElementById('division-winners-first').checked;
+    out.tiebreakers = tbPayload(document.getElementById('tiebreaker-editor'));
   }
   return out;
 }

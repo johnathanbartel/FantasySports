@@ -170,6 +170,12 @@ class League(Base):
     points_per_tie: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     # How many teams make the playoffs; NULL = the default (33% of the teams, rounded), see platform/playoffs.py.
     playoff_teams: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # How ties in the standings are broken, in order (platform/tiebreakers.py); NULL = the default order.
+    tiebreakers: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # How the playoff field is filled and seeded (platform/playoffs.py).
+    playoff_byes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    division_winners_qualify: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    division_winners_seeded_first: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")

@@ -19,7 +19,8 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import calendar, game_lock, lineups, scoring, season_rollover
+from fantasy_sports.platform import calendar, elimination, game_lock, lineups, playoffs, scoring, season_rollover
+from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
     AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
@@ -105,11 +106,18 @@ def create_league(
         raise HTTPException(400, "A paid league needs an annual dues amount")
 
     hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
-                               or payload.points_per_tie != 1 or payload.playoff_teams is not None)
+                               or payload.points_per_tie != 1 or payload.playoff_teams is not None
+                               or payload.tiebreakers is not None or payload.playoff_byes != 0
+                               or not payload.division_winners_qualify or not payload.division_winners_seeded_first)
     if hockey_settings_changed and not has_nhl:
         raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
     if payload.playoff_teams is not None and payload.playoff_teams > payload.size:
         raise HTTPException(400, f"A {payload.size}-team league can't have {payload.playoff_teams} playoff teams")
+    if payload.tiebreakers is not None and (problem := tiebreaker_rules.validate(payload.tiebreakers)):
+        raise HTTPException(400, problem)
+    field_size = payload.playoff_teams or playoffs.default_playoff_teams(payload.size)
+    if payload.playoff_byes > field_size:
+        raise HTTPException(400, f"A {field_size}-team playoff field can't have {payload.playoff_byes} byes")
 
     first = universes[0]
     draft_rounds = payload.draft_rounds
@@ -141,6 +149,10 @@ def create_league(
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
         playoff_teams=payload.playoff_teams,
+        tiebreakers=payload.tiebreakers,
+        playoff_byes=payload.playoff_byes,
+        division_winners_qualify=payload.division_winners_qualify,
+        division_winners_seeded_first=payload.division_winners_seeded_first,
     )
     db.add(league)
     db.flush()  # assigns league.id without committing yet
@@ -363,9 +375,21 @@ def update_league_settings(
     if payload.keeper_draft_style is not None:
         league.keeper_draft_style = payload.keeper_draft_style
     hockey_fields = (payload.standings_mode is not None or payload.points_per_win is not None
-                     or payload.points_per_tie is not None or "playoff_teams" in sent)
+                     or payload.points_per_tie is not None or "playoff_teams" in sent or "tiebreakers" in sent
+                     or payload.playoff_byes is not None or payload.division_winners_qualify is not None
+                     or payload.division_winners_seeded_first is not None)
     if hockey_fields and league.series_length_days is None:
         raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
+    if "tiebreakers" in sent:
+        if payload.tiebreakers is not None and (problem := tiebreaker_rules.validate(payload.tiebreakers)):
+            raise HTTPException(400, problem)
+        league.tiebreakers = payload.tiebreakers
+    if payload.division_winners_qualify is not None:
+        league.division_winners_qualify = payload.division_winners_qualify
+    if payload.division_winners_seeded_first is not None:
+        league.division_winners_seeded_first = payload.division_winners_seeded_first
+    if payload.playoff_byes is not None:
+        league.playoff_byes = payload.playoff_byes
     if payload.standings_mode is not None:
         league.standings_mode = payload.standings_mode
     if payload.points_per_win is not None:
@@ -378,6 +402,10 @@ def update_league_settings(
             if payload.playoff_teams > max(teams, league.size):
                 raise HTTPException(400, f"A {max(teams, league.size)}-team league can't have {payload.playoff_teams} playoff teams")
         league.playoff_teams = payload.playoff_teams
+    if hockey_fields:
+        team_count = max(db.query(Team).filter_by(league_id=league.id).count(), league.size)
+        if league.playoff_byes > playoffs.effective_playoff_teams(league, team_count):
+            raise HTTPException(400, f"The playoff field can't have {league.playoff_byes} byes")
     if payload.pick_trading_enabled is not None:
         league.pick_trading_enabled = payload.pick_trading_enabled
     if payload.league_type is not None and payload.league_type != league.league_type:
@@ -402,6 +430,10 @@ def update_league_settings(
         if league.offseason and league.league_format == "keeper" and not league.keepers_finalized and payload.keeper_deadline is None:
             raise HTTPException(409, "Keeper selection is open, so it needs a deadline")
         league.keeper_deadline = payload.keeper_deadline
+    if hockey_fields:
+        # The standings or the playoff field changed, so what was proven under the old rules is proven again under the new.
+        db.flush()
+        elimination.recalculate_league(db, league.id, clear_stale=True)
     db.commit()
     db.refresh(league)
     return league

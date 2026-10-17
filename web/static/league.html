@@ -122,6 +122,45 @@ let LAST = 'last season';   // the year the fantasy points are from (set from /c
 const FOOTBALL_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'PK', 'DL', 'LB', 'DB'];
 const HOCKEY_POSITIONS = ['C', 'LW', 'RW', 'D', 'G'];
 let POSITIONS = FOOTBALL_POSITIONS;   // set from the league's universe in refreshOverview()
+
+// ---- tiebreaker order editor ----------------------------------------------------------------------------------
+const TIEBREAKERS = [
+  ['head_to_head', 'Head-to-head', 'wins against the other teams still tied'],
+  ['division_record', 'Division record', 'win % against teams in the same division'],
+  ['wins', 'Most wins', 'the team with more wins'],
+  ['goal_differential', 'Goal differential', 'goals scored minus goals allowed'],
+  ['goals_for', 'Goals scored', 'the team that scored more'],
+  ['goals_against', 'Goals allowed', 'the team that allowed fewer'],
+  ['coin_flip', 'Random draw', 'decides every tie, so it is always last'],
+];
+const DEFAULT_TIEBREAKERS = ['goal_differential', 'head_to_head', 'goals_for', 'goals_against'];
+const tbLabel = (k) => (TIEBREAKERS.find(t => t[0] === k) || [k, k])[1];
+function tbNormalize(order) {            // the random draw can only be last
+  const o = order.filter(k => k !== 'coin_flip');
+  return order.includes('coin_flip') ? o.concat('coin_flip') : o;
+}
+function tbEditor(host, order, disabled) {
+  let cur = tbNormalize(order.slice());
+  host._order = () => cur.slice();
+  const draw = () => {
+    const off = TIEBREAKERS.map(t => t[0]).filter(k => !cur.includes(k));
+    host.innerHTML = cur.map((k, i) => `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+        <input type="checkbox" checked data-tb-off="${k}" ${disabled ? 'disabled' : ''} aria-label="Use ${esc2(tbLabel(k))}">
+        <span style="min-width:2.2em;color:var(--color-text-muted,#888)">${i + 1}.</span><span>${esc2(tbLabel(k))}</span>
+        ${disabled ? '' : `<button type="button" class="btn btn-secondary" data-tb-up="${k}" ${i === 0 || k === 'coin_flip' ? 'disabled' : ''} aria-label="Move up">&uarr;</button>
+        <button type="button" class="btn btn-secondary" data-tb-down="${k}" ${i === cur.length - 1 || cur[i + 1] === 'coin_flip' || k === 'coin_flip' ? 'disabled' : ''} aria-label="Move down">&darr;</button>`}
+      </div>`).join('') + (off.length && !disabled ? `<div style="margin-top:6px;font-size:12px;opacity:.7">Not used:</div>` + off.map(k => `<div style="display:flex;align-items:center;gap:8px;margin:2px 0">
+        <input type="checkbox" data-tb-on="${k}" aria-label="Use ${esc2(tbLabel(k))}"><span>${esc2(tbLabel(k))}</span></div>`).join('') : '');
+    host.querySelectorAll('[data-tb-off]').forEach(el => el.onchange = () => { cur = cur.filter(k => k !== el.dataset.tbOff); draw(); });
+    host.querySelectorAll('[data-tb-on]').forEach(el => el.onchange = () => { cur = tbNormalize(cur.concat(el.dataset.tbOn)); draw(); });
+    host.querySelectorAll('[data-tb-up]').forEach(el => el.onclick = () => { const i = cur.indexOf(el.dataset.tbUp); [cur[i - 1], cur[i]] = [cur[i], cur[i - 1]]; draw(); });
+    host.querySelectorAll('[data-tb-down]').forEach(el => el.onclick = () => { const i = cur.indexOf(el.dataset.tbDown); [cur[i + 1], cur[i]] = [cur[i], cur[i + 1]]; draw(); });
+  };
+  draw();
+}
+const esc2 = (s) => esc(String(s));
+const tbPayload = (host) => { const o = host._order(); return JSON.stringify(o) === JSON.stringify(DEFAULT_TIEBREAKERS) ? null : o; };
+
 const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
@@ -2142,11 +2181,16 @@ async function renderLeagueSettings() {
             <label> Points for a tie <input id="points-tie" type="number" min="0" max="20" value="${lg.points_per_tie}" style="width:4em"></label>
             <span class="muted">(used when sorting by points)</span></p>
          <p><label>Playoff teams <input id="playoff-teams" type="number" min="1" max="${nTeams}" value="${inUse}" style="width:4em"></label>
-            <button type="button" class="btn btn-primary" id="standings-save">Save</button></p>
+            <label> First-round byes <input id="playoff-byes" type="number" min="0" max="${nTeams}" value="${lg.playoff_byes || 0}" style="width:4em"></label></p>
+         <p><label><input id="division-winners-qualify" type="checkbox"${lg.division_winners_qualify ? ' checked' : ''}> Division winners are guaranteed a playoff spot</label><br>
+            <label><input id="division-winners-first" type="checkbox"${lg.division_winners_seeded_first ? ' checked' : ''}> Division winners take the top seeds (wild cards follow, by rank)</label></p>
+         <p><b>Ties in the standings are broken by</b> (in this order):</p><div id="tiebreaker-editor"></div>
+         <p><button type="button" class="btn btn-primary" id="standings-save">Save</button></p>
          ${lg.playoff_teams ? '' : `<p class="note">How many teams should make the playoffs? Until you choose, the default is ${defPlayoff} (33% of ${nTeams} teams, rounded). Pick a number and save.</p>`}`
       : `<p>Standings are sorted by <b>${lg.standings_mode === 'points' ? 'points (' + lg.points_per_win + ' for a win, ' + lg.points_per_tie + ' for a tie)' : 'win percentage'}</b>.</p>
-         <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}.</p>`)
-      + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential. The division winners take the top seeds and the rest of the field is seeded by rank (wild cards).</p></div>`;
+         <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}${lg.playoff_byes ? `, ${lg.playoff_byes} with a first-round bye` : ''}.</p>
+         <p>Ties are broken by: <b>${(lg.tiebreakers || DEFAULT_TIEBREAKERS).map(tbLabel).join(', then ')}</b>.</p>`)
+      + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Teams still level are separated by the tiebreakers, in order. ${lg.division_winners_qualify ? 'Every division winner is in the field, and the other spots are wild cards by rank.' : 'The best teams by rank make the field.'} ${lg.division_winners_qualify && lg.division_winners_seeded_first ? 'Division winners take the top seeds.' : 'Seeds follow rank.'} A team is marked out once no result of the games left can get it into the field.</p></div>`;
   }
   if (lg.league_format !== 'traditional_redraft') {
     const picksOn = lg.pick_trading_enabled;
@@ -2187,6 +2231,8 @@ async function renderLeagueSettings() {
     : `<p class="muted">No archived seasons yet.</p>`) + `</div>`;
   $('content').innerHTML = html;
 
+  const tbHost = $('tiebreaker-editor');
+  if (tbHost) tbEditor(tbHost, lg.tiebreakers || DEFAULT_TIEBREAKERS, false);
   const call = async (fn, done) => {
     showError(''); showResult('');
     try { await fn(); await refreshOverview(); await go('league-settings'); if (done) showResult(done); } catch (e) { showError(e.message); }
@@ -2199,7 +2245,9 @@ async function renderLeagueSettings() {
     keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
   on('standings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
-    points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10)})), 'Standings and playoff settings saved.'));
+    points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10),
+    playoff_byes: parseInt($('playoff-byes').value, 10) || 0, division_winners_qualify: $('division-winners-qualify').checked,
+    division_winners_seeded_first: $('division-winners-first').checked, tiebreakers: tbPayload($('tiebreaker-editor'))})), 'Standings and playoff settings saved. Elimination was re-checked under the new rules.'));
   on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', Object.assign(
     {pick_trading_enabled: $('pick-trading-enabled').checked}, $('pick-trade-seasons') ? {pick_trade_seasons: parseInt($('pick-trade-seasons').value, 10)} : {}))), 'Pick trading saved.'));
   on('league-type-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
@@ -2284,7 +2332,7 @@ async function renderStandings() {
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_name.localeCompare(b.team_name));
       return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td></tr>`).join('')}
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}${r.eliminated ? ' <span class="pill" title="Mathematically eliminated from the playoffs">out</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td></tr>`).join('')}
         </tbody></table></div>`; }).join('') + '</div>';
 }
 
@@ -2303,11 +2351,11 @@ async function renderHockeyStandings() {
   });
   const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
-    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then goal differential. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams - division winners (*) take the top seeds, then wild cards by rank.</p>`
+    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in.</p>`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,760px),1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
       return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + '</span>' : '<span class="muted">-</span>'}</td></tr>`).join('')}
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td></tr>`).join('')}
         </tbody></table></div></div>`; }).join('') + '</div>';
 }
 

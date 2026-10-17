@@ -29,7 +29,10 @@ def ensure_latest_schema(engine):
                 conn.execute(text("ALTER TABLE leagues ADD COLUMN league_mode VARCHAR(20) DEFAULT 'standard' NOT NULL"))
 
             for name, ddl in (("league_type", "VARCHAR(4) DEFAULT 'FREE' NOT NULL"), ("annual_dues_cents", "INTEGER"),
-                              ("trade_deadline", "DATETIME")):
+                              ("trade_deadline", "DATETIME"), ("tiebreakers", "JSON"),
+                              ("playoff_byes", "INTEGER DEFAULT 0 NOT NULL"),
+                              ("division_winners_qualify", "BOOLEAN DEFAULT 1 NOT NULL"),
+                              ("division_winners_seeded_first", "BOOLEAN DEFAULT 1 NOT NULL")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
 
