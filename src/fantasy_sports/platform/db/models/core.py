@@ -27,12 +27,13 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    LargeBinary,
     String,
     UniqueConstraint,
     event,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, deferred, mapped_column, relationship
 
 from fantasy_sports.platform.db.base import Base
 from fantasy_sports.platform.team_tiers import SEASON_GOAL_BY_PROGRAM_SIZE
@@ -203,6 +204,18 @@ class League(Base):
     visibility: Mapped[str] = mapped_column(String(7), default="private", server_default="private")
     allow_ai_takeover_in_season: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     unfilled_slot_policy: Mapped[str] = mapped_column(String(7), default="fill_ai", server_default="fill_ai")
+    # Custom URL (/l/<slug>, stored lowercase, unique) and logo. The image bytes live on the row but are deferred so
+    # ordinary league reads never pull them; logo_updated_at doubles as "has a logo" and the cache-busting version.
+    slug: Mapped[str | None] = mapped_column(String(40), nullable=True, unique=True)
+    logo_data: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, nullable=True))
+    logo_content_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    logo_updated_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def logo_url(self) -> str | None:
+        if self.logo_updated_at is None:
+            return None
+        return f"/leagues/{self.id}/logo?v={int(self.logo_updated_at.timestamp())}"
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")

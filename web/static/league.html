@@ -2285,6 +2285,18 @@ async function renderLeagueSettings() {
     : `<p>${esc(fmtName(lg.league_format))}</p><p class="muted">Only the commissioner can change league settings.</p>`)
     + `<p class="muted">${esc(LEAGUE_FORMAT_NOTES[lg.league_format] || '')}</p></div>`;
 
+  const siteUrl = location.origin + '/l/' + (lg.slug || 'your-league-name');
+  html += `<div class="card"><h3>Logo and Custom URL</h3>`
+    + `<div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">${Retro.leagueMark(lg, 6)}`
+    + (isCommissioner
+      ? `<span><input id="logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"> <button type="button" class="btn btn-secondary" id="logo-remove"${lg.logo_url ? '' : ' disabled'}>Remove logo</button><br><span class="muted" style="font-size:13px">PNG, JPEG, WebP or GIF, up to 512 KB. Square images look best.</span></span>`
+      : `<span class="muted">${lg.logo_url ? '' : 'No logo yet.'}</span>`)
+    + `</div>`
+    + (isCommissioner
+      ? `<p><label>Custom URL <span class="muted">${esc(location.origin)}/l/</span><input id="slug-input" value="${esc(lg.slug || '')}" maxlength="40" placeholder="your-league-name" style="width:16em"></label> <button type="button" class="btn btn-primary" id="slug-save">Save</button></p><p class="muted" style="font-size:13px">3 to 40 letters, numbers and hyphens. Leave it empty to remove the custom URL.</p>`
+      : (lg.slug ? `<p>Custom URL: <a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>` : `<p class="muted">No custom URL set.</p>`))
+    + (lg.slug && isCommissioner ? `<p>Share: <a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>` : '') + `</div>`;
+
   if (isKeeper) {
     html += `<div class="card"><h3>Keeper Settings</h3>`
       + `<p>Teams that keep their whole roster only get the rookie draft. Teams that keep less get the draft style below.</p>`
@@ -2393,6 +2405,15 @@ async function renderLeagueSettings() {
     try { await fn(); await refreshOverview(); await go('league-settings'); if (done) showResult(done); } catch (e) { showError(e.message); }
   };
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  const logoFile = $('logo-file');
+  if (logoFile) logoFile.onchange = () => {
+    const f = logoFile.files[0];
+    if (!f) return;
+    if (f.size > 512 * 1024) { showError('The logo must be 512 KB or smaller.'); logoFile.value = ''; return; }
+    call(() => api(`/leagues/${LEAGUE_ID}/logo`, {method: 'PUT', headers: {'Content-Type': f.type || 'application/octet-stream'}, body: f}), 'Logo saved.');
+  };
+  on('logo-remove', () => call(() => api(`/leagues/${LEAGUE_ID}/logo`, {method: 'DELETE'}), 'Logo removed.'));
+  on('slug-save', () => call(() => api(`/leagues/${LEAGUE_ID}/slug`, jsonOpts('PUT', {slug: $('slug-input').value.trim() || null})), 'Custom URL saved.'));
   const sel = $('league-format');
   if (sel) sel.onchange = () => call(async () => { await api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {league_format: sel.value})); },
     'League format saved. If rosters exist, it stays as it was until every manager approves (see Votes on League Changes).');
@@ -2832,7 +2853,7 @@ async function start() {
   isCommissioner = ov.commissioner_user_id === me;
   canActForAi = isCommissioner && ent.commissioner_mode;
   $('nav-brand').textContent = ov.name;
-  $('league-name').innerHTML = `${Retro.sportSprite(ov.universe_codes, 5)} ` + esc(ov.name);
+  $('league-name').innerHTML = (ov.logo_url ? Retro.leagueMark(ov, 5) : Retro.sportSprite(ov.universe_codes, 5)) + ' ' + esc(ov.name);
   $('kicker').textContent = `${isHockey() ? 'NHL' : ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
   $('nav-cm').style.display = isCommissioner ? '' : 'none';
   document.title = ov.name;

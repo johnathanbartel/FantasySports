@@ -94,6 +94,8 @@ class OverviewOut(BaseModel):
     name: str
     draft_type: str
     universe_codes: list[str] = []
+    slug: str | None = None
+    logo_url: str | None = None
     size: int
     roster_size: int
     commissioner_user_id: int
@@ -176,7 +178,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         .filter(LeagueUniverse.league_id == league_id).order_by(Universe.code)
     ]
     return OverviewOut(
-        league_id=league.id, name=league.name, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
+        league_id=league.id, name=league.name, slug=league.slug, logo_url=league.logo_url, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
         roster_size=limit, commissioner_user_id=league.commissioner_user_id,
         commissioner_name=user_map[league.commissioner_user_id].display_name if league.commissioner_user_id in user_map else None,
         season_weeks=season.SEASON_WEEKS,

@@ -88,6 +88,10 @@ class LeagueCreateRequest(BaseModel):
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
 
+class LeagueSlugRequest(BaseModel):
+    slug: str | None = None     # null clears the custom URL
+
+
 class LeagueRenameRequest(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
@@ -230,6 +234,8 @@ class LeagueOut(ORMModel):
     visibility: str
     allow_ai_takeover_in_season: bool
     unfilled_slot_policy: str
+    slug: str | None = None
+    logo_url: str | None = None
 
 
 class SettingVoteOut(BaseModel):
@@ -1241,6 +1247,8 @@ class PublicLeagueOut(BaseModel):
     ai_takeovers: int
     allow_ai_takeover_in_season: bool
     draft_state: str
+    slug: str | None = None
+    logo_url: str | None = None
 
 
 class JoinLeagueRequest(BaseModel):

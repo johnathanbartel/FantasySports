@@ -1,14 +1,17 @@
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from fantasy_sports.api.routers import (
     auction, banking, draft, draft_broadcast, entitlements, league_home, league_leaders, leagues, media, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
 )
+from fantasy_sports.platform.db.models.core import League
+from fantasy_sports.platform.db.session import get_db
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
 
@@ -73,6 +76,15 @@ async def revalidate_static(request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/l/{slug}", include_in_schema=False)
+def league_by_slug(slug: str, db: Session = Depends(get_db)):
+    """A league's custom URL: sends people to the league page."""
+    row = db.query(League.id).filter(League.slug == slug.strip().lower()).first()
+    if row is None:
+        raise HTTPException(404, "League not found")
+    return RedirectResponse(f"/static/league.html?league_id={row[0]}")
 
 
 @app.get("/", include_in_schema=False)
