@@ -1002,7 +1002,15 @@ async function renderHockeyScoreboard() {
   }
   const curWin = winDefs.find(w => w.num === activeScoreboardWindow) || winDefs[0];
 
-  const matchupCards = currentRoundSeries.map(s => {
+  // Games are listed earliest start first (left to right, top to bottom); a card with no known start goes last.
+  const startKeyOf = (s) => {
+    const wg = (s.daily_games || s.games || []).filter(g => g.calendar_date >= curWin.startDate && g.calendar_date <= curWin.endDate);
+    const g = wg.find(x => x.status === 'LIVE_SIMULATING' || x.status === 'LIVE') || wg.find(x => x.calendar_date === todayStr) || wg[0];
+    const t = g && g.first_start_at ? Date.parse(g.first_start_at) : NaN;
+    return isNaN(t) ? Infinity : t;
+  };
+  const matchupCards = currentRoundSeries.map((s, i) => ({s, i, key: curWin.isSkipped ? Infinity : startKeyOf(s)}))
+    .sort((x, y) => (x.key === y.key ? x.i - y.i : x.key < y.key ? -1 : 1)).map(({s}) => {
     const tA = teamsById[s.team_a_id] || {id: s.team_a_id, name: 'Team ' + s.team_a_id};
     const tB = teamsById[s.team_b_id] || {id: s.team_b_id, name: 'Team ' + s.team_b_id};
 
