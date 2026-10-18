@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline Draft - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
+<style>
+  body{margin:0}
+  .wrap{padding:var(--space-4);color:var(--color-text);background:var(--color-bg);min-height:100vh}
+  .bar{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;margin:var(--space-3) 0}
+  .inp,select{padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px}
+  button{padding:8px 12px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer}
+  button.primary{background:var(--color-accent);color:#fff;border-color:var(--color-accent)}
+  .board{display:grid;gap:4px;overflow-x:auto}
+  .cell{min-height:56px;padding:6px;border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface);font-size:12px;cursor:pointer}
+  .cell.filled{cursor:default}
+  .cell.clock{border-color:var(--color-accent);box-shadow:0 0 0 2px var(--color-accent)}
+  .cell .who{opacity:.65;font-size:11px}
+  .colhead{font-weight:700;font-size:13px;padding:6px;text-align:center}
+  .badge{font-size:10px;padding:1px 5px;border-radius:8px;background:var(--color-divider)}
+  .err{color:#c0392b;min-height:20px}
+  .panel{border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:var(--space-3);margin:var(--space-3) 0;background:var(--color-surface)}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  td,th{padding:4px 8px;border-bottom:1px solid var(--color-divider);text-align:left}
+  .voided{text-decoration:line-through;opacity:.5}
+  #results{max-height:220px;overflow:auto}
+  #results div{padding:5px 8px;cursor:pointer;border-bottom:1px solid var(--color-divider)}
+  #results div:hover{background:var(--color-divider)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 style="margin:0">Offline draft</h1>
+  <div id="err" class="err"></div>
+  <div id="setup" class="panel" hidden>
+    <b>Start an offline draft</b>
+    <div class="bar">
+      <select id="fmt"><option value="snake">Snake</option><option value="auction">Auction</option></select>
+      <label>Rounds / roster size <input id="rounds" class="inp" type="number" min="1" style="width:70px"></label>
+      <label>Budget <input id="budget" class="inp" type="number" min="1" style="width:80px" placeholder="by program size"></label>
+      <button class="primary" id="create">Create</button>
+    </div>
+  </div>
+  <div id="main" hidden>
+    <div class="bar" id="info"></div>
+    <div class="bar" id="toolbar"></div>
+    <div id="lotpanel" class="panel" hidden></div>
+    <details class="panel" id="phones"><summary><b>Phones &amp; clocks</b></summary>
+      <div class="bar"><span id="joinlink"></span></div>
+      <div class="bar">
+        <label>Pick clock (s) <input id="s_pick" class="inp" type="number" min="5" style="width:80px" placeholder="off"></label>
+        <label><input id="s_auto" type="checkbox"> Autopick on timeout</label>
+        <label><input id="s_self" type="checkbox"> Managers may self-enter (free mode)</label>
+        <label>Lot (s) <input id="s_lot" class="inp" type="number" min="3" style="width:70px"></label>
+        <label>Anti-snipe (s) <input id="s_reset" class="inp" type="number" min="3" style="width:70px"></label>
+        <label>Claims <select id="s_claim"><option value="pin">PIN</option><option value="approve">Commissioner approves</option></select></label>
+        <button id="s_save">Save</button>
+      </div>
+      <div class="bar"><button id="pins_all">Generate PINs for all teams</button> <span class="who">PINs are shown once; the server keeps only hashes.</span></div>
+      <div id="pinout"></div>
+      <table id="claims"></table>
+    </details>
+    <details class="panel" id="excel"><summary><b>Excel template &amp; upload</b></summary>
+      <div class="bar">
+        <button id="x_down">Download template</button>
+        <input id="x_file" type="file" accept=".xlsx" class="inp">
+        <select id="x_mode"><option value="replace_all">Replace all</option><option value="fill_empty">Fill empty cells only</option></select>
+        <button id="x_prev">Check upload</button>
+        <button id="x_commit" class="primary" disabled>Commit</button>
+      </div>
+      <div id="x_out"></div>
+    </details>
+    <div id="review" class="panel" hidden></div>
+    <div id="sale" class="panel" hidden>
+      <b>Log sale</b>
+      <div class="bar">
+        <input id="saleq" class="inp" placeholder="Search player" autocomplete="off">
+        <select id="saleteam"></select>
+        <input id="saleprice" class="inp" type="number" min="0" style="width:80px" placeholder="Price">
+        <label><input id="saleover" type="checkbox"> Commissioner override</label>
+        <button class="primary" id="salego">Log sale</button>
+      </div>
+      <div id="saleresults"></div>
+    </div>
+    <div id="boardwrap"></div>
+    <div id="picker" class="panel" hidden>
+      <b id="pickertitle"></b>
+      <div class="bar">
+        <input id="q" class="inp" placeholder="Type a name" autocomplete="off">
+        <select id="pos"><option value="">All positions</option></select>
+        <label id="ownerlab">Team <select id="pickteam"></select></label>
+        <button id="cancelpick">Cancel</button>
+      </div>
+      <div id="results"></div>
+    </div>
+    <div class="panel"><b>Teams</b><table id="teams"></table></div>
+    <div class="panel"><b>Entry log</b> <span class="who">(newest first; voided picks struck through)</span><table id="log"></table></div>
+  </div>
+</div>
+<script src="/static/session.js"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const LEAGUE = qs.get('league_id');
+let S = null, withPool = null, target = null, picked = null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const teamName = (id) => (S.teams.find(t => t.team_id === id) || {}).name || id;
+const fail = (e) => { $('err').textContent = e.message || String(e); };
+
+async function load() {
+  try {
+    S = await FSC.api(`/leagues/${LEAGUE}/offline-draft`);
+    $('setup').hidden = S.status === 'finalized' ? false : true;
+    $('main').hidden = false;
+    await reload();
+  } catch (e) {
+    if (e.status === 404) { $('setup').hidden = false; $('main').hidden = true; } else fail(e);
+  }
+}
+async function reload() {
+  S = await FSC.api(`/offline-drafts/${S.id}?pool=true`);
+  render();
+}
+async function act(path, body) {
+  $('err').textContent = '';
+  try { S = Object.assign(S, await FSC.post(`/offline-drafts/${S.id}/${path}`, body)); await reload(); }
+  catch (e) { fail(e); await reload(); }
+}
+
+function render() {
+  $('info').innerHTML = `<span class="badge">${S.format}</span> <b>${S.status}</b> · mode: ${S.entry_mode} · join code <b>${S.join_code}</b> · v${S.version}`;
+  const st = S.status;
+  const b = (label, fn, cls) => `<button class="${cls || ''}" onclick="${fn}">${label}</button>`;
+  $('toolbar').innerHTML = [
+    st === 'setup' ? b('Start', "act('status',{status:'live'})", 'primary') : '',
+    st === 'live' ? b('Pause', "act('status',{status:'paused'})") : '',
+    st === 'paused' ? b('Resume', "act('status',{status:'live'})", 'primary') : '',
+    st !== 'finalized' ? b('Undo last', "act('undo')") : '',
+    st !== 'finalized' ? b(`Mode: ${S.entry_mode === 'free' ? 'free entry' : 'live clock'} (switch)`, `act('entry-mode',{entry_mode:'${S.entry_mode === 'free' ? 'live' : 'free'}'})`) : '',
+    ['setup','live','paused'].includes(st) ? b('To review', "act('status',{status:'review'})") : '',
+    st === 'review' ? b('Back to live', "act('status',{status:'live'})") : '',
+    st === 'review' ? b('Finalize', "finalize()", 'primary') : '',
+    st === 'finalized' ? b('Re-open', "act('reopen')") : '',
+    b('Open Big Screen', "window.open('/static/offline-display.html?token=' + S.display_token)"),
+    st !== 'finalized' ? b('Skip announcement', "act('skip-announcement')") : '',
+  ].join('');
+  const rv = S.review;
+  $('review').hidden = !rv;
+  if (rv) $('review').innerHTML = `<b>Review</b>: ${rv.total_picks} picks, ${rv.overrides} override(s).` +
+    (rv.incomplete_rosters.length ? '<br>Incomplete: ' + rv.incomplete_rosters.map(r => `${esc(r.name)} ${r.picks}/${r.of}`).join(', ') : '') +
+    (rv.budget_anomalies.length ? '<br>Over budget: ' + rv.budget_anomalies.map(r => `${esc(r.name)} by ${r.over_by}`).join(', ') : '');
+  $('sale').hidden = S.format !== 'auction' || st === 'finalized';
+  if (S.format === 'auction') $('saleteam').innerHTML = S.teams.map(t => `<option value="${t.team_id}">${esc(t.name)}</option>`).join('');
+  renderBoard(); renderTeams(); renderLog(); fillPositions(); renderPhones(); renderLot();
+}
+function renderLot() {
+  const el = $('lotpanel'), lot = S.live && S.live.lot;
+  el.hidden = S.format !== 'auction' || !lot;
+  if (el.hidden) return;
+  const left = lot.ends_at ? Math.max(0, (Date.parse(lot.ends_at + 'Z') - Date.parse(S.live.server_time + 'Z')) / 1000) : lot.remaining;
+  el.innerHTML = `<b>Live lot:</b> ${esc(lot.name)} - $${lot.current_bid} to ${esc(teamName(lot.bidder))} ` +
+    `<button onclick="act('lot/extend',{seconds:10})">+10s</button> <button onclick="act('lot/force-sell')">Force sell</button> <button onclick="act('lot/cancel')">Cancel lot</button>`;
+}
+function renderPhones() {
+  if (!S.settings) return;
+  const f = (id, v) => { const e = $(id); if (document.activeElement !== e) { if (e.type === 'checkbox') e.checked = !!v; else e.value = v == null ? '' : v; } };
+  f('s_pick', S.settings.pick_seconds); f('s_auto', S.settings.autopick); f('s_self', S.settings.managers_self_enter);
+  f('s_lot', S.settings.lot_seconds); f('s_reset', S.settings.reset_window); f('s_claim', S.settings.claim_mode);
+  $('joinlink').innerHTML = `Join code <b>${S.join_code}</b> &middot; phones open <code>${location.origin}/static/join.html?code=${S.join_code}</code>`;
+  $('claims').innerHTML = '<tr><th>Team</th><th>Phone</th><th></th></tr>' + (S.claims || []).map(c =>
+    `<tr><td>${esc(teamName(c.team_id))}</td><td>${c.locked ? 'LOCKED' : c.status}${c.has_pin ? '' : ' (no PIN)'}${c.device_replaced_at ? ' · device replaced ' + c.device_replaced_at.slice(11, 19) : ''}</td><td>` +
+    (c.locked ? `<a href="#" onclick="event.preventDefault();act('unlock',{team_id:${c.team_id}})">unlock</a> ` : '') +
+    (c.status === 'pending' ? `<a href="#" onclick="event.preventDefault();act('approve-claim',{team_id:${c.team_id},approve:true})">approve</a> <a href="#" onclick="event.preventDefault();act('approve-claim',{team_id:${c.team_id},approve:false})">deny</a> ` : '') +
+    (c.status !== 'unclaimed' ? `<a href="#" onclick="event.preventDefault();act('release',{team_id:${c.team_id}})">sign out</a> ` : '') +
+    `<a href="#" onclick="event.preventDefault();newPin(${c.team_id})">new PIN</a></td></tr>`).join('');
+}
+async function newPin(team) {
+  try { const r = await FSC.post(`/offline-drafts/${S.id}/pins`, team ? {team_id: team} : {}); showPins(r.pins); await reload(); } catch (e) { fail(e); }
+}
+function showPins(pins) {
+  $('pinout').innerHTML = '<table>' + Object.entries(pins).map(([t, p]) => `<tr><td>${esc(teamName(+t))}</td><td><b style="font-size:18px;letter-spacing:.2em">${p}</b></td></tr>`).join('') + '</table>';
+}
+async function xhr(path, opts) {
+  const sess = FSC.user && FSC.user();
+  const res = await fetch(path, Object.assign({}, opts, {headers: Object.assign({'Authorization': 'Bearer ' + (sess && sess.token)}, (opts && opts.headers) || {})}));
+  return res;
+}
+$('x_down').onclick = async () => {
+  try {
+    const res = await xhr(`/offline-drafts/${S.id}/template`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(await res.blob()); a.download = `draft-template-${S.format}-${S.id}.xlsx`; a.click();
+  } catch (e) { fail(e); }
+};
+async function sendUpload(kind) {
+  const f = $('x_file').files[0];
+  if (!f) { fail(new Error('Choose the filled-in .xlsx first')); return null; }
+  return xhr(`/offline-drafts/${S.id}/upload/${kind}?mode=${$('x_mode').value}`, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: await f.arrayBuffer()});
+}
+function showUploadErrors(d) {
+  const det = d.detail || {};
+  const list = det.errors || [typeof det === 'string' ? det : (det.message || 'Upload failed')];
+  $('x_out').innerHTML = '<b style="color:#c0392b">Upload rejected - nothing was imported:</b><ul>' + list.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+  $('x_commit').disabled = true;
+}
+$('x_prev').onclick = async () => {
+  $('err').textContent = '';
+  const res = await sendUpload('preview'); if (!res) return;
+  const d = await res.json();
+  if (!res.ok) { showUploadErrors(d); return; }
+  const rows = (arr, cols) => '<table>' + arr.map(r => '<tr>' + cols.map(c => `<td>${esc(r[c])}</td>`).join('') + '</tr>').join('') + '</table>';
+  $('x_out').innerHTML = `<b>${d.rows}</b> filled row(s): <b>${d.add.length}</b> to add, ${d.unchanged} unchanged` +
+    (d.replace.length ? `, <b>${d.replace.length}</b> existing to replace` : '') + (d.skipped.length ? `, ${d.skipped.length} skipped` : '') + '.' +
+    (d.warnings.length ? '<div style="color:#b9770e">' + d.warnings.map(esc).join('<br>') + '</div>' : '') +
+    (d.add.length ? '<div class="who">To add</div>' + rows(d.add, ['row', 'team', 'player', 'where']) : '') +
+    (d.replace.length ? '<div class="who">Would be replaced</div>' + rows(d.replace, ['team', 'player', 'where']) : '') +
+    (d.skipped.length ? '<div class="who">Skipped</div>' + rows(d.skipped, ['row', 'team', 'player', 'why']) : '');
+  $('x_commit').disabled = false;
+};
+$('x_commit').onclick = async () => {
+  if (!confirm('Commit this upload? The draft moves to review.')) return;
+  const res = await sendUpload('commit'); if (!res) return;
+  const d = await res.json();
+  if (!res.ok) { showUploadErrors(d); return; }
+  $('x_out').textContent = `Committed: ${d.result.added} added, ${d.result.voided} replaced.`; $('x_commit').disabled = true;
+  await reload();
+};
+$('x_file').onchange = () => { $('x_commit').disabled = true; };
+$('pins_all').onclick = () => newPin(null);
+$('s_save').onclick = () => act('settings', {pick_seconds: $('s_pick').value ? +$('s_pick').value : null, autopick: $('s_auto').checked,
+  managers_self_enter: $('s_self').checked, lot_seconds: +$('s_lot').value || 30, reset_window: +$('s_reset').value || 10, claim_mode: $('s_claim').value});
+
+function renderBoard() {
+  if (S.format !== 'snake') { $('boardwrap').innerHTML = ''; return; }
+  const n = S.team_order.length, byCell = {};
+  S.picks.filter(p => !p.voided).forEach(p => byCell[p.round + '-' + p.slot] = p);
+  let h = `<div class="board" style="grid-template-columns:40px repeat(${n},minmax(110px,1fr))"><div></div>`;
+  S.team_order.forEach(id => h += `<div class="colhead">${esc(teamName(id))}</div>`);
+  for (let r = 1; r <= S.rounds; r++) {
+    h += `<div class="colhead">R${r}</div>`;
+    for (let c = 0; c < n; c++) {
+      // columns are teams: the slot a team holds in round r reverses on even rounds; a traded cell shows its new owner
+      const slot = r % 2 === 0 ? n - c : c + 1;
+      const cell = S.cells.find(x => x.round === r && x.slot === slot), owner = cell.owner;
+      const p = byCell[r + '-' + slot], clk = S.on_the_clock && S.on_the_clock.round === r && S.on_the_clock.slot === slot;
+      h += p ? `<div class="cell filled" title="${p.source}${p.override ? ' (override)' : ''}"><b>${esc(p.name)}</b><br>${esc(p.position || '')} ${p.keeper ? '<span class="badge">K</span>' : ''}<span class="who"> #${p.entry_seq} ${p.source}</span><br><a href="#" onclick="event.preventDefault();act('picks/${p.id}/void',{})">void</a></div>`
+        : `<div class="cell${clk ? ' clock' : ''}" onclick="openPicker(${r},${slot},${owner})"><span class="who">#${cell ? cell.overall : ''} ${esc(teamName(owner))}</span></div>`;
+    }
+  }
+  $('boardwrap').innerHTML = h + '</div>';
+}
+
+function renderTeams() {
+  $('teams').innerHTML = '<tr><th>Team</th><th>Players</th>' + (S.format === 'auction' ? '<th>Spent</th><th>Left</th><th>Max bid</th>' : '') + '<th>Open</th></tr>' +
+    S.teams.map(t => `<tr><td>${esc(t.name)}</td><td>${t.picks}</td>` + (S.format === 'auction' ? `<td>${t.spent}</td><td>${t.remaining}</td><td>${t.max_bid}</td>` : '') + `<td>${t.open_slots}</td></tr>`).join('');
+}
+function renderLog() {
+  $('log').innerHTML = '<tr><th>#</th><th>Team</th><th>Player</th><th>Where</th><th>Src</th><th></th></tr>' +
+    [...S.picks].reverse().map(p => `<tr class="${p.voided ? 'voided' : ''}"><td>${p.entry_seq}</td><td>${esc(teamName(p.team_id))}</td><td>${esc(p.name)} <span class="who">${esc(p.position || '')}</span></td><td>${S.format === 'snake' ? `R${p.round}.${p.slot}` : '$' + p.price}</td><td>${p.source}${p.override ? ' !' : ''}</td><td>${p.voided ? '' : `<a href="#" onclick="event.preventDefault();act('picks/${p.id}/void',{})">void</a>`}</td></tr>`).join('');
+}
+function fillPositions() {
+  const have = [...new Set((S.pool || []).map(p => p.position).filter(Boolean))].sort();
+  const cur = $('pos').value;
+  $('pos').innerHTML = '<option value="">All positions</option>' + have.map(p => `<option>${p}</option>`).join('');
+  $('pos').value = cur;
+}
+
+function matches(q, pos) {
+  q = q.trim().toLowerCase();
+  return (S.pool || []).filter(p => (!pos || p.position === pos) && (!q || p.name.toLowerCase().includes(q))).slice(0, 40);
+}
+function openPicker(r, slot, owner) {
+  target = {r, slot}; $('picker').hidden = false;
+  $('pickertitle').textContent = `Round ${r}, pick slot ${slot} - ${teamName(owner)}`;
+  $('pickteam').innerHTML = S.teams.map(t => `<option value="${t.team_id}" ${t.team_id === owner ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+  $('q').value = ''; showResults(); $('q').focus();
+}
+function showResults() {
+  $('results').innerHTML = matches($('q').value, $('pos').value).map(p => `<div onclick="choose(${p.asset_id})">${esc(p.name)} <span class="who">${esc(p.position || '')}</span></div>`).join('') || '<div>No match</div>';
+}
+async function choose(assetId) {
+  const p = S.pool.find(x => x.asset_id === assetId);
+  if (!confirm(`Enter ${p.name} for ${teamName(+$('pickteam').value)}?`)) return;
+  $('picker').hidden = true;
+  await act('picks', {asset_id: assetId, round: target.r, slot: target.slot, team_id: +$('pickteam').value});
+}
+$('q').oninput = showResults; $('pos').onchange = showResults; $('cancelpick').onclick = () => { $('picker').hidden = true; };
+$('saleq').oninput = () => {
+  $('saleresults').innerHTML = matches($('saleq').value, '').slice(0, 8).map(p => `<div style="cursor:pointer;padding:3px" onclick="picked=${p.asset_id};$('saleq').value='${esc(p.name).replace(/'/g, '')}'">${esc(p.name)} <span class="who">${esc(p.position || '')}</span></div>`).join('');
+};
+$('salego').onclick = async () => {
+  if (!picked) { fail(new Error('Pick a player from the list first')); return; }
+  await act('sales', {asset_id: picked, team_id: +$('saleteam').value, price: +$('saleprice').value, override: $('saleover').checked});
+  picked = null; $('saleq').value = ''; $('saleprice').value = ''; $('saleresults').innerHTML = '';
+};
+async function finalize() {
+  const rv = S.review || {};
+  const partial = rv.incomplete_rosters && rv.incomplete_rosters.length;
+  if (!confirm(partial ? 'Some rosters are incomplete. Finalize anyway and write rosters to the league?' : 'Finalize and write rosters to the league?')) return;
+  await act('finalize', {allow_incomplete: !!partial});
+}
+$('create').onclick = async () => {
+  try {
+    const body = {format: $('fmt').value};
+    if ($('rounds').value) body.rounds = +$('rounds').value;
+    if ($('budget').value) body.budget = +$('budget').value;
+    S = await FSC.post(`/leagues/${LEAGUE}/offline-draft`, body);
+    $('setup').hidden = true; $('main').hidden = false; await reload();
+  } catch (e) { fail(e); }
+};
+setInterval(() => { if (S && $('picker').hidden && S.status !== 'finalized') reload().catch(() => {}); }, 4000);
+load();
+</script>
+</body>
+</html>

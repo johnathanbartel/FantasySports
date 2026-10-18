@@ -1,0 +1,368 @@
+"""
+Offline Draft Mode endpoints (commissioner console, web/static/offline-draft.html, and the read-only Big Screen feed).
+All rules live in platform/offline_draft.py; every mutation runs under the session's lock and commits as one transaction.
+Phones (join code + PIN) and the Excel round-trip are later phases.
+"""
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from fantasy_sports.api.auth import assert_commissioner, current_user
+from fantasy_sports.platform import offline_draft as od
+from fantasy_sports.platform import offline_excel as xl
+from fantasy_sports.platform import offline_live as live
+from fantasy_sports.platform.db.models.core import League, User
+from fantasy_sports.platform.db.models.offline_draft import OfflineAuditLog, OfflineDraftSession
+from fantasy_sports.platform.db.session import get_db
+
+router = APIRouter(tags=["offline-draft"])
+
+
+class CreateRequest(BaseModel):
+    format: str
+    entry_mode: str = "free"
+    rounds: int | None = None
+    team_order: list[int] | None = None
+    budget: int | None = None
+    min_bid: int = 1
+    increment: int = 1
+
+
+class PickRequest(BaseModel):
+    asset_id: int
+    round: int
+    slot: int
+    team_id: int | None = None
+    keeper: bool = False
+
+
+class SaleRequest(BaseModel):
+    asset_id: int
+    team_id: int
+    price: int
+    override: bool = False
+    keeper: bool = False
+
+
+class EditRequest(BaseModel):
+    asset_id: int | None = None
+    team_id: int | None = None
+    price: int | None = None
+    override: bool = False
+
+
+class VoidRequest(BaseModel):
+    reason: str | None = None
+
+
+class StatusRequest(BaseModel):
+    status: str
+
+
+class ModeRequest(BaseModel):
+    entry_mode: str
+
+
+class CellOwnerRequest(BaseModel):
+    round: int
+    slot: int
+    team_id: int
+
+
+class FinalizeRequest(BaseModel):
+    allow_incomplete: bool = False
+
+
+def _get(db: Session, session_id: int, user: User) -> OfflineDraftSession:
+    s = db.get(OfflineDraftSession, session_id)
+    if s is None:
+        raise HTTPException(404, "Offline draft not found")
+    assert_commissioner(db, user, s.league_id)
+    return s
+
+
+def refresh(db: Session, session_id: int) -> None:
+    """Applies due clocks / lots before a read or write of a live session (cheap when nothing is due)."""
+    s = db.get(OfflineDraftSession, session_id)
+    if s is None or s.status != "live":
+        return
+    db.expire(s)
+    with od.session_lock(session_id):
+        s = od.lock_session(db, session_id)
+        if live.tick(db, s):
+            db.commit()
+        else:
+            db.rollback()
+
+
+def _mutate(db: Session, session_id: int, user: User, fn):
+    """Runs fn(session) as the only writer: process lock + row lock, one commit. Refusals roll back."""
+    _get(db, session_id, user)
+    with od.session_lock(session_id):
+        try:
+            s = od.lock_session(db, session_id)
+            if live.tick(db, s):
+                db.commit()                      # due clocks / lots are applied even if this request is then refused
+                s = od.lock_session(db, session_id)
+            result = fn(s)
+            db.commit()
+            return result, s
+        except od.OfflineDraftError as e:
+            db.rollback()
+            if getattr(e, "errors", None):
+                raise HTTPException(422, {"message": str(e), "errors": e.errors})
+            raise HTTPException(409 if str(e).startswith("Already taken") else 400, str(e))
+
+
+@router.post("/leagues/{league_id}/offline-draft")
+def create(league_id: int, req: CreateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    league = assert_commissioner(db, user, league_id)
+    try:
+        s = od.create_session(db, league, user.id, req.format, req.entry_mode, req.rounds, req.team_order, req.budget,
+                              req.min_bid, req.increment)
+        db.commit()
+    except od.OfflineDraftError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return {**od.snapshot(db, s), "display_token": s.display_token}
+
+
+@router.get("/leagues/{league_id}/offline-draft")
+def current(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    assert_commissioner(db, user, league_id)
+    s = db.query(OfflineDraftSession).filter_by(league_id=league_id).order_by(OfflineDraftSession.id.desc()).first()
+    if s is None:
+        raise HTTPException(404, "No offline draft for this league")
+    return {**od.snapshot(db, s), "display_token": s.display_token}
+
+
+@router.get("/offline-drafts/display/{token}")
+def display(token: str, since: int | None = None, db: Session = Depends(get_db)):
+    """Big Screen feed: read-only, keyed by the display token alone. The screen polls with since=<last version>: an
+    unchanged draft answers with a tiny {changed: false}, so a 1-second poll costs almost nothing."""
+    s = db.query(OfflineDraftSession).filter_by(display_token=token).first()
+    if s is None:
+        raise HTTPException(404, "Unknown display link")
+    if s.status == "live":
+        refresh(db, s.id)
+        db.refresh(s)
+    if since is not None and since == s.version:
+        return {"changed": False, "version": s.version}
+    return {**od.snapshot(db, s), "league_name": db.get(League, s.league_id).name}
+
+
+@router.get("/offline-drafts/{session_id}")
+def state(session_id: int, pool: bool = False, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    s = _get(db, session_id, user)
+    refresh(db, session_id)
+    db.refresh(s)
+    return {**od.snapshot(db, s, include_pool=pool), "display_token": s.display_token,
+            "claims": live.claims_view(db, s), "settings": {k: live.setting(s, k) for k in live.DEFAULTS}}
+
+
+@router.get("/offline-drafts/{session_id}/audit")
+def audit_log(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _get(db, session_id, user)
+    rows = db.query(OfflineAuditLog).filter_by(session_id=session_id).order_by(OfflineAuditLog.id.desc()).limit(200)
+    return [{"id": r.id, "actor": r.actor, "action": r.action, "before": r.before_json, "after": r.after_json,
+             "at": r.created_at.isoformat()} for r in rows]
+
+
+@router.post("/offline-drafts/{session_id}/picks")
+def pick(session_id: int, req: PickRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.make_pick(db, s, req.asset_id, req.round, req.slot, "commissioner",
+                                                                 user.id, team_id=req.team_id, keeper=req.keeper))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/sales")
+def sale(session_id: int, req: SaleRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.log_sale(db, s, req.asset_id, req.team_id, req.price, user.id,
+                                                                override=req.override, keeper=req.keeper))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/picks/{pick_id}/void")
+def void(session_id: int, pick_id: int, req: VoidRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.void_pick(db, s, pick_id, user.id, req.reason))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/picks/{pick_id}/edit")
+def edit(session_id: int, pick_id: int, req: EditRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.edit_pick(db, s, pick_id, user.id, req.asset_id, req.team_id, req.price,
+                                                                 req.override))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/undo")
+def undo(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.undo_last(db, s, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/status")
+def status(session_id: int, req: StatusRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.set_status(db, s, req.status, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/entry-mode")
+def entry_mode(session_id: int, req: ModeRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.set_entry_mode(db, s, req.entry_mode, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/cell-owner")
+def cell_owner(session_id: int, req: CellOwnerRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.set_cell_owner(db, s, req.round, req.slot, req.team_id, f"user:{user.id}"))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/skip-announcement")
+def skip_announcement(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.skip_announcement(db, s, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/rotate-display-token")
+def rotate(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    token, _ = _mutate(db, session_id, user, lambda s: od.rotate_display_token(db, s, user.id))
+    return {"display_token": token}
+
+
+@router.post("/offline-drafts/{session_id}/finalize")
+def finalize(session_id: int, req: FinalizeRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    result, s = _mutate(db, session_id, user, lambda s: od.finalize(db, s, user.id, req.allow_incomplete))
+    return {**od.snapshot(db, s), "result": result}
+
+
+@router.post("/offline-drafts/{session_id}/reopen")
+def reopen(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.reopen(db, s, user.id))
+    return od.snapshot(db, s)
+
+
+# ---- phase 3: settings, PINs, claims, lots ----------------------------------------------------------------------------
+class SettingsRequest(BaseModel):
+    pick_seconds: int | None = None
+    autopick: bool | None = None
+    lot_seconds: int | None = None
+    reset_window: int | None = None
+    claim_mode: str | None = None
+    managers_self_enter: bool | None = None
+    increment: int | None = None
+
+
+class PinRequest(BaseModel):
+    team_id: int | None = None
+
+
+class TeamRequest(BaseModel):
+    team_id: int
+    approve: bool = True
+
+
+class NominateRequest(BaseModel):
+    team_id: int
+    asset_id: int
+    opening_bid: int | None = None
+
+
+class ExtendRequest(BaseModel):
+    seconds: int = 10
+
+
+@router.post("/offline-drafts/{session_id}/settings")
+def settings(session_id: int, req: SettingsRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    # pick_seconds is the one setting where null means "turn it off", so it is passed whenever the body names it
+    kw = req.model_dump(exclude_unset=True)
+    _, s = _mutate(db, session_id, user, lambda s: live.update_settings(db, s, user.id, **kw))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/pins")
+def pins(session_id: int, req: PinRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """New PINs for every team (or one). The PINs are in this response only: the server keeps hashes."""
+    out, _ = _mutate(db, session_id, user, lambda s: live.generate_pins(db, s, user.id, req.team_id))
+    return {"pins": {str(k): v for k, v in out.items()}}
+
+
+@router.post("/offline-drafts/{session_id}/unlock")
+def unlock(session_id: int, req: TeamRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _mutate(db, session_id, user, lambda s: live.unlock(db, s, req.team_id, user.id))
+    return {"ok": True}
+
+
+@router.post("/offline-drafts/{session_id}/release")
+def release(session_id: int, req: TeamRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _mutate(db, session_id, user, lambda s: live.release_claim(db, s, req.team_id, user.id))
+    return {"ok": True}
+
+
+@router.post("/offline-drafts/{session_id}/approve-claim")
+def approve(session_id: int, req: TeamRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _mutate(db, session_id, user, lambda s: live.approve_claim(db, s, req.team_id, user.id, req.approve))
+    return {"ok": True}
+
+
+@router.post("/offline-drafts/{session_id}/lot/nominate")
+def lot_nominate(session_id: int, req: NominateRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: live.commissioner_nominate(db, s, req.team_id, req.asset_id, req.opening_bid, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/lot/cancel")
+def lot_cancel(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: live.cancel_lot(db, s, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/lot/extend")
+def lot_extend(session_id: int, req: ExtendRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: live.extend_lot(db, s, req.seconds, user.id))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/lot/force-sell")
+def lot_force_sell(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: live.force_sell(db, s, user.id))
+    return od.snapshot(db, s)
+
+
+# ---- phase 4: Excel round-trip ------------------------------------------------------------------------------------------
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get("/offline-drafts/{session_id}/template")
+def template(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    s = _get(db, session_id, user)
+    return Response(xl.build_template(db, s), media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="draft-template-{s.format}-{s.id}.xlsx"'})
+
+
+@router.post("/offline-drafts/{session_id}/upload/preview")
+def upload_preview(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
+                   db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Validates the workbook and says what committing it would do. Writes nothing."""
+    s = _get(db, session_id, user)
+    if s.status == "finalized":
+        raise HTTPException(400, "This draft is finalized")
+    try:
+        parsed = xl.parse_upload(db, s, data)
+        return xl.describe(db, s, parsed, xl.plan(db, s, parsed, mode))
+    except xl.ExcelError as e:
+        raise HTTPException(422, {"message": str(e), "errors": e.errors})
+    except od.OfflineDraftError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/offline-drafts/{session_id}/upload/commit")
+def upload_commit(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
+                  db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Replace all, or fill empty cells only, as one transaction; the draft lands in review."""
+    def go(s):
+        return xl.commit(db, s, xl.parse_upload(db, s, data), mode, user.id)
+    result, s = _mutate(db, session_id, user, go)
+    return {**od.snapshot(db, s), "result": result}

@@ -159,6 +159,19 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(LeagueSettingVote).filter(LeagueSettingVote.change_id.in_(change_ids)).delete(synchronize_session=False)
         db.query(LeagueSettingChange).filter(LeagueSettingChange.id.in_(change_ids)).delete(synchronize_session=False)
 
+    # Offline drafts (platform/offline_draft.py): picks, lots and claims point at teams, so they go first
+    from fantasy_sports.platform.db.models.offline_draft import (
+        OfflineAuctionLot, OfflineAuditLog, OfflineBidEvent, OfflineDraftPick, OfflineDraftSession, OfflineTeamClaim,
+    )
+    offline_ids = [s.id for s in db.query(OfflineDraftSession.id).filter_by(league_id=league_id)]
+    if offline_ids:
+        lot_ids = [r[0] for r in db.query(OfflineAuctionLot.id).filter(OfflineAuctionLot.session_id.in_(offline_ids))]
+        if lot_ids:
+            db.query(OfflineBidEvent).filter(OfflineBidEvent.lot_id.in_(lot_ids)).delete(synchronize_session=False)
+        for model in (OfflineAuctionLot, OfflineDraftPick, OfflineTeamClaim, OfflineAuditLog):
+            db.query(model).filter(model.session_id.in_(offline_ids)).delete(synchronize_session=False)
+        db.query(OfflineDraftSession).filter(OfflineDraftSession.id.in_(offline_ids)).delete(synchronize_session=False)
+
     # Commissioner tools (platform/commissioner.py): these point at teams and the league, so they go before both
     for model in (CommissionerAction, TeamAdjustment, WaiverOrderOverride, LeagueCoCommissioner, EmailOutbox):
         db.query(model).filter(model.league_id == league_id).delete(synchronize_session=False)
