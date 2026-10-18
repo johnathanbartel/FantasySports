@@ -206,6 +206,14 @@ async function go(id, extra = {}) {
     clearInterval(scoreboardAutoRefreshTimer);
     scoreboardAutoRefreshTimer = null;
   }
+  if (typeof scoreboardMidnightTimer !== 'undefined' && scoreboardMidnightTimer) {
+    clearTimeout(scoreboardMidnightTimer);
+    scoreboardMidnightTimer = null;
+  }
+  if (typeof rosterMidnightTimer !== 'undefined' && rosterMidnightTimer) {
+    clearTimeout(rosterMidnightTimer);
+    rosterMidnightTimer = null;
+  }
   if (extra.team_id) activeTeamId = extra.team_id;
   showError(''); showResult('');
   const u = new URL(location.href); u.searchParams.set('tab', id);
@@ -602,13 +610,52 @@ async function moveIL(assetId, on) {
   paintHockeyRoster();
 }
 
+let activeRosterSeries = null;    // start date of the series the viewer picked; null follows the current series
+let rosterWindowAuto = true;      // open on the window that holds today (set on entry, on a series pick and at midnight)
+let rosterDay = null;             // the viewer's local date the roster last rendered for
+let rosterMidnightTimer = null;
+let rosterSeriesList = [], rosterSeriesIdx = 0, rosterCurrentIdx = 0;
+
+// Re-render just after the viewer's local midnight so the roster moves to the new day's window or series.
+function scheduleRosterMidnight() {
+  if (rosterMidnightTimer) clearTimeout(rosterMidnightTimer);
+  const next = new Date();
+  next.setHours(24, 0, 1, 0);
+  rosterMidnightTimer = setTimeout(() => {
+    rosterMidnightTimer = null;
+    if (tab === 'roster' && isHockey()) renderHockeyRoster();
+  }, next - Date.now());
+}
+
 async function renderHockeyRoster() {
   const t = activeTeam();
   if (!t) return;
-  const [po, sch] = await Promise.all([
-    api(`/teams/${t.id}/pecking-order`),
-    api(`/teams/${t.id}/series-schedule`).catch(() => null),
-  ]);
+  const sch = await api(`/teams/${t.id}/series-schedule`).catch(() => null);
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  if (rosterDay !== todayStr) {
+    rosterDay = todayStr;
+    activeRosterSeries = null;
+    rosterWindowAuto = true;
+  }
+  scheduleRosterMidnight();
+
+  // The current series holds today; between series it is the next one, after the last it is the last.
+  rosterSeriesList = sch && sch.series ? sch.series.slice().sort((a, b) => (a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : 0)) : [];
+  rosterCurrentIdx = rosterSeriesList.findIndex(s => todayStr >= s.start_date && todayStr <= s.end_date);
+  if (rosterCurrentIdx < 0) rosterCurrentIdx = rosterSeriesList.findIndex(s => todayStr < s.start_date);
+  if (rosterCurrentIdx < 0) rosterCurrentIdx = Math.max(0, rosterSeriesList.length - 1);
+  const picked = activeRosterSeries === null ? -1 : rosterSeriesList.findIndex(s => s.start_date === activeRosterSeries);
+  rosterSeriesIdx = picked >= 0 ? picked : rosterCurrentIdx;
+  const series = rosterSeriesList[rosterSeriesIdx] || null;
+  if (rosterWindowAuto) {
+    rosterWindowAuto = false;
+    const open = getSeriesWindows(series ? series.start_date : null).filter(w => !w.isSkipped);
+    const inToday = open.find(w => w.startDate && todayStr >= w.startDate && todayStr <= w.endDate);
+    const upcoming = open.find(w => w.startDate && todayStr < w.startDate);
+    activeHockeyWindow = (inToday || upcoming || open[open.length - 1] || {num: 1}).num;
+  }
+  // The real NHL schedule shown in each window has to be the chosen series' week.
+  const po = await api(`/teams/${t.id}/pecking-order${series ? `?week=${series.start_date}` : ''}`);
   gridGroups = po.groups; gridSel = null;
   ilPlayers = po.injured_list || []; ilCapacity = po.injured_list_capacity || 0;
   injuryAlerts = canManage(t) ? await api(`/teams/${t.id}/injury-alerts`).catch(() => []) : [];
@@ -717,7 +764,7 @@ function paintHockeyRoster() {
   const dropBar = canDrop(t) ? `<div style="margin:0 0 var(--space-2);min-height:36px;display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
       ${selPlayer ? `<span>Selected: <strong>${esc(selPlayer.display_name)}</strong></span><button class="btn btn-secondary" id="grid-drop">Drop to free agency</button>` : '<span class="muted" style="font-size:13px">Select a player to swap him with another of his position, or drop him to free agency.</span>'}</div>` : '';
 
-  const seriesInfo = hockeySchedule && hockeySchedule.series && hockeySchedule.series.length ? hockeySchedule.series[0] : null;
+  const seriesInfo = rosterSeriesList[rosterSeriesIdx] || null;
   const seriesTitle = seriesInfo ? `Series vs ${esc(seriesInfo.opponent_name)} (${fmtD(seriesInfo.start_date)} – ${fmtD(seriesInfo.end_date)})` : 'Weekly Matchup · 3 Game Windows';
   const winDefs = getSeriesWindows(seriesInfo ? seriesInfo.start_date : null);
   if (winDefs[0].isSkipped && activeHockeyWindow === 1) {
@@ -737,7 +784,14 @@ function paintHockeyRoster() {
           <div class="card-kicker">3-Game Weekly Series</div>
           <h3 style="margin:2px 0 0">${seriesTitle}</h3>
         </div>
-        <div class="muted" style="font-size:12px">7-Day Series · 3 Game Windows</div>
+        <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-secondary" id="ros-series-prev" aria-label="Previous series" ${rosterSeriesIdx <= 0 ? 'disabled' : ''} style="padding:6px 10px">&lsaquo;</button>
+          <select id="ros-series-pick" aria-label="Series" style="min-width:220px">
+            ${rosterSeriesList.map((s, i) => `<option value="${s.start_date}" ${i === rosterSeriesIdx ? 'selected' : ''}>Series ${i + 1} vs ${esc(s.opponent_name)} · ${fmtD(s.start_date)} – ${fmtD(s.end_date)}${i === rosterCurrentIdx ? ' (current)' : ''}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-secondary" id="ros-series-next" aria-label="Next series" ${rosterSeriesIdx >= rosterSeriesList.length - 1 ? 'disabled' : ''} style="padding:6px 10px">&rsaquo;</button>
+          ${rosterSeriesIdx !== rosterCurrentIdx ? '<button type="button" class="btn btn-ghost" id="ros-series-current" style="font-size:12px;padding:4px 8px">Current</button>' : ''}
+        </div>
       </div>
       <div style="display:flex;gap:var(--space-2);flex-wrap:wrap" role="tablist" aria-label="Game Windows">
         ${winDefs.map(w => {
@@ -801,6 +855,16 @@ function paintHockeyRoster() {
   document.querySelectorAll('.gres').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, playerId: Number(b.dataset.pid)}));
   if ($('grid-drop') && selPlayer) $('grid-drop').onclick = () => dropPlayer(t, selPlayer.draftable_asset_id, selPlayer.display_name);
 
+  const pickRosterSeries = (start) => {
+    activeRosterSeries = start;   // null follows the current series again
+    rosterWindowAuto = true;      // reopen on that series' own current/first window
+    renderHockeyRoster();
+  };
+  $('ros-series-pick').onchange = (e) => pickRosterSeries(e.target.value);
+  $('ros-series-prev').onclick = () => pickRosterSeries(rosterSeriesList[rosterSeriesIdx - 1].start_date);
+  $('ros-series-next').onclick = () => pickRosterSeries(rosterSeriesList[rosterSeriesIdx + 1].start_date);
+  if ($('ros-series-current')) $('ros-series-current').onclick = () => pickRosterSeries(null);
+
   document.querySelectorAll('[data-window]').forEach(btn => {
     btn.onclick = () => {
       activeHockeyWindow = Number(btn.dataset.window);
@@ -844,9 +908,24 @@ function paintHockeyRoster() {
 // ---- SCOREBOARD & LIVE SCORING ----------------------------------------------------------------------
 let scoreboardAutoRefreshTimer = null;
 let activeScoreboardWindow = null;   // null until the viewer picks a window: the scoreboard then opens on the current one
+let activeScoreboardSeries = null;   // start date of the series the viewer picked; null follows the current series
+let scoreboardDay = null;            // the viewer's local date the scoreboard last rendered for
+let scoreboardMidnightTimer = null;
+
+// Re-render just after the viewer's local midnight so the scoreboard moves to the new day's window or series.
+function scheduleScoreboardMidnight() {
+  if (scoreboardMidnightTimer) clearTimeout(scoreboardMidnightTimer);
+  const next = new Date();
+  next.setHours(24, 0, 1, 0);
+  scoreboardMidnightTimer = setTimeout(() => {
+    scoreboardMidnightTimer = null;
+    if (tab === 'scoreboard' && isHockey()) renderHockeyScoreboard();
+  }, next - Date.now());
+}
 
 async function renderScoreboard() {
   activeScoreboardWindow = null;
+  activeScoreboardSeries = null;
   await refreshOverview();
   if (isHockey()) return renderHockeyScoreboard();
   return renderFootballScoreboard();
@@ -886,14 +965,34 @@ async function renderHockeyScoreboard() {
     return;
   }
 
-  const curSeriesIdx = view.scoreboardSeriesIdx || 0;
-  const seriesPerRound = Math.max(1, Math.floor(ov.teams.length / 2));
-  const roundIdx = Math.floor(curSeriesIdx / seriesPerRound);
-  const currentRoundSeries = seriesList.slice(roundIdx * seriesPerRound, (roundIdx + 1) * seriesPerRound);
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  if (scoreboardDay !== todayStr) {
+    // First render, or the viewer's local date rolled over (midnight): drop any manual pick and follow the current series and window.
+    scoreboardDay = todayStr;
+    activeScoreboardSeries = null;
+    activeScoreboardWindow = null;
+  }
+  scheduleScoreboardMidnight();
+
+  // A series round is every matchup that starts on the same date.
+  const rounds = [];
+  seriesList.forEach(s => {
+    let r = rounds.find(x => x.start === s.start_date);
+    if (!r) { r = {start: s.start_date, end: s.end_date, series: []}; rounds.push(r); }
+    r.series.push(s);
+  });
+  rounds.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+
+  // The current round holds today; between rounds it is the next one, after the last it is the last.
+  let currentIdx = rounds.findIndex(r => todayStr >= r.start && todayStr <= r.end);
+  if (currentIdx < 0) currentIdx = rounds.findIndex(r => todayStr < r.start);
+  if (currentIdx < 0) currentIdx = rounds.length - 1;
+  const pickedIdx = activeScoreboardSeries === null ? -1 : rounds.findIndex(r => r.start === activeScoreboardSeries);
+  const roundIdx = pickedIdx >= 0 ? pickedIdx : currentIdx;
+  const currentRoundSeries = rounds[roundIdx].series;
   const firstS = currentRoundSeries[0] || seriesList[0];
 
   const winDefs = getSeriesWindows(firstS ? firstS.start_date : null);
-  const todayStr = new Date().toLocaleDateString('en-CA');
   if (activeScoreboardWindow === null) {
     // Default to the window that contains today; before the series starts that is the first playable one, after it the last.
     const open = winDefs.filter(w => !w.isSkipped);
@@ -1046,6 +1145,12 @@ async function renderHockeyScoreboard() {
         <h2 style="margin:2px 0 0">Matchup Scoreboard</h2>
       </div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary" id="sb-series-prev" aria-label="Previous series" ${roundIdx === 0 ? 'disabled' : ''} style="padding:6px 10px">&lsaquo;</button>
+        <select id="sb-series-pick" aria-label="Series" style="min-width:200px">
+          ${rounds.map((r, i) => `<option value="${r.start}" ${i === roundIdx ? 'selected' : ''}>Series ${i + 1} · ${fmtD(r.start)} – ${fmtD(r.end)}${i === currentIdx ? ' (current)' : ''}</option>`).join('')}
+        </select>
+        <button type="button" class="btn btn-secondary" id="sb-series-next" aria-label="Next series" ${roundIdx === rounds.length - 1 ? 'disabled' : ''} style="padding:6px 10px">&rsaquo;</button>
+        ${roundIdx !== currentIdx ? '<button type="button" class="btn btn-ghost" id="sb-series-current" style="font-size:12px;padding:4px 8px">Current</button>' : ''}
         <span class="muted" style="font-size:12px">Auto-refreshes live every 10s</span>
       </div>
     </div>
@@ -1094,6 +1199,15 @@ async function renderHockeyScoreboard() {
     </div>
   `;
 
+  const pickSeries = (start) => {
+    activeScoreboardSeries = start;   // null follows the current series again
+    activeScoreboardWindow = null;    // reopen on that series' own current/first window
+    renderHockeyScoreboard();
+  };
+  $('sb-series-pick').onchange = (e) => pickSeries(e.target.value);
+  $('sb-series-prev').onclick = () => pickSeries(rounds[roundIdx - 1].start);
+  $('sb-series-next').onclick = () => pickSeries(rounds[roundIdx + 1].start);
+  if ($('sb-series-current')) $('sb-series-current').onclick = () => pickSeries(null);
   document.querySelectorAll('[data-swindow]').forEach(b => {
     b.onclick = () => {
       activeScoreboardWindow = Number(b.dataset.swindow);
@@ -1132,6 +1246,8 @@ async function renderHockeyScoreboard() {
   if (!scoreboardAutoRefreshTimer) {
     scoreboardAutoRefreshTimer = setInterval(() => {
       if (tab === 'scoreboard') {
+        // Don't rebuild the page under an open series dropdown.
+        if (document.activeElement && document.activeElement.id === 'sb-series-pick') return;
         renderHockeyScoreboard();
       } else {
         clearInterval(scoreboardAutoRefreshTimer);
@@ -1249,6 +1365,7 @@ function keeperBanner() {
 }
 
 async function renderRoster() {
+  activeRosterSeries = null; rosterWindowAuto = true;
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
   if (isHockey()) return renderHockeyRoster();

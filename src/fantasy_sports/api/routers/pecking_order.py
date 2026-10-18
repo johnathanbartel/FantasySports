@@ -75,9 +75,27 @@ def series_window_of(d: datetime.date, series_start: datetime.date | None = None
         return 3
 
 
-def _read(db: Session, team: Team) -> PeckingOrderOut:
-    from fantasy_sports.platform.db.models.core import Game, LeagueSeries
-    from fantasy_sports.sports.hockey.pipeline import week_start, window_of
+def _schedule_week_start(db: Session, league_id: int, week: datetime.date | None) -> datetime.date:
+    """The Sunday whose real NHL schedule the roster windows show: the requested week, else the league's current series
+    (the one holding today, else the next one, else the last one)."""
+    from fantasy_sports.platform.db.models.core import LeagueSeries
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+    from fantasy_sports.sports.hockey.pipeline import week_start
+
+    if week is not None:
+        return week_start(week)
+    today = current_eastern_date()
+    rows = db.query(LeagueSeries).filter_by(league_id=league_id).order_by(LeagueSeries.start_date).all()
+    if not rows:
+        return week_start(today)
+    current = (next((s for s in rows if s.start_date <= today <= s.end_date), None)
+               or next((s for s in rows if today < s.start_date), None) or rows[-1])
+    return week_start(current.start_date)
+
+
+def _read(db: Session, team: Team, week: datetime.date | None = None) -> PeckingOrderOut:
+    from fantasy_sports.platform.db.models.core import Game
+    from fantasy_sports.sports.hockey.pipeline import window_of
 
     roster = po.roster_players(db, team.id)
     order = po.load_order(db, team.id)
@@ -97,9 +115,8 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
     # Real team schedule mapping for consistency across all roster views
     real_schedules: dict[str, dict[int, list[dict]]] = {}
     nhl = db.query(Universe).filter_by(code="nhl").first()
-    first_series = db.query(LeagueSeries).filter_by(league_id=team.league_id).order_by(LeagueSeries.start_date).first()
-    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date, to_eastern_naive
-    w_start = week_start(first_series.start_date) if first_series else week_start(current_eastern_date())
+    from fantasy_sports.platform.nhl_daily_sync import to_eastern_naive
+    w_start = _schedule_week_start(db, team.league_id, week)
     w_begin = datetime.datetime.combine(w_start, datetime.time.min)
     w_end = w_begin + datetime.timedelta(days=7)
 
@@ -157,7 +174,7 @@ def _read(db: Session, team: Team) -> PeckingOrderOut:
 
 
 @router.get("/{team_id}/pecking-order", response_model=PeckingOrderOut)
-def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
+def get_pecking_order(team_id: int, week: datetime.date | None = None, db: Session = Depends(get_db)):
     team = _team(db, team_id)
     try:
         from fantasy_sports.platform import auto_schedule
@@ -181,7 +198,7 @@ def get_pecking_order(team_id: int, db: Session = Depends(get_db)):
         db.commit()
     except Exception:
         db.rollback()
-    return _read(db, team)
+    return _read(db, team, week)
 
 
 def _spots(db: Session, team: Team, asset_ids) -> dict[int, tuple[str, int] | None]:
