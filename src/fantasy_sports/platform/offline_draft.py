@@ -26,6 +26,7 @@ import threading
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from fantasy_sports.platform import draft_order
 from fantasy_sports.platform.auction.constants import MINIMUM_BID, STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.db.models.core import (
     AuctionDraft, Draft, DraftableAsset, DraftPick, League, RosterEntry, Team,
@@ -94,7 +95,7 @@ def create_session(db: Session, league: League, user_id: int, fmt: str, entry_mo
     pool = sorted(a.id for a in league_pool(db, league.id) if a.id not in rostered)
     settings = {
         "rounds": rounds or league.draft_rounds,
-        "team_order": team_order or ids,
+        "team_order": team_order or [t.id for t in (draft_order.manual_order(db, league) or teams)],
         "cell_owners": {},                       # "round-slot" -> team_id, for traded picks
         "budget": budget,                        # None: each team's program-size budget
         "min_bid": min_bid,

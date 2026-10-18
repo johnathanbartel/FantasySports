@@ -187,6 +187,15 @@
       </div>
 
       <div class="field">
+        <label for="draft-order-mode">Draft order</label>
+        <select id="draft-order-mode" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="random">Random (shuffled when the draft starts)</option>
+          <option value="manual">I'll set the order myself</option>
+        </select>
+        <span class="hint" id="draft-order-hint"></span>
+      </div>
+
+      <div class="field">
         <label for="league-format">League format</label>
         <select id="league-format" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
           <option value="traditional_redraft">Traditional Redraft</option>
@@ -554,6 +563,7 @@ function leagueSettingsPayload() {
   out.allow_ai_takeover_in_season = out.visibility === 'public' && document.getElementById('allow-ai-takeover').checked;
   out.unfilled_slot_policy = document.getElementById('unfilled-slot-policy').value;
   out.draft_reset_policy = document.getElementById('draft-reset-policy').value;
+  out.draft_order_mode = document.getElementById('draft-order-mode').value;
   out.trade_vote_extra_votes = num('trade-vote-extra') || 1;
   out.commissioner_trade_vote_extra_votes = num('commissioner-vote-extra') || 2;
   if (format === 'keeper') {
@@ -588,6 +598,14 @@ function updateVisibilityFields() {
 document.getElementById('league-visibility').onchange = updateVisibilityFields;
 updateVisibilityFields();
 
+function updateDraftOrderHint() {
+  document.getElementById('draft-order-hint').textContent = document.getElementById('draft-order-mode').value === 'manual'
+    ? 'In the next step you choose each team\'s draft position. Later rounds follow from it (a snake draft reverses every other round).'
+    : 'The order is shuffled when you start the draft. You can switch to a set order later in League Settings, until the draft starts.';
+}
+document.getElementById('draft-order-mode').onchange = updateDraftOrderHint;
+updateDraftOrderHint();
+
 function selectedDraftType() {
   return document.querySelector('input[name=draft-type]:checked').value;
 }
@@ -618,6 +636,23 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+// Manual draft order: each team picks its own slot (1 = first pick). Defaults to the team's number.
+function draftPositionField(i, leagueSize) {
+  if (!league || league.draft_order_mode !== 'manual') return '';
+  const opts = Array.from({length: leagueSize}, (_, k) => `<option value="${k + 1}"${k + 1 === i ? ' selected' : ''}>${k + 1}</option>`).join('');
+  return `<div class="field" style="flex:0 0 120px;margin-bottom:0">
+      <label for="slot-pos-${i}">Draft position</label>
+      <select id="slot-pos-${i}">${opts}</select>
+    </div>`;
+}
+function readDraftPositions(leagueSize) {
+  if (!league || league.draft_order_mode !== 'manual') return null;
+  const out = [];
+  for (let i = 1; i <= leagueSize; i++) out.push(Number(document.getElementById(`slot-pos-${i}`).value));
+  const dup = out.find((p, k) => out.indexOf(p) !== k);
+  return {positions: out, error: dup ? `Draft position ${dup} is used by more than one team. Give each team its own position.` : null};
+}
+
 function renderTeamSlots(leagueSize) {
   const container = document.getElementById('team-slots-container');
   container.innerHTML = '';
@@ -639,6 +674,7 @@ function renderTeamSlots(leagueSize) {
       <span class="tag tag-accent">Commissioner</span>
     </div>
     <div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+      ${draftPositionField(1, leagueSize)}
       <div class="field" style="flex:2;min-width:200px;margin-bottom:0">
         <label for="slot-name-1">Team name</label>
         <input type="text" id="slot-name-1" value="${esc(commishName)}" maxlength="80">
@@ -682,6 +718,7 @@ function renderTeamSlots(leagueSize) {
         </div>
       </div>
       <div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
+        ${draftPositionField(i, leagueSize)}
         <div class="field" style="flex:2;min-width:200px;margin-bottom:0">
           <label for="slot-name-${i}">Team name</label>
           <input type="text" id="slot-name-${i}" value="${esc(defaultName)}" maxlength="80">
@@ -803,6 +840,8 @@ document.getElementById('back-btn').onclick = () => {
 document.getElementById('save-teams-btn').onclick = async () => {
   showError('');
   const teamsPayload = [];
+  const order = readDraftPositions(league.size);
+  if (order && order.error) return showError(order.error);
 
   // Team 1 (Commissioner)
   const t1Name = document.getElementById('slot-name-1').value.trim();
@@ -812,6 +851,7 @@ document.getElementById('save-teams-btn').onclick = async () => {
     is_commissioner: true,
     is_ai: false,
     program_size: document.getElementById('slot-prog-1') ? document.getElementById('slot-prog-1').value : 'large',
+    draft_position: order ? order.positions[0] : null,
   });
 
   // Teams 2..N
@@ -835,6 +875,7 @@ document.getElementById('save-teams-btn').onclick = async () => {
       is_open_slot: isOpen,
       email: emailVal,
       program_size: document.getElementById(`slot-prog-${i}`) ? document.getElementById(`slot-prog-${i}`).value : 'large',
+      draft_position: order ? order.positions[i - 1] : null,
     });
   }
 

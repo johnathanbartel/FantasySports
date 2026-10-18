@@ -2367,6 +2367,20 @@ async function renderLeagueSettings() {
        <p><button type="button" class="btn btn-primary" id="vote-rules-save">Save</button></p>`
     : `<p>A trade that goes to a league vote needs <b>${Math.min(ov.teams.length, half + lg.trade_vote_extra_votes)}</b> of ${ov.teams.length} votes, or <b>${Math.min(ov.teams.length, half + lg.commissioner_trade_vote_extra_votes)}</b> when the commissioner's team is in it.</p>`)
     + `<p class="muted">Exactly half never passes. The commissioner has no sign-off on a trade their own team is in; the league decides it.</p></div>`;
+  // Draft order: random, or fixed by the commissioner until the draft starts.
+  const orderTeams = (await api(`/leagues/${LEAGUE_ID}/teams`)).slice()
+    .sort((a, b) => (a.draft_position ?? 1e9) - (b.draft_position ?? 1e9) || a.id - b.id);
+  const draftStarted = ['in_progress', 'complete'].includes(ov.draft_state);
+  const manualOrder = lg.draft_order_mode === 'manual';
+  html += `<div class="card"><h3>Draft Order</h3>`
+    + (isCommissioner && !draftStarted
+      ? `<p><label>Order <select id="do-mode"><option value="random"${manualOrder ? '' : ' selected'}>Random - shuffled when the draft starts</option><option value="manual"${manualOrder ? ' selected' : ''}>Set by the commissioner</option></select></label></p>
+         <div id="do-list"${manualOrder ? '' : ' hidden'}></div>
+         <p><button type="button" class="btn btn-primary" id="do-save">Save</button></p>`
+      : `<p>${manualOrder ? 'Set by the commissioner:' : 'Random - shuffled when the draft starts.'}</p>`
+        + (manualOrder ? `<ol>${orderTeams.map(t => `<li>${esc(t.name)}</li>`).join('')}</ol>` : ''))
+    + `<p class="muted">${draftStarted ? 'The draft has started, so the order can no longer change. ' : ''}Round 1 follows this order; in a snake draft the next round reverses it. Drafts in later seasons follow the league format.</p></div>`;
+
   const dr = await api(`/leagues/${LEAGUE_ID}/draft-resets`);
   const DR_KIND = {snake: ['Snake draft', 'pick'], auction: ['Auction draft', 'round'], recruiting: ['Recruiting draft', 'period']};
   const DR_MODE = {now: 'The commissioner can reset this now.', vote: 'Needs every manager to approve.', off: 'Resetting is turned off for a completed draft.'};
@@ -2465,7 +2479,26 @@ async function renderLeagueSettings() {
   on('vote-rules-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     trade_vote_extra_votes: parseInt($('vote-extra').value, 10), commissioner_trade_vote_extra_votes: parseInt($('commish-vote-extra').value, 10)})),
     'Trade voting rules saved.'));
-  on('dr-policy-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {draft_reset_policy: $('dr-policy').value})), 'Draft reset rule saved.'));
+  const doList = $('do-list');
+  if (doList) {
+    let doOrder = orderTeams.map(t => t.id);
+    const drawOrder = () => {
+      doList.innerHTML = doOrder.map((id, i) => {
+        const t = orderTeams.find(x => x.id === id);
+        return `<div style="display:flex;align-items:center;gap:8px;margin:2px 0"><span style="min-width:2.2em;font-weight:700">${i + 1}.</span><span>${esc(t.name)}</span>
+          <button type="button" class="btn btn-secondary" data-do-up="${i}"${i === 0 ? ' disabled' : ''} aria-label="Move up">&uarr;</button>
+          <button type="button" class="btn btn-secondary" data-do-down="${i}"${i === doOrder.length - 1 ? ' disabled' : ''} aria-label="Move down">&darr;</button></div>`;
+      }).join('');
+      const swap = (i, j) => { [doOrder[i], doOrder[j]] = [doOrder[j], doOrder[i]]; drawOrder(); };
+      doList.querySelectorAll('[data-do-up]').forEach(b => b.onclick = () => swap(+b.dataset.doUp, +b.dataset.doUp - 1));
+      doList.querySelectorAll('[data-do-down]').forEach(b => b.onclick = () => swap(+b.dataset.doDown, +b.dataset.doDown + 1));
+    };
+    drawOrder();
+    $('do-mode').onchange = () => { doList.hidden = $('do-mode').value !== 'manual'; };
+    on('do-save', () => call(() => api(`/leagues/${LEAGUE_ID}/draft-order`, jsonOpts('PUT', {
+      mode: $('do-mode').value, team_order: $('do-mode').value === 'manual' ? doOrder : null})), 'Draft order saved.'));
+  }
+  on('dr-policy-save',() => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {draft_reset_policy: $('dr-policy').value})), 'Draft reset rule saved.'));
   document.querySelectorAll('.dr-reset').forEach(b => b.onclick = () => {
     const keep = parseInt(b.parentElement.querySelector('.dr-keep').value, 10) || 0;
     const where = keep === 0 ? 'back to the start' : `back to after ${b.dataset.unit} ${keep}`;

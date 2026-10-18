@@ -45,6 +45,7 @@ WATCHED_SETTINGS: dict[str, str] = {
     "trade_vote_extra_votes": "Extra votes a league-vote trade needs",
     "commissioner_trade_vote_extra_votes": "Extra votes when the commissioner's team trades",
     "draft_reset_policy": "Who can reset a completed draft",
+    "draft_order_mode": "Draft order (random or set by the commissioner)",
     "trade_review_hours": "Trade review window (hours)",
     "trade_review_mode": "Who can veto a trade",
     "platform_plan": "Platform plan",
