@@ -147,6 +147,24 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                 else:
                     slate_summary = f"{real_total} real NHL games scheduled today"
 
+        if nhl:
+            # Games with no simulation yet have no wall clock; their start is the first real NHL puck drop on the window's first day.
+            from fantasy_sports.platform.nhl_daily_sync import eastern_naive_to_utc
+            first_kickoff_by_date: dict[datetime.date, datetime.datetime] = {}
+            for s in rows:
+                for g in s.daily_games:
+                    if getattr(g, "first_start_at", None) or g.status in ("FINAL", "LIVE", "LIVE_SIMULATING"):
+                        continue
+                    if g.calendar_date not in first_kickoff_by_date:
+                        day = datetime.datetime.combine(g.calendar_date, datetime.time.min)
+                        kicks = [k.kickoff_at for k in db.query(Game).filter(
+                            Game.universe_id == nhl.id, Game.kickoff_at >= day + datetime.timedelta(hours=6),
+                            Game.kickoff_at < day + datetime.timedelta(days=1)).all() if k.kickoff_at]
+                        if kicks:
+                            first_kickoff_by_date[g.calendar_date] = min(kicks)
+                    if g.calendar_date in first_kickoff_by_date:
+                        g.first_start_at = eastern_naive_to_utc(first_kickoff_by_date[g.calendar_date]).isoformat() + "Z"
+
     for s in rows:
         s.daily_games.sort(key=lambda g: g.calendar_date)
         for g in s.daily_games:
