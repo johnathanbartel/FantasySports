@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import dues, pick_trading, trade_eligibility, trade_review, trades
+from fantasy_sports.platform import dues, manager_replacement, pick_trading, trade_eligibility, trade_review, trades
 from fantasy_sports.platform import trade_hub as trade_hub_logic
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, League, RealTeam, RosterEntry, SeasonDues, Team, Trade, TradeBlockEntry, TradeVote, User,
@@ -696,3 +696,26 @@ def set_dues_status(
         db.rollback()
         raise HTTPException(400, str(e))
     return _dues_out(row)
+
+
+class ReplaceManagerRequest(BaseModel):
+    user_id: int
+
+
+@router.post("/leagues/{league_id}/teams/{team_id}/replace-manager")
+def replace_team_manager(
+    league_id: int, team_id: int, payload: ReplaceManagerRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: hands a franchise to a replacement manager. Prepaid dues and platform fees stay on the franchise, so
+    the replacement inherits them (the response lists that credit). Pending offers the old manager made or was sent are cancelled."""
+    assert_commissioner(db, user, league_id)
+    team = db.get(Team, team_id)
+    if team is None or team.league_id != league_id:
+        raise HTTPException(404, "Team not found in this league")
+    try:
+        result = manager_replacement.replace_manager(db, team, payload.user_id)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return result
