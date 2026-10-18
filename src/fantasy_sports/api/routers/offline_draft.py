@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.platform import offline_draft as od
-from fantasy_sports.platform import offline_excel as xl
 from fantasy_sports.platform import offline_live as live
 from fantasy_sports.platform.db.models.core import League, User
 from fantasy_sports.platform.db.models.offline_draft import OfflineAuditLog, OfflineDraftSession
@@ -337,6 +336,7 @@ XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 @router.get("/offline-drafts/{session_id}/template")
 def template(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    from fantasy_sports.platform import offline_excel as xl
     s = _get(db, session_id, user)
     return Response(xl.build_template(db, s), media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="draft-template-{s.format}-{s.id}.xlsx"'})
@@ -346,6 +346,7 @@ def template(session_id: int, db: Session = Depends(get_db), user: User = Depend
 def upload_preview(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
                    db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Validates the workbook and says what committing it would do. Writes nothing."""
+    from fantasy_sports.platform import offline_excel as xl
     s = _get(db, session_id, user)
     if s.status == "finalized":
         raise HTTPException(400, "This draft is finalized")
@@ -362,6 +363,8 @@ def upload_preview(session_id: int, mode: str = "replace_all", data: bytes = Bod
 def upload_commit(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
                   db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Replace all, or fill empty cells only, as one transaction; the draft lands in review."""
+    from fantasy_sports.platform import offline_excel as xl
+
     def go(s):
         return xl.commit(db, s, xl.parse_upload(db, s, data), mode, user.id)
     result, s = _mutate(db, session_id, user, go)
