@@ -38,6 +38,17 @@ def is_eliminated(league: League, team: Team) -> bool:
     return not league.offseason and team.eliminated_season == league.season_number
 
 
+TRANSACTIONS_LOCKED_MESSAGE = ("Your team has been mathematically eliminated. Eliminated teams in a free traditional redraft "
+                               "league are locked from trades, free-agent signings, drops and waiver claims.")
+
+
+def transactions_locked(league: League, team: Team) -> bool:
+    """An eliminated, person-managed team in a non-paid traditional redraft league can make no transactions at all.
+    AI teams are exempt: their required roster fill and trades are the platform's, not a manager's."""
+    return (league.league_type != "PAID" and league.league_format == "traditional_redraft"
+            and not team.is_ai_owned and is_eliminated(league, team))
+
+
 def mark_eliminated(db: Session, league: League, team: Team) -> None:
     """Records that the team is mathematically eliminated from this season's playoffs. Flushes."""
     team.eliminated_season = league.season_number

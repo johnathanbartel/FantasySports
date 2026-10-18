@@ -68,7 +68,7 @@ def check(cond, msg):
     assert cond, msg
 
 
-def make_league(name, league_type="FREE"):
+def make_league(name, league_type="FREE", league_format="dynasty"):
     body = {"name": name, "commissioner_user_id": users["commish"].id, "universe_codes": ["nhl"], "size": 4,
             "league_type": league_type}
     if league_type == "PAID":
@@ -76,7 +76,7 @@ def make_league(name, league_type="FREE"):
     resp = client.post("/leagues", json=body, headers=HDR["commish"])
     assert resp.status_code == 200, resp.text
     lid = resp.json()["id"]
-    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": "dynasty"}, headers=HDR["commish"]).status_code == 200
+    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": league_format}, headers=HDR["commish"]).status_code == 200
     teams = [Team(league_id=lid, name=f"{name} {n}", owner_user_id=users[n].id) for n in ("a", "b", "c", "d")]
     db.add_all(teams)
     db.commit()
@@ -231,6 +231,31 @@ try:
     check(resp.status_code == 200, "with 2 and 3 secured it's eligible: " + resp.text)
 finally:
     trade_eligibility.set_future_value_evaluator(None)
+
+# ---- Traditional redraft: eliminated teams are locked (FREE) or pay next season's dues first (PAID) ---------------------
+lid, (a, b, c, d) = make_league("FreeTrad", "FREE", "traditional_redraft")
+ra, rb = roster(a), roster(b)
+check(propose(lid, a, b, "a", send=[ra[0]], receive=[rb[0]]).status_code == 200, "active free redraft team trades normally")
+eliminate(lid, a)
+resp = propose(lid, a, b, "a", send=[ra[1]], receive=[rb[1]])
+check(resp.status_code == 400 and "locked" in resp.json()["detail"], "eliminated free redraft team can't trade: " + resp.text)
+resp = propose(lid, b, a, "b", send=[rb[1]], receive=[ra[1]])
+check(resp.status_code == 400 and "locked" in resp.json()["detail"], "nor can anyone trade with it: " + resp.text)
+resp = client.post(f"/teams/{a}/free-agency/drop", json={"draftable_asset_id": ra[2]}, headers=HDR["a"])
+check(resp.status_code == 400 and "locked" in resp.json()["detail"], "no drops: " + resp.text)
+check(client.post(f"/teams/{b}/free-agency/drop", json={"draftable_asset_id": rb[2]}, headers=HDR["b"]).status_code == 200,
+      "a team still alive can drop")
+resp = client.post(f"/teams/{a}/free-agency/add", json={"draftable_asset_id": rb[2]}, headers=HDR["a"])
+check(resp.status_code == 400 and "locked" in resp.json()["detail"], "no signings: " + resp.text)
+resp = client.post(f"/teams/{a}/waivers/claim", json={"draftable_asset_id": rb[2]}, headers=HDR["a"])
+check(resp.status_code == 400 and "locked" in resp.json()["detail"], "no waiver claims: " + resp.text)
+
+lid, (a, b, c, d) = make_league("PaidTrad", "PAID", "traditional_redraft")
+eliminate(lid, a)
+ra, rb = roster(a), roster(b)
+resp = propose(lid, a, b, "a", send=[ra[0]], receive=[rb[0]])
+check(resp.status_code == 400 and "locked" not in resp.json()["detail"],
+      "paid league: not locked (the dues and future-value rules apply instead): " + resp.text)
 
 # ---- Eliminated, FREE ------------------------------------------------------------------------------------------------
 lid, (a, b, c, d) = make_league("FreeElim")
