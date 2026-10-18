@@ -1068,7 +1068,9 @@ async function renderHockeyScoreboard() {
       periodHeader = 'Final';
       clockSubheader = '3 Periods Complete';
     } else {
-      periodHeader = `Scheduled · ${fmtD(dailyGame.calendar_date)}${startLabel ? ' · ' + startLabel : ''}`;
+      // The date is the day the first starter's game begins (viewer's time zone), which can be later than the window's first day.
+      const startDay = !isNaN(startMs) ? new Date(startMs).toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : fmtD(dailyGame.calendar_date);
+      periodHeader = `Scheduled · ${startDay}${startLabel ? ' · ' + startLabel : ''}`;
       clockSubheader = 'Puck Drop Pending';
     }
 
