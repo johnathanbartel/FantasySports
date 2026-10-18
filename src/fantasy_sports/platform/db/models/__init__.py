@@ -44,6 +44,14 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     WeeklyContestEntry,
     WeeklyContestSlot,
 )
+from fantasy_sports.platform.db.models.offline_draft import (  # noqa: F401
+    OfflineDraftSession,
+    OfflineTeamClaim,
+    OfflineDraftPick,
+    OfflineAuctionLot,
+    OfflineBidEvent,
+    OfflineAuditLog,
+)
 from fantasy_sports.sports.football.models import (  # noqa: F401
     Play,
     PlayCredit,
