@@ -2367,6 +2367,31 @@ async function renderLeagueSettings() {
        <p><button type="button" class="btn btn-primary" id="vote-rules-save">Save</button></p>`
     : `<p>A trade that goes to a league vote needs <b>${Math.min(ov.teams.length, half + lg.trade_vote_extra_votes)}</b> of ${ov.teams.length} votes, or <b>${Math.min(ov.teams.length, half + lg.commissioner_trade_vote_extra_votes)}</b> when the commissioner's team is in it.</p>`)
     + `<p class="muted">Exactly half never passes. The commissioner has no sign-off on a trade their own team is in; the league decides it.</p></div>`;
+  const dr = await api(`/leagues/${LEAGUE_ID}/draft-resets`);
+  const DR_KIND = {snake: ['Snake draft', 'pick'], auction: ['Auction draft', 'round'], recruiting: ['Recruiting draft', 'period']};
+  const DR_MODE = {now: 'The commissioner can reset this now.', vote: 'Needs every manager to approve.', off: 'Resetting is turned off for a completed draft.'};
+  const drState = (d) => {
+    const [name, unit] = DR_KIND[d.kind];
+    return `<div style="margin:var(--space-3) 0;padding-bottom:var(--space-3);border-bottom:1px solid var(--color-divider)"><b>${name}</b> <span class="pill">${esc(d.status.replace('_', ' '))}</span>
+      <div class="muted">${d.done} of ${d.total || d.done} ${unit}s done. ${d.can_reset ? DR_MODE[d.mode] : esc(d.reason || '')}</div>`
+      + (isCommissioner && d.can_reset
+        ? `<p><label>Keep the first <input type="number" class="dr-keep" min="0" max="${d.done - 1}" value="0" style="width:5em"> ${unit}s <span class="muted">(0 starts over)</span></label>
+             <button type="button" class="btn btn-secondary dr-reset" data-kind="${d.kind}" data-id="${d.draft_id}" data-unit="${unit}">Reset draft</button></p>` : '') + `</div>`;
+  };
+  const drReq = dr.open_request;
+  const drOpen = drReq ? `<div class="card" style="border-color:var(--color-accent,#c90)"><b>Vote: reset the ${DR_KIND[drReq.draft_kind][0].toLowerCase()}${drReq.keep ? ' back to ' + drReq.keep + ' ' + DR_KIND[drReq.draft_kind][1] + 's done' : ' to the start'}</b>
+      <p class="muted">It happens only if every manager approves; one rejection ends it.</p>`
+    + drReq.votes.map(v => `<div>${esc(v.team_name)}: <b>${v.vote ? (v.vote === 'approve' ? 'Approved' : 'Rejected') : 'Waiting'}</b></div>`).join('')
+    + (drReq.can_vote ? `<p><button type="button" class="btn btn-primary dr-vote" data-id="${drReq.id}" data-vote="approve">Approve</button>
+        <button type="button" class="btn btn-secondary dr-vote" data-id="${drReq.id}" data-vote="reject">Reject</button></p>` : '')
+    + (isCommissioner ? `<p><button type="button" class="btn btn-ghost dr-cancel" data-id="${drReq.id}">Withdraw request</button></p>` : '') + `</div>` : '';
+  const drHist = dr.history.slice(0, 5).map(r => `<div class="muted">${esc(DR_KIND[r.draft_kind][0])}, ${r.keep ? 'back to ' + r.keep : 'to the start'}: ${esc(r.status)}${r.failure_reason ? ' (' + esc(r.failure_reason) + ')' : ''}</div>`).join('');
+  html += `<div class="card"><h3>Draft Reset</h3>` + (isCommissioner
+    ? `<p><label>After a draft is complete <select id="dr-policy"><option value="unanimous"${dr.policy === 'unanimous' ? ' selected' : ''}>every manager must approve</option><option value="commissioner"${dr.policy === 'commissioner' ? ' selected' : ''}>the commissioner decides alone</option><option value="off"${dr.policy === 'off' ? ' selected' : ''}>resetting is not allowed</option></select></label>
+         <button type="button" class="btn btn-primary" id="dr-policy-save">Save</button></p>`
+    : `<p>After a draft is complete, a reset needs: <b>${({unanimous: 'every manager to approve', commissioner: 'the commissioner', off: 'nothing - it is not allowed'})[dr.policy]}</b>.</p>`)
+    + drOpen + (dr.drafts.length ? dr.drafts.map(drState).join('') : `<p class="muted">No draft has been started in this league.</p>`) + drHist
+    + `<p class="muted">While a draft is running the commissioner can reset it alone, to the start or to a chosen point. A completed draft can only be reset until games are scored or players are traded or signed. Pick order and who owns each pick never change.</p></div>`;
   const pending = (await api(`/leagues/${LEAGUE_ID}/setting-changes`)).filter(c => c.status === 'voting');
   const SETTING_NAMES = {league_type: 'League type', league_format: 'League format'};
   const valueName = (f, v) => f === 'league_format' ? fmtName(v) : (v === 'PAID' ? 'Paid' : 'Free');
@@ -2440,6 +2465,16 @@ async function renderLeagueSettings() {
   on('vote-rules-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     trade_vote_extra_votes: parseInt($('vote-extra').value, 10), commissioner_trade_vote_extra_votes: parseInt($('commish-vote-extra').value, 10)})),
     'Trade voting rules saved.'));
+  on('dr-policy-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {draft_reset_policy: $('dr-policy').value})), 'Draft reset rule saved.'));
+  document.querySelectorAll('.dr-reset').forEach(b => b.onclick = () => {
+    const keep = parseInt(b.parentElement.querySelector('.dr-keep').value, 10) || 0;
+    const where = keep === 0 ? 'back to the start' : `back to after ${b.dataset.unit} ${keep}`;
+    if (!confirm(`Reset this draft ${where}? Everything drafted after that point is undone.`)) return;
+    call(() => api(`/leagues/${LEAGUE_ID}/draft-resets`, jsonOpts('POST', {kind: b.dataset.kind, draft_id: parseInt(b.dataset.id, 10), keep})),
+      'Done. If the draft was complete the managers were asked to approve; otherwise it was reset.');
+  });
+  document.querySelectorAll('.dr-vote').forEach(b => b.onclick = () => call(() => api(`/draft-resets/${b.dataset.id}/vote`, jsonOpts('POST', {vote: b.dataset.vote})), 'Vote recorded.'));
+  document.querySelectorAll('.dr-cancel').forEach(b => b.onclick = () => call(() => api(`/draft-resets/${b.dataset.id}/cancel`, {method: 'POST'}), 'Request withdrawn.'));
   document.querySelectorAll('.setting-vote').forEach(b => b.onclick = () => call(() => api(`/leagues/${LEAGUE_ID}/setting-changes/${b.dataset.id}/vote`, jsonOpts('POST', {vote: b.dataset.vote})), 'Vote recorded.'));
   document.querySelectorAll('.setting-cancel').forEach(b => b.onclick = () => call(() => api(`/leagues/${LEAGUE_ID}/setting-changes/${b.dataset.id}/cancel`, {method: 'POST'}), 'Vote withdrawn.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });

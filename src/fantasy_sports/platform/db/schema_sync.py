@@ -37,7 +37,8 @@ def ensure_latest_schema(engine):
                               ("platform_plan", "VARCHAR(12) DEFAULT 'AD_SUPPORTED' NOT NULL"),
                               ("platform_fee_cents", "INTEGER"),
                               ("trade_review_hours", "INTEGER DEFAULT 24 NOT NULL"),
-                              ("trade_review_mode", "VARCHAR(12) DEFAULT 'both' NOT NULL")):
+                              ("trade_review_mode", "VARCHAR(12) DEFAULT 'both' NOT NULL"),
+                              ("draft_reset_policy", "VARCHAR(12) DEFAULT 'unanimous' NOT NULL")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
 

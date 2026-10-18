@@ -109,6 +109,7 @@ class League(Base):
         CheckConstraint("trade_review_hours BETWEEN 0 AND 72", name="ck_league_trade_review_hours"),
         CheckConstraint("visibility IN ('public', 'private')", name="ck_league_visibility"),
         CheckConstraint("unfilled_slot_policy IN ('fill_ai', 'remove')", name="ck_league_unfilled_slot_policy"),
+        CheckConstraint("draft_reset_policy IN ('unanimous', 'commissioner', 'off')", name="ck_league_draft_reset_policy"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -175,6 +176,10 @@ class League(Base):
     # applies when the commissioner's own team is in the trade (no commissioner sign-off exists then).
     trade_vote_extra_votes: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     commissioner_trade_vote_extra_votes: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # Draft reset (platform/draft_reset.py). While a draft is running the commissioner resets it alone. Once it is complete,
+    # 'unanimous' (the default) needs every person-managed team to approve, 'commissioner' lets the commissioner do it alone,
+    # and 'off' refuses a reset of a completed draft.
+    draft_reset_policy: Mapped[str] = mapped_column(String(12), default="unanimous", server_default="unanimous")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
@@ -1241,6 +1246,46 @@ class LeagueSettingVote(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     change_id: Mapped[int] = mapped_column(ForeignKey("league_setting_changes.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    vote: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class DraftResetRequest(Base):
+    """A request to reset a completed draft, put to the league (platform/draft_reset.py). draft_kind: snake | auction |
+    recruiting. keep = how many picks (snake), resolved rounds (auction) or processed periods (recruiting) stay; 0 resets
+    from the start. status: voting | applied | rejected | cancelled | failed (the reset was refused when every vote was in)."""
+
+    __tablename__ = "draft_reset_requests"
+    __table_args__ = (
+        CheckConstraint("draft_kind IN ('snake', 'auction', 'recruiting')", name="ck_draft_reset_kind"),
+        CheckConstraint("status IN ('voting', 'applied', 'rejected', 'cancelled', 'failed')", name="ck_draft_reset_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    draft_kind: Mapped[str] = mapped_column(String(10))
+    draft_id: Mapped[int] = mapped_column(Integer)
+    keep: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(10), default="voting")
+    failure_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    proposed_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    votes: Mapped[list["DraftResetVote"]] = relationship(cascade="all, delete-orphan")
+
+
+class DraftResetVote(Base):
+    __tablename__ = "draft_reset_votes"
+    __table_args__ = (
+        UniqueConstraint("request_id", "team_id", name="uq_draft_reset_vote_team"),
+        CheckConstraint("vote IN ('approve', 'reject')", name="ck_draft_reset_vote"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("draft_reset_requests.id"), index=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     vote: Mapped[str] = mapped_column(String(10))

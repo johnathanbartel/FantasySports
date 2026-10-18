@@ -84,6 +84,8 @@ class LeagueCreateRequest(BaseModel):
     visibility: Literal["public", "private"] = "private"
     allow_ai_takeover_in_season: bool = False      # public leagues only
     unfilled_slot_policy: Literal["fill_ai", "remove"] = "fill_ai"
+    # Who can reset a completed draft (platform/draft_reset.py).
+    draft_reset_policy: Literal["unanimous", "commissioner", "off"] = "unanimous"
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
@@ -111,6 +113,7 @@ class LeagueSettingsRequest(BaseModel):
     trade_deadline: datetime.datetime | None = None                          # send null to clear
     trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
     commissioner_trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
+    draft_reset_policy: Literal["unanimous", "commissioner", "off"] | None = None
     platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
     trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
     trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
@@ -218,6 +221,7 @@ class LeagueOut(ORMModel):
     trade_deadline: datetime.datetime | None
     trade_vote_extra_votes: int
     commissioner_trade_vote_extra_votes: int
+    draft_reset_policy: str = "unanimous"
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int
