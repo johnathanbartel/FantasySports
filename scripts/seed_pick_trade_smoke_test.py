@@ -66,14 +66,21 @@ H, H_OTHER = login(commissioner), login(other)
 
 
 def make_league(name, fmt):
+    # FS-036: a FREE league can't trade picks, so these are PAID leagues with every team's dues already secured for the seasons
+    # whose picks are traded below, and no review window (accepted trades execute at once, as these checks expect).
     resp = client.post("/leagues", json={"name": name, "commissioner_user_id": commissioner.id, "universe_codes": ["nhl"],
-                                          "size": 4}, headers=H)
+                                          "size": 4, "league_type": "PAID", "annual_dues_cents": 5000}, headers=H)
     assert resp.status_code == 200, resp.text
     lid = resp.json()["id"]
-    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": fmt}, headers=H).status_code == 200
+    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": fmt, "trade_review_hours": 0}, headers=H).status_code == 200
     teams = [Team(league_id=lid, name=f"{name} T{i}", owner_user_id=commissioner.id) for i in range(4)]
     db.add_all(teams)
     db.commit()
+    for t in teams:
+        for season in range(2, 6):
+            resp = client.post(f"/leagues/{lid}/teams/{t.id}/dues", headers=H, json={
+                "season_number": season, "amount_cents": 5000, "status": "paid", "payment_reference": f"dues-{t.id}-{season}"})
+            assert resp.status_code == 200, resp.text
     return lid, [t.id for t in teams]
 
 

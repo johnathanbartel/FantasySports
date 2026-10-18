@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import dues, pick_trading, trade_eligibility, trades
+from fantasy_sports.platform import dues, pick_trading, trade_eligibility, trade_review, trades
 from fantasy_sports.platform import trade_hub as trade_hub_logic
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, League, RealTeam, RosterEntry, SeasonDues, Team, Trade, TradeBlockEntry, TradeVote, User,
@@ -133,6 +133,19 @@ class TradeOut(BaseModel):
     eligibility: EligibilityOut | None = None
     failure_reason: str | None = None
     commissioner_decision: str | None = None
+    # FS-036 review window (platform/trade_review.py)
+    review_ends_at: datetime.datetime | None = None
+    league_veto_count: int = 0
+    league_veto_needed: int | None = None       # None: no team may veto (or the league has no league veto)
+    commissioner_vetoed: bool = False
+
+
+class TradeVetoRequest(BaseModel):
+    team_id: int
+
+
+class CommissionerVetoRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
 
 
 def _asset_outs(db: Session, ids: list[int]) -> dict[int, TradeAssetOut]:
@@ -230,6 +243,10 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
         eligibility=EligibilityOut(**trade_eligibility.evaluate_trade(db, trade).as_dict()),
         failure_reason=trade.failure_reason,
         commissioner_decision=approval.decision if approval else None,
+        review_ends_at=trade.review_ends_at,
+        league_veto_count=trade_review.league_veto_count(db, trade),
+        league_veto_needed=trade_review.veto_majority(db, trade) if league.trade_review_mode in ("league", "both") else None,
+        commissioner_vetoed=trade_review.commissioner_veto(db, trade.id) is not None,
     )
 
 
@@ -297,7 +314,8 @@ def list_league_trades(
     db: Session = Depends(get_db),
     user: User | None = Depends(optional_user),
 ):
-    """Lists all active and completed trades in the league."""
+    """Lists all active and completed trades in the league. Trades whose review window has ended execute first."""
+    _run_review_queue(db, league_id)
     all_trades = (
         db.query(Trade)
         .filter(Trade.league_id == league_id)
@@ -316,6 +334,9 @@ def get_trade_detail(
     trade = db.get(Trade, trade_id)
     if not trade:
         raise HTTPException(404, "Trade not found")
+    if trade.status == "in_review":
+        _run_review_queue(db, trade.league_id)
+        db.refresh(trade)
     return _format_trade(db, trade, user)
 
 
@@ -371,11 +392,14 @@ def cancel_trade_proposal(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ):
-    """Proposing team cancels an active trade."""
+    """Proposing team cancels an active trade; while it is in its review window the counterparty can too."""
     trade = db.get(Trade, trade_id)
     if not trade:
         raise HTTPException(404, "Trade not found")
-    team = assert_can_manage_team(db, user, trade.proposer_team_id)
+    team = assert_can_manage_team(db, user, trade.proposer_team_id) if trade.status != "in_review" else next(
+        (t for t in (trade.proposer_team, trade.counterparty_team) if t.owner_user_id == user.id and not t.is_ai_owned), None)
+    if team is None:
+        raise HTTPException(403, "You don't manage a team in this trade")
 
     try:
         trade = trades.cancel_trade(db, trade, team)
@@ -384,6 +408,62 @@ def cancel_trade_proposal(
         db.rollback()
         raise HTTPException(400, str(e))
 
+    return _format_trade(db, trade, user)
+
+
+def _run_review_queue(db: Session, league_id: int) -> list[dict]:
+    """Nothing schedules the review queue, so it runs whenever a league's trades are read (and on the route below)."""
+    done = trade_review.process_review_queue(db, league_id=league_id)
+    if done:
+        db.commit()
+    return done
+
+
+@router.post("/leagues/{league_id}/trades/process-review")
+def process_trade_review(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Executes every trade in the league whose review window has ended. Safe to call any time and from any member: it only
+    does what the clock and the eligibility recheck already allow."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if league.commissioner_user_id != user.id and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
+        raise HTTPException(403, "You are not in this league")
+    return {"processed": _run_review_queue(db, league_id)}
+
+
+@router.post("/trades/{trade_id}/veto", response_model=TradeOut)
+def veto_trade(trade_id: int, payload: TradeVetoRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """A person-managed team that isn't in the trade vetoes it during its review window; a majority of them kills it."""
+    trade = db.get(Trade, trade_id)
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    team = assert_can_manage_team(db, user, payload.team_id)
+    try:
+        trade = trade_review.veto_by_league(db, trade, team, user.id)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return _format_trade(db, trade, user)
+
+
+@router.post("/trades/{trade_id}/commissioner-veto", response_model=TradeOut)
+def commissioner_veto_trade(
+    trade_id: int, payload: CommissionerVetoRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """The commissioner vetoes a trade in its review window (not if they manage a team in it)."""
+    trade = db.get(Trade, trade_id)
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    try:
+        trade = trade_review.veto_by_commissioner(db, trade, user.id, payload.reason)
+        db.commit()
+    except PermissionError as e:
+        db.rollback()
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
     return _format_trade(db, trade, user)
 
 

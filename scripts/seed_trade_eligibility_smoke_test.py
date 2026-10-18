@@ -76,7 +76,9 @@ def make_league(name, league_type="FREE", league_format="dynasty"):
     resp = client.post("/leagues", json=body, headers=HDR["commish"])
     assert resp.status_code == 200, resp.text
     lid = resp.json()["id"]
-    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": league_format}, headers=HDR["commish"]).status_code == 200
+    # FS-036: no review window here, so accepted trades execute at once as these CFG-06 checks expect (trade_review has its own test).
+    assert client.patch(f"/leagues/{lid}/settings", json={"league_format": league_format, "trade_review_hours": 0},
+                        headers=HDR["commish"]).status_code == 200
     teams = [Team(league_id=lid, name=f"{name} {n}", owner_user_id=users[n].id) for n in ("a", "b", "c", "d")]
     db.add_all(teams)
     db.commit()
@@ -157,9 +159,12 @@ resp = propose(lid, a, b, "a", send=[roster(a)[0]], receive=[roster(b)[0]])
 check(resp.status_code == 200 and resp.json()["status"] == "proposed", resp.text)
 check(resp.json()["eligibility"]["status"] == "ELIGIBLE_FOR_REVIEW", resp.json()["eligibility"])
 check(respond(resp.json()["id"], b, "b").json()["status"] == "accepted", "active free player trade executes")
-resp = propose(lid, a, b, "a", send_picks=[(2, 1, a)], receive_picks=[(2, 2, b)])
-check(resp.status_code == 200 and resp.json()["status"] == "proposed", "free league picks need no dues: " + resp.text)
-check(resp.json()["eligibility"]["payment_requirements"] == [], "no dues asked in a free league")
+resp = propose(lid, a, b, "a", send_picks=[(2, 1, a)], receive_picks=[(2, 2, b)])       # FS-036: was a 200 ("free league picks need no dues")
+check(resp.status_code == 400 and "Free leagues can't trade picks" in resp.json()["detail"], "free leagues can't trade picks: " + resp.text)
+preview = client.post(f"/leagues/{lid}/trades/preview", headers=HDR["a"], json={
+    "proposer_team_id": a, "counterparty_team_id": b, "send_picks": [{"season": 2, "round": 1, "original_team_id": a}],
+    "receive_picks": [{"season": 2, "round": 2, "original_team_id": b}]}).json()
+check(preview["status"] == "BLOCKED" and "FREE_LEAGUE_PICK_TRADING_LOCKED" in preview["blocking_codes"], preview)
 
 # ---- PAID league: active teams ---------------------------------------------------------------------------------------
 lid, (a, b, c, d) = make_league("Paid", "PAID")
@@ -284,48 +289,13 @@ lid, (a, b, c, d) = make_league("FreeElim")
 eliminate(lid, a)
 ra, rb = roster(a), roster(b)
 check(propose(lid, a, b, "a", send=[ra[0]], receive=[rb[0]]).status_code == 400, "player-for-player stays blocked")
+# FS-036: a FREE league can no longer trade picks, so an eliminated FREE team (which can only trade by receiving net future
+# value) has no route left. The vote + commissioner sign-off path (ELIMINATED_FREE_LEAGUE_TRADE) is unreachable by proposal.
 resp = propose(lid, a, b, "a", send=[ra[0]], receive=[rb[0]], receive_picks=[(2, 1, b)])
-check(resp.status_code == 200 and resp.json()["status"] == "voting", resp.text)
-tid = resp.json()["id"]
-check(resp.json()["eligibility"]["payment_requirements"] == [], "no dues asked")
-check(trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE in resp.json()["eligibility"]["approval_requirements"], "")
-check(decide(tid, "a").status_code == 403 and decide(tid, "stranger").status_code == 403, "only the commissioner can sign off")
-check(respond(tid, b, "b").status_code == 400, "the counterparty can't just accept it")
-# commissioner alone is not enough
-check(decide(tid, "commish").status_code == 200 and status_of(tid) == "voting", "commissioner approval alone doesn't execute")
+check(resp.status_code == 400 and "Free leagues can't trade picks" in resp.json()["detail"], "picks are locked in a free league: " + resp.text)
+resp = propose(lid, b, a, "b", send=[rb[0]], receive=[ra[0]], send_picks=[(2, 1, b)])
+check(resp.status_code == 400 and "Free leagues can't trade picks" in resp.json()["detail"], "in either direction: " + resp.text)
 check(owner_of(ra[0], lid) == a, "nothing moved")
-check(client.get(f"/trades/{tid}", headers=HDR["a"]).json()["eligibility"]["status"] == "AWAITING_LEAGUE_VOTE", "")
-check(decide(tid, "commish").status_code == 400, "a decision is final")
-check(vote(tid, b, "b").status_code == 200 and status_of(tid) == "voting", "two of four isn't a majority")
-resp = vote(tid, c, "c")
-check(resp.status_code == 200 and resp.json()["status"] == "accepted", "majority + sign-off executes: " + resp.text)
-check(owner_of(ra[0], lid) == b, "player moved")
-
-# majority first, then the commissioner
-ra, rb = roster(a), roster(b)
-resp = propose(lid, a, c, "a", send=[ra[1]], receive=[roster(c)[0]], receive_picks=[(2, 2, c)])
-tid = resp.json()["id"]
-vote(tid, b, "b"), vote(tid, c, "c")
-check(status_of(tid) == "voting", "majority without the commissioner can't execute")
-check(client.get(f"/trades/{tid}", headers=HDR["a"]).json()["eligibility"]["status"] == "AWAITING_COMMISSIONER_APPROVAL", "")
-resp = decide(tid, "commish")
-check(resp.json()["status"] == "accepted", "commissioner completes it: " + resp.text)
-
-# commissioner rejection beats a majority
-resp = propose(lid, a, c, "a", send=[roster(a)[0]], receive=[roster(c)[1]], receive_picks=[(3, 2, c)])
-tid = resp.json()["id"]
-vote(tid, b, "b"), vote(tid, c, "c")
-check(decide(tid, "commish", "reject").json()["status"] == "rejected", "commissioner rejection ends it")
-
-# commissioner who manages a team in the trade can't sign it off (conflict policy is open)
-resp = propose(lid, a, d, "a", send=[roster(a)[0]], receive=[roster(d)[0]], receive_picks=[(3, 3, d)])
-check(resp.status_code == 200, resp.text)
-tid = resp.json()["id"]
-db.get(Team, d).owner_user_id = users["commish"].id
-db.commit()
-check(decide(tid, "commish").status_code == 400, "conflicted commissioner is refused")
-db.get(Team, d).owner_user_id = users["d"].id
-db.commit()
 
 # ---- Global enforcement ----------------------------------------------------------------------------------------------
 lid, (a, b, c, d) = make_league("Global", "PAID")
