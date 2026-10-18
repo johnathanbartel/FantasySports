@@ -62,6 +62,16 @@
       <div id="pinout"></div>
       <table id="claims"></table>
     </details>
+    <details class="panel" id="excel"><summary><b>Excel template &amp; upload</b></summary>
+      <div class="bar">
+        <button id="x_down">Download template</button>
+        <input id="x_file" type="file" accept=".xlsx" class="inp">
+        <select id="x_mode"><option value="replace_all">Replace all</option><option value="fill_empty">Fill empty cells only</option></select>
+        <button id="x_prev">Check upload</button>
+        <button id="x_commit" class="primary" disabled>Commit</button>
+      </div>
+      <div id="x_out"></div>
+    </details>
     <div id="review" class="panel" hidden></div>
     <div id="sale" class="panel" hidden>
       <b>Log sale</b>
@@ -172,6 +182,52 @@ async function newPin(team) {
 function showPins(pins) {
   $('pinout').innerHTML = '<table>' + Object.entries(pins).map(([t, p]) => `<tr><td>${esc(teamName(+t))}</td><td><b style="font-size:18px;letter-spacing:.2em">${p}</b></td></tr>`).join('') + '</table>';
 }
+async function xhr(path, opts) {
+  const sess = FSC.user && FSC.user();
+  const res = await fetch(path, Object.assign({}, opts, {headers: Object.assign({'Authorization': 'Bearer ' + (sess && sess.token)}, (opts && opts.headers) || {})}));
+  return res;
+}
+$('x_down').onclick = async () => {
+  try {
+    const res = await xhr(`/offline-drafts/${S.id}/template`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(await res.blob()); a.download = `draft-template-${S.format}-${S.id}.xlsx`; a.click();
+  } catch (e) { fail(e); }
+};
+async function sendUpload(kind) {
+  const f = $('x_file').files[0];
+  if (!f) { fail(new Error('Choose the filled-in .xlsx first')); return null; }
+  return xhr(`/offline-drafts/${S.id}/upload/${kind}?mode=${$('x_mode').value}`, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: await f.arrayBuffer()});
+}
+function showUploadErrors(d) {
+  const det = d.detail || {};
+  const list = det.errors || [typeof det === 'string' ? det : (det.message || 'Upload failed')];
+  $('x_out').innerHTML = '<b style="color:#c0392b">Upload rejected - nothing was imported:</b><ul>' + list.map(e => `<li>${esc(e)}</li>`).join('') + '</ul>';
+  $('x_commit').disabled = true;
+}
+$('x_prev').onclick = async () => {
+  $('err').textContent = '';
+  const res = await sendUpload('preview'); if (!res) return;
+  const d = await res.json();
+  if (!res.ok) { showUploadErrors(d); return; }
+  const rows = (arr, cols) => '<table>' + arr.map(r => '<tr>' + cols.map(c => `<td>${esc(r[c])}</td>`).join('') + '</tr>').join('') + '</table>';
+  $('x_out').innerHTML = `<b>${d.rows}</b> filled row(s): <b>${d.add.length}</b> to add, ${d.unchanged} unchanged` +
+    (d.replace.length ? `, <b>${d.replace.length}</b> existing to replace` : '') + (d.skipped.length ? `, ${d.skipped.length} skipped` : '') + '.' +
+    (d.warnings.length ? '<div style="color:#b9770e">' + d.warnings.map(esc).join('<br>') + '</div>' : '') +
+    (d.add.length ? '<div class="who">To add</div>' + rows(d.add, ['row', 'team', 'player', 'where']) : '') +
+    (d.replace.length ? '<div class="who">Would be replaced</div>' + rows(d.replace, ['team', 'player', 'where']) : '') +
+    (d.skipped.length ? '<div class="who">Skipped</div>' + rows(d.skipped, ['row', 'team', 'player', 'why']) : '');
+  $('x_commit').disabled = false;
+};
+$('x_commit').onclick = async () => {
+  if (!confirm('Commit this upload? The draft moves to review.')) return;
+  const res = await sendUpload('commit'); if (!res) return;
+  const d = await res.json();
+  if (!res.ok) { showUploadErrors(d); return; }
+  $('x_out').textContent = `Committed: ${d.result.added} added, ${d.result.voided} replaced.`; $('x_commit').disabled = true;
+  await reload();
+};
+$('x_file').onchange = () => { $('x_commit').disabled = true; };
 $('pins_all').onclick = () => newPin(null);
 $('s_save').onclick = () => act('settings', {pick_seconds: $('s_pick').value ? +$('s_pick').value : null, autopick: $('s_auto').checked,
   managers_self_enter: $('s_self').checked, lot_seconds: +$('s_lot').value || 30, reset_window: +$('s_reset').value || 10, claim_mode: $('s_claim').value});

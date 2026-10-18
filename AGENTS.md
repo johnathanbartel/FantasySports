@@ -61,6 +61,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_commissioner_tools_smoke_test.py` | Commissioner tools: co-commissioners (who can add them, what they can't do), transaction-count and FAAB adjustments, hand-set waiver order and its reset, roster add/drop/move, lines edited for another team, league history edits, action log, settings-change emails (recorded, never sent) | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_offline_draft_smoke_test.py` | Offline Draft Mode phase 1: session setup, snake board filled out of order, first-commit-wins (incl. 8 concurrent submissions), traded cells, void/undo/edit, auction Log Sale rules and override audit, review, finalize into rosters, re-open revert, display token | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_offline_phone_smoke_test.py` | Offline Draft Mode phase 3: join code + team PINs (lock, unlock, rate limit, replaced device), snake picks from phones with the server clock (autopick, queue, pause), auction nominate/bid (turn order, increment, max bid, anti-snipe, server closes the lot, boot recovery) | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/seed_offline_excel_smoke_test.py` | Offline Draft Mode phase 4: Excel template (hidden/protected sheets, dropdowns, prefilled order, auction budget block) and upload (meta checks, row-level errors, formulas never evaluated, preview, Replace all / Fill empty, lands in review) | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_league_branding_smoke_test.py` | League logo and custom URL: slug rules and uniqueness, commissioner-only, `/l/<slug>` redirect, logo type/size checks, serving, removal | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/verify_hockey_toi_substitution.py` | Offline check that a starter with no ice time in his counting game is replaced by the next player on the pecking order (early, late, skipped chains, unstored boxscore) | `.venv-api` | No (network functions are faked) | No (throwaway temp DB) |
@@ -84,6 +85,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_commissioner_tools_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_offline_draft_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_offline_phone_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_offline_excel_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_league_branding_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_eligibility_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_hub_smoke_test.py`

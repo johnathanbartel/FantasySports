@@ -4,12 +4,13 @@ All rules live in platform/offline_draft.py; every mutation runs under the sessi
 Phones (join code + PIN) and the Excel round-trip are later phases.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.platform import offline_draft as od
+from fantasy_sports.platform import offline_excel as xl
 from fantasy_sports.platform import offline_live as live
 from fantasy_sports.platform.db.models.core import League, User
 from fantasy_sports.platform.db.models.offline_draft import OfflineAuditLog, OfflineDraftSession
@@ -109,6 +110,8 @@ def _mutate(db: Session, session_id: int, user: User, fn):
             return result, s
         except od.OfflineDraftError as e:
             db.rollback()
+            if getattr(e, "errors", None):
+                raise HTTPException(422, {"message": str(e), "errors": e.errors})
             raise HTTPException(409 if str(e).startswith("Already taken") else 400, str(e))
 
 
@@ -326,3 +329,40 @@ def lot_extend(session_id: int, req: ExtendRequest, db: Session = Depends(get_db
 def lot_force_sell(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     _, s = _mutate(db, session_id, user, lambda s: live.force_sell(db, s, user.id))
     return od.snapshot(db, s)
+
+
+# ---- phase 4: Excel round-trip ------------------------------------------------------------------------------------------
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get("/offline-drafts/{session_id}/template")
+def template(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    s = _get(db, session_id, user)
+    return Response(xl.build_template(db, s), media_type=XLSX,
+                    headers={"Content-Disposition": f'attachment; filename="draft-template-{s.format}-{s.id}.xlsx"'})
+
+
+@router.post("/offline-drafts/{session_id}/upload/preview")
+def upload_preview(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
+                   db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Validates the workbook and says what committing it would do. Writes nothing."""
+    s = _get(db, session_id, user)
+    if s.status == "finalized":
+        raise HTTPException(400, "This draft is finalized")
+    try:
+        parsed = xl.parse_upload(db, s, data)
+        return xl.describe(db, s, parsed, xl.plan(db, s, parsed, mode))
+    except xl.ExcelError as e:
+        raise HTTPException(422, {"message": str(e), "errors": e.errors})
+    except od.OfflineDraftError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/offline-drafts/{session_id}/upload/commit")
+def upload_commit(session_id: int, mode: str = "replace_all", data: bytes = Body(..., media_type="application/octet-stream"),
+                  db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Replace all, or fill empty cells only, as one transaction; the draft lands in review."""
+    def go(s):
+        return xl.commit(db, s, xl.parse_upload(db, s, data), mode, user.id)
+    result, s = _mutate(db, session_id, user, go)
+    return {**od.snapshot(db, s), "result": result}
