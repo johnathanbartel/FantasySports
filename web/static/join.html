@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join the draft - FantasyMotion</title>
+<style>
+  :root{--bg:#0b1020;--panel:#151c33;--line:#2a3558;--text:#f4f6ff;--dim:#9aa6cf;--accent:#ffd23f;--bad:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,sans-serif;font-size:18px}
+  main{max-width:560px;margin:0 auto;padding:16px}
+  h1{font-size:22px;margin:0 0 12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+  input,button,select{font-size:20px;padding:14px;border-radius:12px;border:1px solid var(--line);background:#0e1530;color:var(--text);width:100%;margin:6px 0}
+  button{background:var(--panel);cursor:pointer;min-height:56px}
+  button.primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:800}
+  button:disabled{opacity:.4}
+  .teams button{text-align:left}
+  .teams button.taken{opacity:.45}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .err{color:var(--bad);min-height:24px}
+  .big{font-size:40px;font-weight:900;text-align:center}
+  .dim{color:var(--dim);font-size:15px}
+  .banner{text-align:center;padding:14px;border-radius:14px;font-weight:800;font-size:24px;background:var(--panel);border:2px solid var(--line)}
+  .banner.go{background:var(--accent);color:#000;border-color:var(--accent)}
+  .item{padding:12px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+  .tabs{display:flex;gap:6px}.tabs button{font-size:16px;min-height:44px;padding:8px}
+  .tabs button.on{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="h">Join the draft</h1>
+  <div id="err" class="err"></div>
+  <div id="step1" class="card" hidden>
+    <label>Draft code</label>
+    <input id="code" maxlength="6" autocapitalize="characters" autocomplete="off" placeholder="ABC123">
+    <button class="primary" id="go1">Continue</button>
+  </div>
+  <div id="step2" class="card" hidden>
+    <div class="dim">Pick your team</div>
+    <div id="teams" class="teams"></div>
+  </div>
+  <div id="step3" class="card" hidden>
+    <div id="chosen" style="font-weight:800"></div>
+    <input id="pin" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="4-digit PIN" type="password">
+    <button class="primary" id="go3">Claim team</button>
+    <button id="back3">Back</button>
+  </div>
+  <div id="pending" class="card" hidden>Waiting for the commissioner to approve this phone&hellip;</div>
+  <div id="main" hidden>
+    <div id="banner" class="banner"></div>
+    <div id="cd" class="big"></div>
+    <div id="auction" class="card" hidden></div>
+    <div class="tabs card" style="padding:6px">
+      <button data-tab="pick" class="on">Players</button><button data-tab="roster">My team</button><button data-tab="queue">Queue</button>
+    </div>
+    <div id="tab-pick" class="card"><input id="q" placeholder="Search players" autocomplete="off"><div id="results"></div></div>
+    <div id="tab-roster" class="card" hidden></div>
+    <div id="tab-queue" class="card" hidden></div>
+    <button id="leave" class="dim" style="font-size:14px;min-height:36px">Leave this draft</button>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const KEY = 'fsc_offline_device';
+let code = (new URLSearchParams(location.search).get('code') || '').toUpperCase(), team = null, token = null, S = null, skew = 0, tab = 'pick', results = [];
+try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.token) token = saved.token; } catch (e) {}
+const fail = (e) => { $('err').textContent = e.message || String(e); };
+
+async function call(method, path, body) {
+  const res = await fetch(path, {method, headers: Object.assign({'Content-Type': 'application/json'}, token ? {'X-Device-Token': token} : {}), body: body ? JSON.stringify(body) : undefined, cache: 'no-store'});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data.detail || res.statusText); e.status = res.status; throw e; }
+  return data;
+}
+function show(step) { ['step1', 'step2', 'step3', 'pending', 'main'].forEach(id => $(id).hidden = id !== step); }
+
+async function start() {
+  if (token) { try { await poll(true); return; } catch (e) { if (e.status === 401) { token = null; try { localStorage.removeItem(KEY); } catch (x) {} } } }
+  if (code.length === 6) return loadTeams(); show('step1'); $('code').value = code;
+}
+$('go1').onclick = () => { code = $('code').value.trim().toUpperCase(); loadTeams(); };
+async function loadTeams() {
+  $('err').textContent = '';
+  try {
+    const info = await call('GET', `/offline-join/${code}`);
+    $('teams').innerHTML = info.teams.map(t => `<button class="${t.claimed || t.locked ? 'taken' : ''}" data-id="${t.team_id}" data-name="${esc(t.name)}">${esc(t.name)}${t.locked ? ' (locked)' : t.claimed ? ' (taken)' : ''}</button>`).join('');
+    $('teams').querySelectorAll('button').forEach(b => b.onclick = () => choose(+b.dataset.id, b.dataset.name, info.claim_mode));
+    show('step2');
+  } catch (e) { fail(e); show('step1'); }
+}
+function choose(id, name, mode) {
+  team = id; $('chosen').textContent = name; $('pin').value = '';
+  if (mode === 'approve') { claim(); return; }
+  show('step3'); $('pin').focus();
+}
+$('back3').onclick = () => show('step2');
+$('go3').onclick = () => claim();
+async function claim() {
+  $('err').textContent = '';
+  try {
+    const r = await call('POST', `/offline-join/${code}/claim`, {team_id: team, pin: $('pin').value});
+    token = r.token; try { localStorage.setItem(KEY, JSON.stringify({token, code})); } catch (e) {}
+    await poll(true);
+  } catch (e) { fail(e); }
+}
+$('leave').onclick = () => { try { localStorage.removeItem(KEY); } catch (e) {} token = null; S = null; show('step1'); };
+
+let lastV = null, busy = false;
+async function poll(force) {
+  if (!token || busy) return;
+  busy = true;
+  try {
+    const d = await call('GET', '/offline-phone/state' + (!force && lastV != null ? `?since=${lastV}` : ''));
+    $('err').textContent = '';
+    if (d.pending) { show('pending'); return; }
+    if (d.live && d.live.server_time) skew = Date.parse(d.live.server_time + 'Z') - Date.now();
+    if (d.changed === false) { if (S) S.live = d.live; return; }
+    S = d; lastV = d.version; show('main'); render();
+  } catch (e) {
+    if (e.status === 401) { token = null; try { localStorage.removeItem(KEY); } catch (x) {} $('err').textContent = e.message; show('step1'); if (code) loadTeams(); }
+    else if (!S) throw e;
+  } finally { busy = false; }
+}
+setInterval(() => poll(false).catch(() => {}), 1500);
+
+const teamName = (id) => (S.teams.find(t => t.team_id === id) || {}).name || '';
+function secsLeft(lot) { return lot.ends_at ? Math.max(0, (Date.parse(lot.ends_at + 'Z') - (Date.now() + skew)) / 1000) : (lot.remaining || 0); }
+function render() {
+  const me = S.me;
+  $('h').textContent = me.name || 'Draft';
+  let b = '', go = false;
+  if (S.status === 'setup') b = 'Waiting for the draft to start';
+  else if (S.status === 'paused') b = 'Draft paused';
+  else if (S.status !== 'live') b = 'Draft ' + S.status;
+  else if (S.format === 'snake') {
+    if (me.can_pick) { b = "You're on the clock!"; go = true; }
+    else if (me.on_the_clock) b = 'Your pick (view only right now)';
+    else if (me.on_deck) b = "You're on deck";
+    else b = me.next_pick ? `Your next pick: #${me.next_pick}` : 'Waiting';
+  } else {
+    b = me.can_nominate ? 'Your turn to nominate' : (S.live.lot ? 'Bid now' : (S.live.nominator ? teamName(S.live.nominator) + ' is nominating' : 'Waiting'));
+    go = !!me.can_nominate;
+  }
+  $('banner').textContent = b; $('banner').className = 'banner' + (go ? ' go' : '');
+  renderAuction(); renderRoster(); renderQueue(); showResults(); tabs();
+}
+function renderAuction() {
+  const el = $('auction'); el.hidden = S.format !== 'auction';
+  if (S.format !== 'auction') return;
+  const lot = S.live.lot, st = S.me.state;
+  let h = `<div class="dim">Budget $${st.remaining} · max bid $${st.max_bid} · ${st.open_slots} open spots</div>`;
+  if (lot) {
+    const mine = lot.bidder === S.me.team_id;
+    h += `<div style="font-size:26px;font-weight:800;margin-top:8px">${esc(lot.name)}</div><div>High bid $${lot.current_bid} &mdash; ${mine ? 'YOU' : esc(teamName(lot.bidder))}</div>` +
+      `<div class="row"><button data-add="${S.live.increment}">+$${S.live.increment}</button><button data-add="5">+$5</button><button data-add="10">+$10</button></div>` +
+      `<div class="row"><input id="custom" type="number" inputmode="numeric" placeholder="Custom bid"><button id="custombtn" style="max-width:35%">Bid</button></div>`;
+  } else h += `<div class="dim" style="margin-top:8px">${S.me.can_nominate ? 'Search a player below and tap to nominate.' : 'No lot open.'}</div>`;
+  el.innerHTML = h;
+  el.querySelectorAll('[data-add]').forEach(b => b.onclick = () => bid(S.live.lot.current_bid + (+b.dataset.add)));
+  const cb = $('custombtn'); if (cb) cb.onclick = () => bid(+$('custom').value);
+}
+async function bid(amount) { try { await call('POST', '/offline-phone/bid', {amount}); await poll(true); } catch (e) { fail(e); poll(true); } }
+function renderRoster() {
+  const r = S.me.roster;
+  $('tab-roster').innerHTML = `<div class="dim">${r.length} of ${S.rounds} players${S.format === 'auction' ? ` · $${S.me.state.remaining} left` : ''}</div>` +
+    (r.map(p => `<div class="item">${esc(p.name)} <span class="dim">${esc(p.position || '')}${p.price != null ? ' · $' + p.price : ''}</span></div>`).join('') || '<div class="dim">Nobody yet</div>');
+}
+function renderQueue() {
+  const q = S.me.queue, names = Object.fromEntries((S.pool_names || []).map(p => [p.asset_id, p.name]));
+  $('tab-queue').innerHTML = `<div class="dim">If your clock runs out, the top player here is picked for you (when auto-pick is on).</div>` +
+    (q.map((id, i) => `<div class="item" data-rm="${id}">${i + 1}. ${esc(qnames[id] || 'Player ' + id)} <span class="dim">tap to remove</span></div>`).join('') || '<div class="dim">Empty. Tap the + beside a player to queue him.</div>');
+  $('tab-queue').querySelectorAll('[data-rm]').forEach(d => d.onclick = () => saveQueue(S.me.queue.filter(x => x !== +d.dataset.rm)));
+}
+const qnames = {};
+async function saveQueue(ids) { try { await call('POST', '/offline-phone/queue', {asset_ids: ids}); await poll(true); } catch (e) { fail(e); } }
+
+let timer = null;
+$('q').oninput = () => { clearTimeout(timer); timer = setTimeout(search, 200); };
+async function search() {
+  try { results = await call('GET', '/offline-phone/pool?q=' + encodeURIComponent($('q').value)); results.forEach(r => qnames[r.asset_id] = r.name); showResults(); } catch (e) { fail(e); }
+}
+function showResults() {
+  if (!S) return;
+  const act = S.format === 'snake' ? S.me.can_pick : S.me.can_nominate;
+  $('results').innerHTML = results.map(p => `<div class="item"><span data-act="${p.asset_id}">${esc(p.name)} <span class="dim">${esc(p.position || '')}</span></span> <button data-q="${p.asset_id}" style="width:auto;min-height:36px;padding:4px 12px;float:right;font-size:16px">+</button></div>`).join('') ||
+    '<div class="dim">Type a name to search.</div>';
+  $('results').querySelectorAll('[data-act]').forEach(d => d.onclick = () => choosePlayer(+d.dataset.act, act));
+  $('results').querySelectorAll('[data-q]').forEach(d => d.onclick = () => saveQueue([...S.me.queue, +d.dataset.q]));
+}
+async function choosePlayer(id, allowed) {
+  const p = results.find(r => r.asset_id === id);
+  if (!allowed) { fail(new Error('It is not your turn')); return; }
+  if (!confirm((S.format === 'snake' ? 'Draft ' : 'Nominate ') + p.name + '?')) return;
+  try { await call('POST', S.format === 'snake' ? '/offline-phone/pick' : '/offline-phone/nominate', {asset_id: id}); $('q').value = ''; results = []; await poll(true); }
+  catch (e) { fail(e); poll(true); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { tab = b.dataset.tab; tabs(); });
+function tabs() {
+  ['pick', 'roster', 'queue'].forEach(t => $('tab-' + t).hidden = t !== tab);
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+}
+setInterval(() => {
+  if (!S || !S.live) return;
+  const c = S.live.clock, lot = S.live.lot;
+  let v = null;
+  if (S.format === 'snake' && c && c.deadline) v = Math.max(0, (Date.parse(c.deadline + 'Z') - (Date.now() + skew)) / 1000);
+  else if (S.format === 'snake' && c && c.remaining != null) v = c.remaining;
+  else if (S.format === 'auction' && lot) v = secsLeft(lot);
+  $('cd').textContent = v == null ? '' : (v >= 60 ? Math.floor(v / 60) + ':' + String(Math.floor(v % 60)).padStart(2, '0') : v.toFixed(v < 10 ? 1 : 0));
+  $('cd').style.color = v != null && v < 5 ? 'var(--bad)' : 'var(--text)';
+}, 100);
+start();
+</script>
+</body>
+</html>

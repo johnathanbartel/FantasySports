@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fantasy_sports.platform.db.base import Base
@@ -45,6 +45,9 @@ class OfflineTeamClaim(Base):
     claimed_device_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="unclaimed")  # unclaimed/pending/claimed
     failed_pins: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")        # 5 wrong PINs
+    queue_json: Mapped[list | None] = mapped_column(JSON, nullable=True)                   # the team's pick queue (asset ids)
+    claimed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class OfflineDraftPick(Base):
@@ -84,6 +87,11 @@ class OfflineAuctionLot(Base):
     """The live lot (phase 3: phones as bidding paddles). One open at a time."""
 
     __tablename__ = "offline_auction_lots"
+    __table_args__ = (
+        # one live lot at a time per session
+        Index("uq_offline_open_lot", "session_id", unique=True,
+              sqlite_where=text("status = 'open'"), postgresql_where=text("status = 'open'")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("offline_draft_sessions.id"), index=True)
@@ -93,6 +101,8 @@ class OfflineAuctionLot(Base):
     current_bidder_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     ends_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="open")      # open/sold/cancelled
+    paused_remaining: Mapped[float | None] = mapped_column(Float, nullable=True)   # seconds left while the draft is paused
+    created_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class OfflineBidEvent(Base):

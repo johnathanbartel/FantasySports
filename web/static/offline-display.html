@@ -135,9 +135,25 @@ function renderBoard() {
   }
   $('body').innerHTML = h + '</div>';
 }
+let skew = 0;          // server time minus this screen's clock, so every countdown follows the server
+function secsLeft(lot) {
+  if (!lot) return 0;
+  if (lot.ends_at) return Math.max(0, (Date.parse(lot.ends_at + 'Z') - (Date.now() + skew)) / 1000);
+  return lot.remaining || 0;
+}
+setInterval(() => { const e = document.getElementById('cd'); if (e && S && S.live && S.live.lot) { const v = secsLeft(S.live.lot); e.textContent = v.toFixed(1); e.style.color = v < 5 ? '#ff5d5d' : 'var(--accent)'; } }, 100);
+function lotHtml() {
+  const lot = S.live && S.live.lot;
+  if (!lot) return `<div class="row" style="font-size:2.4vw;color:var(--dim)">${S.live && S.live.nominator ? esc(teamName(S.live.nominator)) + ' to nominate' : 'Waiting for the next nomination'}</div>`;
+  return `<div style="text-align:center;padding:1vw;border:.3vw solid var(--accent);border-radius:1vw;margin-bottom:1vw">` +
+    `<div style="font-size:4.5vw;font-weight:900">${esc(lot.name)}</div>` +
+    `<div style="font-size:3vw">$${lot.current_bid} &mdash; ${esc(teamName(lot.bidder))}</div>` +
+    `<div id="cd" style="font-size:7vw;font-weight:900;color:var(--accent)">${secsLeft(lot).toFixed(1)}</div>` +
+    (S.status !== 'live' ? '<div style="font-size:2vw;color:var(--dim)">Paused</div>' : '') + `</div>`;
+}
 function renderSales() {
   const sales = S.picks.filter(p => !p.voided).reverse();
-  $('body').innerHTML = `<div class="sales"><div><h2>Sales</h2>` +
+  $('body').innerHTML = `<div class="sales"><div>${lotHtml()}<h2>Sales</h2>` +
     (sales.slice(0, 12).map(p => `<div class="row"><span>${esc(p.name)} <small style="color:var(--dim)">${esc(p.position || '')}</small></span><span>${esc(teamName(p.team_id))} <b>$${p.price}</b></span></div>`).join('') || '<div class="row">No sales yet</div>') +
     `</div><div><h2>Budgets</h2>` +
     S.teams.map(t => `<div class="row" style="font-size:1.6vw"><span>${esc(t.name)}</span><span><b>$${t.remaining}</b> · ${t.open_slots} open</span></div>`).join('') + `</div></div>`;
@@ -159,6 +175,7 @@ async function poll() {
   }
 }
 function apply(d) {
+  if (d.live && d.live.server_time) skew = Date.parse(d.live.server_time + 'Z') - Date.now();
   const first = S === null, before = S;
   S = d; seen = d.version;
   const live = d.picks.filter(p => !p.voided);

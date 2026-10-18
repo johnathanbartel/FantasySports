@@ -263,8 +263,8 @@ def make_pick(db: Session, s: OfflineDraftSession, asset_id: int, rnd: int, slot
     _check_cell(s, rnd, slot)
     _check_pool(s, asset_id)
     if enforce_turn:
-        if s.status != "live" or s.entry_mode != "live":
-            raise OfflineDraftError("The draft clock is not running")
+        if s.status != "live" or not (s.entry_mode == "live" or s.settings_json.get("managers_self_enter")):
+            raise OfflineDraftError("Managers can't enter picks right now")
         if on_the_clock(db, s) != (rnd, slot):
             raise OfflineDraftError("That pick is not on the clock")
     owner = cell_owner(s, rnd, slot)
@@ -382,6 +382,8 @@ def set_status(db: Session, s: OfflineDraftSession, status: str, user_id: int | 
     s.status = status
     if status == "live" and s.started_at is None:
         s.started_at = utcnow()
+    from fantasy_sports.platform import offline_live
+    offline_live.on_status_change(db, s, before)
     audit(db, s, f"user:{user_id}", "status", {"status": before}, {"status": status})
     _bump(s)
     db.flush()
@@ -541,6 +543,8 @@ def snapshot(db: Session, s: OfflineDraftSession, include_pool: bool = False) ->
         out["on_the_clock"] = {"round": clock[0], "slot": clock[1]} if clock else None
     if s.status == "review":
         out["review"] = review_summary(db, s)
+    from fantasy_sports.platform import offline_live
+    out["live"] = offline_live.live_info(db, s)
     if include_pool:
         taken = {p.draftable_asset_id for p in live}
         pool = db.query(DraftableAsset).filter(DraftableAsset.id.in_(s.settings_json["pool"] or [0])).all()

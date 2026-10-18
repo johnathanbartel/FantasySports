@@ -46,6 +46,22 @@
   <div id="main" hidden>
     <div class="bar" id="info"></div>
     <div class="bar" id="toolbar"></div>
+    <div id="lotpanel" class="panel" hidden></div>
+    <details class="panel" id="phones"><summary><b>Phones &amp; clocks</b></summary>
+      <div class="bar"><span id="joinlink"></span></div>
+      <div class="bar">
+        <label>Pick clock (s) <input id="s_pick" class="inp" type="number" min="5" style="width:80px" placeholder="off"></label>
+        <label><input id="s_auto" type="checkbox"> Autopick on timeout</label>
+        <label><input id="s_self" type="checkbox"> Managers may self-enter (free mode)</label>
+        <label>Lot (s) <input id="s_lot" class="inp" type="number" min="3" style="width:70px"></label>
+        <label>Anti-snipe (s) <input id="s_reset" class="inp" type="number" min="3" style="width:70px"></label>
+        <label>Claims <select id="s_claim"><option value="pin">PIN</option><option value="approve">Commissioner approves</option></select></label>
+        <button id="s_save">Save</button>
+      </div>
+      <div class="bar"><button id="pins_all">Generate PINs for all teams</button> <span class="who">PINs are shown once; the server keeps only hashes.</span></div>
+      <div id="pinout"></div>
+      <table id="claims"></table>
+    </details>
     <div id="review" class="panel" hidden></div>
     <div id="sale" class="panel" hidden>
       <b>Log sale</b>
@@ -127,8 +143,38 @@ function render() {
     (rv.budget_anomalies.length ? '<br>Over budget: ' + rv.budget_anomalies.map(r => `${esc(r.name)} by ${r.over_by}`).join(', ') : '');
   $('sale').hidden = S.format !== 'auction' || st === 'finalized';
   if (S.format === 'auction') $('saleteam').innerHTML = S.teams.map(t => `<option value="${t.team_id}">${esc(t.name)}</option>`).join('');
-  renderBoard(); renderTeams(); renderLog(); fillPositions();
+  renderBoard(); renderTeams(); renderLog(); fillPositions(); renderPhones(); renderLot();
 }
+function renderLot() {
+  const el = $('lotpanel'), lot = S.live && S.live.lot;
+  el.hidden = S.format !== 'auction' || !lot;
+  if (el.hidden) return;
+  const left = lot.ends_at ? Math.max(0, (Date.parse(lot.ends_at + 'Z') - Date.parse(S.live.server_time + 'Z')) / 1000) : lot.remaining;
+  el.innerHTML = `<b>Live lot:</b> ${esc(lot.name)} - $${lot.current_bid} to ${esc(teamName(lot.bidder))} ` +
+    `<button onclick="act('lot/extend',{seconds:10})">+10s</button> <button onclick="act('lot/force-sell')">Force sell</button> <button onclick="act('lot/cancel')">Cancel lot</button>`;
+}
+function renderPhones() {
+  if (!S.settings) return;
+  const f = (id, v) => { const e = $(id); if (document.activeElement !== e) { if (e.type === 'checkbox') e.checked = !!v; else e.value = v == null ? '' : v; } };
+  f('s_pick', S.settings.pick_seconds); f('s_auto', S.settings.autopick); f('s_self', S.settings.managers_self_enter);
+  f('s_lot', S.settings.lot_seconds); f('s_reset', S.settings.reset_window); f('s_claim', S.settings.claim_mode);
+  $('joinlink').innerHTML = `Join code <b>${S.join_code}</b> &middot; phones open <code>${location.origin}/static/join.html?code=${S.join_code}</code>`;
+  $('claims').innerHTML = '<tr><th>Team</th><th>Phone</th><th></th></tr>' + (S.claims || []).map(c =>
+    `<tr><td>${esc(teamName(c.team_id))}</td><td>${c.locked ? 'LOCKED' : c.status}${c.has_pin ? '' : ' (no PIN)'}${c.device_replaced_at ? ' · device replaced ' + c.device_replaced_at.slice(11, 19) : ''}</td><td>` +
+    (c.locked ? `<a href="#" onclick="event.preventDefault();act('unlock',{team_id:${c.team_id}})">unlock</a> ` : '') +
+    (c.status === 'pending' ? `<a href="#" onclick="event.preventDefault();act('approve-claim',{team_id:${c.team_id},approve:true})">approve</a> <a href="#" onclick="event.preventDefault();act('approve-claim',{team_id:${c.team_id},approve:false})">deny</a> ` : '') +
+    (c.status !== 'unclaimed' ? `<a href="#" onclick="event.preventDefault();act('release',{team_id:${c.team_id}})">sign out</a> ` : '') +
+    `<a href="#" onclick="event.preventDefault();newPin(${c.team_id})">new PIN</a></td></tr>`).join('');
+}
+async function newPin(team) {
+  try { const r = await FSC.post(`/offline-drafts/${S.id}/pins`, team ? {team_id: team} : {}); showPins(r.pins); await reload(); } catch (e) { fail(e); }
+}
+function showPins(pins) {
+  $('pinout').innerHTML = '<table>' + Object.entries(pins).map(([t, p]) => `<tr><td>${esc(teamName(+t))}</td><td><b style="font-size:18px;letter-spacing:.2em">${p}</b></td></tr>`).join('') + '</table>';
+}
+$('pins_all').onclick = () => newPin(null);
+$('s_save').onclick = () => act('settings', {pick_seconds: $('s_pick').value ? +$('s_pick').value : null, autopick: $('s_auto').checked,
+  managers_self_enter: $('s_self').checked, lot_seconds: +$('s_lot').value || 30, reset_window: +$('s_reset').value || 10, claim_mode: $('s_claim').value});
 
 function renderBoard() {
   if (S.format !== 'snake') { $('boardwrap').innerHTML = ''; return; }

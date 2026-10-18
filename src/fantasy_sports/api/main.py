@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.routers import (
-    auction, banking, commissioner, draft, draft_broadcast, entitlements, league_home, league_leaders, leagues, media, offline_draft, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
+    auction, banking, commissioner, draft, draft_broadcast, entitlements, league_home, league_leaders, leagues, media, offline_draft, offline_phone, pecking_order, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
 )
 from fantasy_sports.platform.db.models.core import League
 from fantasy_sports.platform.db.session import get_db
@@ -61,6 +61,18 @@ app.include_router(banking.router)
 app.include_router(trades.router)
 app.include_router(commissioner.router)
 app.include_router(offline_draft.router)
+app.include_router(offline_phone.router)
+
+
+@app.on_event("startup")
+def close_lots_that_ended_while_down():
+    """Offline auctions: a lot whose time ran out during a restart closes on its last accepted bid."""
+    try:
+        from fantasy_sports.platform import offline_live
+        from fantasy_sports.platform.db.session import SessionLocal
+        offline_live.close_expired_on_boot(SessionLocal)
+    except Exception:
+        pass
 
 
 @app.middleware("http")
