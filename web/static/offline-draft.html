@@ -117,6 +117,8 @@ function render() {
     st === 'review' ? b('Back to live', "act('status',{status:'live'})") : '',
     st === 'review' ? b('Finalize', "finalize()", 'primary') : '',
     st === 'finalized' ? b('Re-open', "act('reopen')") : '',
+    b('Open Big Screen', "window.open('/static/offline-display.html?token=' + S.display_token)"),
+    st !== 'finalized' ? b('Skip announcement', "act('skip-announcement')") : '',
   ].join('');
   const rv = S.review;
   $('review').hidden = !rv;

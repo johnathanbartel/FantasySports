@@ -240,6 +240,16 @@ check(post(f"{base}/reopen").status_code == 400, "after the window, re-open is r
 tok = client.get(base, headers=H["commish"]).json()["display_token"]
 dsp = client.get(f"/offline-drafts/display/{tok}")
 check(dsp.status_code == 200 and "display_token" not in dsp.json() and dsp.json()["league_name"] == "Offline League", "the Big Screen feed needs only the token and leaks nothing private")
+ver = dsp.json()["version"]
+same = client.get(f"/offline-drafts/display/{tok}?since={ver}").json()
+check(same == {"changed": False, "version": ver}, "polling with the current version answers a tiny 'unchanged'")
+pk = [p for p in dsp.json()["picks"] if not p["voided"]][0]
+check(pk["real_team"] == "Boston" and pk["overall"] is not None, "picks carry the real team and overall number for the announcement")
+skip0 = dsp.json()["announce_skip"]
+check(post(f"{base}/skip-announcement").status_code == 200, "the console can skip the announcement")
+after = client.get(f"/offline-drafts/display/{tok}?since={ver}").json()
+check(after["version"] > ver and after["announce_skip"] == skip0 + 1, "...which the screen sees as a new version and counter")
+check(post(f"{base}/skip-announcement", who="manager").status_code == 403, "only a commissioner can skip")
 new = post(f"{base}/rotate-display-token").json()["display_token"]
 check(new != tok and client.get(f"/offline-drafts/display/{tok}").status_code == 404, "rotating the token kills the old link")
 

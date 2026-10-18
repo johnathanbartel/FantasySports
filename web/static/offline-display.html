@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draft Big Screen - FantasyMotion</title>
+<style>
+  :root{--bg:#0b1020;--panel:#151c33;--line:#2a3558;--text:#f4f6ff;--dim:#9aa6cf;--accent:#ffd23f}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  #app{display:grid;grid-template-rows:auto 1fr auto;height:100vh;padding:1.2vw;gap:1vw}
+  header{display:flex;justify-content:space-between;align-items:baseline}
+  header h1{margin:0;font-size:3vw}
+  header .st{font-size:2vw;color:var(--accent);text-transform:uppercase;letter-spacing:.1em}
+  #body{min-height:0;overflow:hidden}
+  .board{display:grid;gap:.4vw;height:100%}
+  .colhead{font-size:1.5vw;font-weight:700;text-align:center;padding:.3vw;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .cell{border:1px solid var(--line);border-radius:.5vw;background:var(--panel);padding:.4vw .6vw;font-size:1.4vw;overflow:hidden;display:flex;flex-direction:column;justify-content:center;min-height:0}
+  .cell small{color:var(--dim);font-size:1vw}
+  .cell.clock{outline:.25vw solid var(--accent)}
+  .cell.new{animation:pop 1.2s ease-out}
+  @keyframes pop{0%{transform:scale(1.15);background:var(--accent);color:#000}100%{transform:scale(1)}}
+  .sales{display:grid;grid-template-columns:2fr 1fr;gap:1.5vw;height:100%}
+  .sales h2{margin:0 0 .6vw;font-size:2vw;color:var(--dim)}
+  .row{display:flex;justify-content:space-between;padding:.6vw 1vw;border-bottom:1px solid var(--line);font-size:2vw}
+  .row b{color:var(--accent)}
+  #ticker{font-size:1.6vw;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:2vw}
+  #join{position:fixed;right:1.5vw;bottom:1.5vw;background:#fff;color:#000;border-radius:1vw;padding:1vw;text-align:center;display:none;z-index:5}
+  #join .code{font-size:3.2vw;font-weight:800;letter-spacing:.15em}
+  #join canvas,#join img{max-width:14vw}
+  #takeover{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;text-align:center;z-index:10;padding:4vw}
+  #takeover .pre{font-size:3vw;opacity:.9}
+  #takeover .who{font-size:8vw;font-weight:900;margin:1vw 0;min-height:10vw;transition:opacity .5s}
+  #takeover .meta{font-size:3.4vw}
+  #takeover.sold .who::after{content:" SOLD!";color:var(--accent)}
+  #reconnect{position:fixed;inset:0;background:rgba(5,8,18,.92);display:none;align-items:center;justify-content:center;font-size:4vw;z-index:20}
+  #sound{position:fixed;left:1vw;bottom:1vw;font-size:1.1vw;color:var(--dim);z-index:6}
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1 id="title">Draft</h1><div class="st" id="status"></div></header>
+  <div id="body"></div>
+  <div id="ticker"></div>
+</div>
+<div id="join"><div id="qr"></div><div>Join at your phone</div><div class="code" id="code"></div></div>
+<div id="takeover"></div>
+<div id="reconnect">Reconnecting&hellip;</div>
+<div id="sound">Click anywhere once to enable sound</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+// Typed event bus: the announcer (and a future text-to-speech voice) subscribes to these instead of touching the DOM.
+//   pick {pick, team, round, slot, overall, sale}   status {status, before}   connection {online}   skip {}
+class DraftBus {
+  constructor() { this.h = {}; }
+  on(type, fn) { (this.h[type] = this.h[type] || []).push(fn); return this; }
+  emit(type, detail) { (this.h[type] || []).forEach(fn => { try { fn(detail); } catch (e) { console.error(e); } }); }
+}
+window.draftBus = new DraftBus();
+
+const token = new URLSearchParams(location.search).get('token');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ord = (n) => n + (['th','st','nd','rd'][(n % 100 > 10 && n % 100 < 14) ? 0 : (n % 10 < 4 ? n % 10 : 0)]);
+const color = (id) => `hsl(${(id * 67) % 360} 55% 32%)`;
+let S = null, seen = null, baseline = null, skipSeen = 0, queue = [], showing = false, fresh = new Set(), fails = 0, qrFor = null;
+
+// ---- sound cue (WebAudio; browsers need one click first) ----
+let actx = null;
+document.addEventListener('click', () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); $('sound').style.display = 'none'; } catch (e) {} });
+function chime(sold) {
+  if (!actx) return;
+  const notes = sold ? [523, 659, 784, 1047] : [392, 523, 659];
+  notes.forEach((f, i) => {
+    const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + i * 0.14;
+    o.frequency.value = f; o.type = 'triangle'; o.connect(g); g.connect(actx.destination);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    o.start(t); o.stop(t + 0.55);
+  });
+}
+
+// ---- announcer ----
+const teamName = (id) => (S.teams.find(t => t.team_id === id) || {}).name || '';
+draftBus.on('pick', (d) => { queue.push(d); next(); });
+draftBus.on('skip', () => { queue = []; hideTakeover(); });
+function next() {
+  if (showing || !queue.length) return;
+  showing = true;
+  const d = queue.shift(), p = d.pick, name = teamName(p.team_id);
+  const el = $('takeover');
+  el.className = d.sale ? 'sold' : '';
+  el.style.background = color(p.team_id);
+  el.style.display = 'flex';
+  const pre = d.sale ? `${esc(name)} wins the bid at $${p.price}` : `With the ${ord(d.overall)} pick in Round ${d.round}, ${esc(name)} selects&hellip;`;
+  el.innerHTML = `<div class="pre">${pre}</div><div class="who" style="opacity:0">${esc(p.name)}</div>` +
+    `<div class="meta">${esc([p.position, p.real_team].filter(Boolean).join(' · '))}</div>`;
+  chime(d.sale);
+  setTimeout(() => { const w = el.querySelector('.who'); if (w) w.style.opacity = 1; }, 1800);
+  window._tk = setTimeout(() => { hideTakeover(); }, 5200);
+}
+function hideTakeover() {
+  clearTimeout(window._tk);
+  $('takeover').style.display = 'none'; showing = false;
+  setTimeout(next, 250);
+}
+
+// ---- rendering ----
+function render() {
+  $('title').textContent = S.league_name || 'Draft';
+  $('status').textContent = S.status === 'live' ? (S.format === 'snake' ? 'Draft live' : 'Auction live') : S.status;
+  const show = S.status === 'setup' || S.status === 'paused';
+  $('join').style.display = show ? 'block' : 'none';
+  $('code').textContent = S.join_code;
+  if (show && qrFor !== S.join_code && window.QRCode) {
+    $('qr').innerHTML = ''; qrFor = S.join_code;
+    new QRCode($('qr'), {text: `${location.origin}/static/join.html?code=${S.join_code}`, width: 220, height: 220});
+  }
+  S.format === 'snake' ? renderBoard() : renderSales();
+  const recent = S.picks.filter(p => !p.voided).slice(-8).reverse();
+  $('ticker').innerHTML = recent.length ? 'Latest: ' + recent.map(p => `${esc(teamName(p.team_id))} — ${esc(p.name)}${p.price != null ? ' $' + p.price : ''}`).join('  •  ') : '';
+}
+function renderBoard() {
+  const n = S.team_order.length, by = {};
+  S.picks.filter(p => !p.voided).forEach(p => by[p.round + '-' + p.slot] = p);
+  let h = `<div class="board" style="grid-template-columns:3vw repeat(${n},1fr);grid-template-rows:auto repeat(${S.rounds},1fr)"><div></div>`;
+  S.team_order.forEach(id => h += `<div class="colhead" style="border-bottom:.3vw solid ${color(id)}">${esc(teamName(id))}</div>`);
+  for (let r = 1; r <= S.rounds; r++) {
+    h += `<div class="colhead">${r}</div>`;
+    for (let c = 0; c < n; c++) {
+      const slot = r % 2 === 0 ? n - c : c + 1, cell = S.cells.find(x => x.round === r && x.slot === slot), p = by[r + '-' + slot];
+      const clk = S.on_the_clock && S.on_the_clock.round === r && S.on_the_clock.slot === slot && S.status === 'live';
+      h += p ? `<div class="cell${fresh.has(p.id) ? ' new' : ''}" style="background:${color(p.team_id)}"><b>${esc(p.name)}</b><small>${esc([p.position, p.real_team].filter(Boolean).join(' · '))}${p.keeper ? ' · K' : ''}</small></div>`
+        : `<div class="cell${clk ? ' clock' : ''}"><small>${cell.overall} · ${esc(teamName(cell.owner))}</small></div>`;
+    }
+  }
+  $('body').innerHTML = h + '</div>';
+}
+function renderSales() {
+  const sales = S.picks.filter(p => !p.voided).reverse();
+  $('body').innerHTML = `<div class="sales"><div><h2>Sales</h2>` +
+    (sales.slice(0, 12).map(p => `<div class="row"><span>${esc(p.name)} <small style="color:var(--dim)">${esc(p.position || '')}</small></span><span>${esc(teamName(p.team_id))} <b>$${p.price}</b></span></div>`).join('') || '<div class="row">No sales yet</div>') +
+    `</div><div><h2>Budgets</h2>` +
+    S.teams.map(t => `<div class="row" style="font-size:1.6vw"><span>${esc(t.name)}</span><span><b>$${t.remaining}</b> · ${t.open_slots} open</span></div>`).join('') + `</div></div>`;
+}
+
+// ---- polling with version; a failed poll shows the overlay instead of a stale board ----
+async function poll() {
+  try {
+    const res = await fetch(`/offline-drafts/display/${encodeURIComponent(token)}` + (seen != null ? `?since=${seen}` : ''), {cache: 'no-store'});
+    if (res.status === 404) { $('reconnect').textContent = 'This display link is no longer valid'; $('reconnect').style.display = 'flex'; return; }
+    if (!res.ok) throw new Error(res.status);
+    const d = await res.json();
+    if (fails) draftBus.emit('connection', {online: true});
+    fails = 0; $('reconnect').style.display = 'none';
+    if (d.changed === false) return;
+    apply(d);
+  } catch (e) {
+    if (++fails === 2) { draftBus.emit('connection', {online: false}); $('reconnect').style.display = 'flex'; }
+  }
+}
+function apply(d) {
+  const first = S === null, before = S;
+  S = d; seen = d.version;
+  const live = d.picks.filter(p => !p.voided);
+  if (baseline === null) { baseline = Math.max(0, ...d.picks.map(p => p.entry_seq)); skipSeen = d.announce_skip; }
+  fresh = new Set();
+  if (!first) {
+    live.filter(p => p.entry_seq > baseline).forEach(p => {
+      baseline = Math.max(baseline, p.entry_seq); fresh.add(p.id);
+      draftBus.emit('pick', {pick: p, round: p.round, slot: p.slot, overall: p.overall, sale: p.price != null});
+    });
+    if (before.status !== d.status) draftBus.emit('status', {status: d.status, before: before.status});
+    if (d.announce_skip !== skipSeen) { skipSeen = d.announce_skip; draftBus.emit('skip', {}); }
+  }
+  render();
+}
+poll(); setInterval(poll, 1000);
+if (!token) { $('reconnect').textContent = 'Missing display token'; $('reconnect').style.display = 'flex'; }
+</script>
+</body>
+</html>

@@ -397,6 +397,13 @@ def set_entry_mode(db: Session, s: OfflineDraftSession, mode: str, user_id: int 
     db.flush()
 
 
+def skip_announcement(db: Session, s: OfflineDraftSession, user_id: int | None) -> None:
+    """Tells the Big Screen to dismiss the pick / sale takeover now (it watches this counter)."""
+    s.settings_json = {**s.settings_json, "announce_skip": s.settings_json.get("announce_skip", 0) + 1}
+    _bump(s)
+    db.flush()
+
+
 def rotate_display_token(db: Session, s: OfflineDraftSession, user_id: int | None) -> str:
     s.display_token = secrets.token_urlsafe(24)
     audit(db, s, f"user:{user_id}", "rotate_display_token")
@@ -506,10 +513,16 @@ def snapshot(db: Session, s: OfflineDraftSession, include_pool: bool = False) ->
     ids = {p.draftable_asset_id for p in rows}
     assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(ids or {0}))}
 
+    from fantasy_sports.platform.db.models.core import RealTeam
+    team_names = {r.id: r.name for r in db.query(RealTeam).filter(
+        RealTeam.id.in_({a.player.real_team_id for a in assets.values() if a.player is not None and a.player.real_team_id} or {0}))}
+    real_teams = {a.id: team_names.get(a.player.real_team_id) for a in assets.values() if a.player is not None}
+
     def pick_out(p: OfflineDraftPick) -> dict:
         a = assets[p.draftable_asset_id]
         return {"id": p.id, "team_id": p.team_id, "asset_id": p.draftable_asset_id,
                 "name": draftable_asset_display_name(a), "position": draftable_asset_position(a),
+                "real_team": real_teams.get(a.id), "overall": overall(s, p.board_round, p.board_slot) if p.board_round else None,
                 "round": p.board_round, "slot": p.board_slot, "price": p.price, "keeper": p.is_keeper,
                 "entry_seq": p.entry_seq, "source": p.source, "override": p.override,
                 "voided": p.voided_at is not None}
@@ -518,7 +531,8 @@ def snapshot(db: Session, s: OfflineDraftSession, include_pool: bool = False) ->
     out = {"id": s.id, "league_id": s.league_id, "format": s.format, "status": s.status, "entry_mode": s.entry_mode,
            "version": s.version, "join_code": s.join_code, "rounds": s.settings_json["rounds"],
            "min_bid": s.settings_json["min_bid"], "team_order": s.settings_json["team_order"], "teams": teams,
-           "picks": [pick_out(p) for p in rows], "pool_size": len(s.settings_json["pool"])}
+           "picks": [pick_out(p) for p in rows], "pool_size": len(s.settings_json["pool"]),
+           "announce_skip": s.settings_json.get("announce_skip", 0)}
     if s.format == "snake":
         n = len(s.settings_json["team_order"])
         out["cells"] = [{"round": r, "slot": c, "owner": cell_owner(s, r, c), "overall": overall(s, r, c)}

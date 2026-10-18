@@ -117,11 +117,14 @@ def current(league_id: int, db: Session = Depends(get_db), user: User = Depends(
 
 
 @router.get("/offline-drafts/display/{token}")
-def display(token: str, db: Session = Depends(get_db)):
-    """Big Screen feed: read-only, keyed by the display token alone."""
+def display(token: str, since: int | None = None, db: Session = Depends(get_db)):
+    """Big Screen feed: read-only, keyed by the display token alone. The screen polls with since=<last version>: an
+    unchanged draft answers with a tiny {changed: false}, so a 1-second poll costs almost nothing."""
     s = db.query(OfflineDraftSession).filter_by(display_token=token).first()
     if s is None:
         raise HTTPException(404, "Unknown display link")
+    if since is not None and since == s.version:
+        return {"changed": False, "version": s.version}
     return {**od.snapshot(db, s), "league_name": db.get(League, s.league_id).name}
 
 
@@ -187,6 +190,12 @@ def entry_mode(session_id: int, req: ModeRequest, db: Session = Depends(get_db),
 @router.post("/offline-drafts/{session_id}/cell-owner")
 def cell_owner(session_id: int, req: CellOwnerRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
     _, s = _mutate(db, session_id, user, lambda s: od.set_cell_owner(db, s, req.round, req.slot, req.team_id, f"user:{user.id}"))
+    return od.snapshot(db, s)
+
+
+@router.post("/offline-drafts/{session_id}/skip-announcement")
+def skip_announcement(session_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    _, s = _mutate(db, session_id, user, lambda s: od.skip_announcement(db, s, user.id))
     return od.snapshot(db, s)
 
 
