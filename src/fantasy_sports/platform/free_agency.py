@@ -32,7 +32,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
-from fantasy_sports.platform import pecking_order, season, waivers
+from fantasy_sports.platform import elimination, pecking_order, season, waivers
 from fantasy_sports.platform.league_features import is_college, roster_limit
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
@@ -165,6 +165,8 @@ def add_player(
     league = db.get(League, team.league_id)
     if not is_open(db, league.id):
         raise ValueError("Free agency opens when the draft ends")
+    if elimination.transactions_locked(league, team):
+        raise ValueError(elimination.TRANSACTIONS_LOCKED_MESSAGE)
     until = waivers.waiver_until(db, league.id, now).get(asset_id)
     if until is not None:
         raise ValueError(f"He is on waivers until {until:%Y-%m-%d %H:%M} UTC - place a claim instead")
@@ -184,6 +186,8 @@ def drop_player(
     now = now or datetime.datetime.utcnow()
     if not is_open(db, team.league_id):
         raise ValueError("Free agency opens when the draft ends")
+    if elimination.transactions_locked(db.get(League, team.league_id), team):
+        raise ValueError(elimination.TRANSACTIONS_LOCKED_MESSAGE)
     entry = db.query(RosterEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).first()
     if entry is None:
         raise ValueError("That player isn't on this team's roster")

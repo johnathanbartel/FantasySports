@@ -5,6 +5,8 @@ the client: payment, elimination, ownership, votes and the commissioner's identi
 
 Rules (see the CFG-06 matrix):
   * Past the league's trade deadline, or with an asset its sender doesn't own: blocked.
+  * FREE traditional redraft league: an eliminated, person-managed team is locked from every transaction (trades, signings,
+    drops, waiver claims) - see elimination.transactions_locked(). Nothing else in this list applies to it.
   * Draft picks need pick trading on in the league (and the pick inside the tradeable horizon).
   * Eliminated team: current players alone can't be traded. It must receive net positive future draft value.
       - receives picks and sends none: net positive by definition;
@@ -96,6 +98,14 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
 
     if league.trade_deadline is not None and now > league.trade_deadline:
         res.block("TRADE_DEADLINE_PASSED", "This trade cannot proceed because the league trade deadline has passed.")
+        res.status = BLOCKED
+        return res
+
+    # Free traditional redraft: an eliminated team makes no transactions at all.
+    for team in (a, b):
+        if elimination.transactions_locked(league, team):
+            res.block("TRANSACTIONS_LOCKED", f"{team.name}: {elimination.TRANSACTIONS_LOCKED_MESSAGE}")
+    if res.blocking_codes:
         res.status = BLOCKED
         return res
 
