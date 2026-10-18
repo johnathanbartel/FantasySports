@@ -1068,7 +1068,7 @@ async function renderHockeyScoreboard() {
       periodHeader = 'Final';
       clockSubheader = '3 Periods Complete';
     } else {
-      periodHeader = `Scheduled · ${fmtD(dailyGame.calendar_date)}`;
+      periodHeader = `Scheduled · ${fmtD(dailyGame.calendar_date)}${startLabel ? ' · ' + startLabel : ''}`;
       clockSubheader = 'Puck Drop Pending';
     }
 
