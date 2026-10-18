@@ -105,6 +105,8 @@ class League(Base):
         CheckConstraint("platform_plan IN ('AD_SUPPORTED', 'AD_FREE')", name="ck_league_platform_plan"),
         CheckConstraint("trade_review_mode IN ('none', 'commissioner', 'league', 'both')", name="ck_league_trade_review_mode"),
         CheckConstraint("trade_review_hours BETWEEN 0 AND 72", name="ck_league_trade_review_hours"),
+        CheckConstraint("visibility IN ('public', 'private')", name="ck_league_visibility"),
+        CheckConstraint("unfilled_slot_policy IN ('fill_ai', 'remove')", name="ck_league_unfilled_slot_policy"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -194,6 +196,13 @@ class League(Base):
     # What an eliminated team does in the playoffs: False = its season ends when it is eliminated (the default); True = it plays
     # consolation matchups. Consolation games are playoff-stage, so they never count toward elimination (platform/elimination.py).
     playoff_consolation: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Joining (platform/league_join.py). A public league is listed on the Join League page and its AI teams can be taken over;
+    # a private league is reached only by invite link. allow_ai_takeover_in_season lets people take over AI teams once the
+    # season has begun (public leagues only). unfilled_slot_policy is what happens to open human slots nobody claimed an hour
+    # before the draft: 'fill_ai' keeps them as AI teams, 'remove' deletes them and shrinks the league.
+    visibility: Mapped[str] = mapped_column(String(7), default="private", server_default="private")
+    allow_ai_takeover_in_season: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    unfilled_slot_policy: Mapped[str] = mapped_column(String(7), default="fill_ai", server_default="fill_ai")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
@@ -338,6 +347,9 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(80))
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     is_ai_owned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # An open human slot: reserved for a person to claim (platform/league_join.py). Until someone does it is AI-owned, so the
+    # AI plays it; the flag clears when it is claimed, or when the pre-draft cutoff turns it into an ordinary AI team.
+    open_human_slot: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Sets this team's starting auction-draft budget (see
     # auction.constants.STARTING_BUDGET_BY_PROGRAM_SIZE), its conference
     # (see conference_id below), and its season_goal. Default "small"

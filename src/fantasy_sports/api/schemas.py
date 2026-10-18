@@ -80,6 +80,10 @@ class LeagueCreateRequest(BaseModel):
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
     playoff_consolation: bool = False          # False = an eliminated team's season ends; True = it plays consolation matchups
+    # Joining (platform/league_join.py).
+    visibility: Literal["public", "private"] = "private"
+    allow_ai_takeover_in_season: bool = False      # public leagues only
+    unfilled_slot_policy: Literal["fill_ai", "remove"] = "fill_ai"
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
@@ -115,6 +119,9 @@ class LeagueSettingsRequest(BaseModel):
     division_winners_qualify: bool | None = None
     division_winners_seeded_first: bool | None = None
     playoff_consolation: bool | None = None
+    visibility: Literal["public", "private"] | None = None
+    allow_ai_takeover_in_season: bool | None = None
+    unfilled_slot_policy: Literal["fill_ai", "remove"] | None = None
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
@@ -126,6 +133,7 @@ class TeamSetupItem(BaseModel):
     is_commissioner: bool = False
     email: str | None = None
     program_size: str = "large"
+    is_open_slot: bool = False      # a human slot anyone can claim (no email); AI-run until claimed
 
 
 class LeagueTeamsSetupRequest(BaseModel):
@@ -140,6 +148,7 @@ class TeamSetupResult(BaseModel):
     email: str | None = None
     program_size: str
     invite_url: str | None = None
+    open_human_slot: bool = False
 
 
 class LeagueTeamsSetupResponse(BaseModel):
@@ -218,6 +227,9 @@ class LeagueOut(ORMModel):
     division_winners_qualify: bool
     division_winners_seeded_first: bool
     playoff_consolation: bool
+    visibility: str
+    allow_ai_takeover_in_season: bool
+    unfilled_slot_policy: str
 
 
 class SettingVoteOut(BaseModel):
@@ -393,6 +405,7 @@ class TeamOut(ORMModel):
     is_claimed: bool = False
     invite_status: str = "ai"
     invite_url: str | None = None
+    open_human_slot: bool = False
     ads_enabled: bool = True        # False only for an AD_FREE league's team whose current-season platform fee is secured
 
 
@@ -1197,3 +1210,39 @@ class RedraftContestViewOut(BaseModel):
     opponent_team_id: int | None
     my_entry: RedraftEntryOut | None
     opponent_entry: RedraftEntryOut | None     # null until the contest locks (rosters are private before then)
+
+
+class JoinableTeamOut(BaseModel):
+    id: int
+    name: str
+    kind: Literal["open_slot", "ai_takeover"]
+    program_size: str
+
+
+class JoinOptionsOut(BaseModel):
+    league_id: int
+    can_join: bool
+    reason: str | None = None            # why not, when can_join is False
+    teams: list[JoinableTeamOut]
+    slot_cutoff: datetime.datetime | None = None
+
+
+class PublicLeagueOut(BaseModel):
+    id: int
+    name: str
+    universe_codes: list[str]
+    size: int
+    draft_type: str
+    draft_scheduled_at: datetime.datetime | None
+    league_type: str
+    annual_dues_cents: int | None
+    human_teams: int
+    open_slots: int
+    ai_takeovers: int
+    allow_ai_takeover_in_season: bool
+    draft_state: str
+
+
+class JoinLeagueRequest(BaseModel):
+    team_id: int
+    team_name: str | None = Field(default=None, max_length=80)

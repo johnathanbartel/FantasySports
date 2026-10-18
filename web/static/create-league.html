@@ -152,6 +152,31 @@
       <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">These are the same settings the commissioner can change later on the League Settings tab.</p>
 
       <div class="field">
+        <label for="league-visibility">Who can find this league?</label>
+        <select id="league-visibility" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="private">Private - invite only</option>
+          <option value="public">Public - listed on Join League</option>
+        </select>
+        <span class="hint" id="league-visibility-hint"></span>
+      </div>
+
+      <div id="public-settings-fields" style="display:none">
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="allow-ai-takeover" style="width:auto"> Let people take over AI teams after the season has begun</label>
+          <span class="hint">Before the draft, anyone can take over an AI team in a public league. This also allows it once the season is under way.</span>
+        </div>
+      </div>
+
+      <div class="field" id="unfilled-slot-field">
+        <label for="unfilled-slot-policy">If a human slot is still empty an hour before the draft</label>
+        <select id="unfilled-slot-policy" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="fill_ai">Fill it with an AI team</option>
+          <option value="remove">Remove the team (the league gets smaller)</option>
+        </select>
+        <span class="hint">Applies to the open human slots you set up in the next step.</span>
+      </div>
+
+      <div class="field">
         <label for="league-format">League format</label>
         <select id="league-format" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
           <option value="traditional_redraft">Traditional Redraft</option>
@@ -268,6 +293,7 @@
         <div style="display:flex;gap:var(--space-2);flex-wrap:wrap">
           <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" id="bulk-ai-btn">Set all others to AI</button>
           <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" id="bulk-invite-btn">Set all others to Invite</button>
+          <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" id="bulk-open-btn">Set all others to Open Slots</button>
         </div>
       </div>
 
@@ -514,6 +540,9 @@ function leagueSettingsPayload() {
   const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
   const format = document.getElementById('league-format').value;
   const out = {league_format: format};
+  out.visibility = document.getElementById('league-visibility').value;
+  out.allow_ai_takeover_in_season = out.visibility === 'public' && document.getElementById('allow-ai-takeover').checked;
+  out.unfilled_slot_policy = document.getElementById('unfilled-slot-policy').value;
   out.trade_vote_extra_votes = num('trade-vote-extra') || 1;
   out.commissioner_trade_vote_extra_votes = num('commissioner-vote-extra') || 2;
   if (format === 'keeper') {
@@ -537,6 +566,16 @@ function leagueSettingsPayload() {
   }
   return out;
 }
+
+function updateVisibilityFields() {
+  const isPublic = document.getElementById('league-visibility').value === 'public';
+  document.getElementById('public-settings-fields').style.display = isPublic ? 'block' : 'none';
+  document.getElementById('league-visibility-hint').textContent = isPublic
+    ? 'Anyone can find this league, claim an open slot, or take over an AI team before the draft.'
+    : 'Only people with your invite link can join, and only into open slots you set up.';
+}
+document.getElementById('league-visibility').onchange = updateVisibilityFields;
+updateVisibilityFields();
 
 function selectedDraftType() {
   return document.querySelector('input[name=draft-type]:checked').value;
@@ -625,6 +664,10 @@ function renderTeamSlots(leagueSize) {
             <input type="radio" name="slot-type-${i}" value="invite" onchange="onSlotTypeChange(${i})">
             <span>Assign Email & Invite</span>
           </label>
+          <label style="font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+            <input type="radio" name="slot-type-${i}" value="open" onchange="onSlotTypeChange(${i})">
+            <span>Open Human Slot</span>
+          </label>
         </div>
       </div>
       <div style="display:flex;gap:var(--space-3);flex-wrap:wrap">
@@ -679,6 +722,14 @@ document.getElementById('bulk-invite-btn').onclick = () => {
   }
 };
 
+document.getElementById('bulk-open-btn').onclick = () => {
+  if (!league) return;
+  for (let i = 2; i <= league.size; i++) {
+    const radio = document.querySelector(`input[name="slot-type-${i}"][value="open"]`);
+    if (radio) { radio.checked = true; onSlotTypeChange(i); }
+  }
+};
+
 document.getElementById('create-league-btn').onclick = async () => {
   showError('');
   const name = document.getElementById('league-name').value.trim();
@@ -719,7 +770,7 @@ document.getElementById('create-league-btn').onclick = async () => {
     });
 
     document.getElementById('team-league-summary').textContent =
-      `Configuring ${league.size} teams for "${league.name}". Indicate which teams are AI or assign manager emails.`;
+      `Configuring ${league.size} teams for "${league.name}". Make each team AI, an open human slot anyone can claim, or assign a manager email.`;
     renderTeamSlots(league.size);
 
     document.getElementById('step-league').style.display = 'none';
@@ -756,9 +807,11 @@ document.getElementById('save-teams-btn').onclick = async () => {
   for (let i = 2; i <= league.size; i++) {
     const tName = document.getElementById(`slot-name-${i}`).value.trim();
     if (!tName) return showError(`Team ${i} requires a name.`);
-    const isAi = document.querySelector(`input[name="slot-type-${i}"]:checked`).value === 'ai';
+    const slotType = document.querySelector(`input[name="slot-type-${i}"]:checked`).value;
+    const isAi = slotType === 'ai';
+    const isOpen = slotType === 'open';
     let emailVal = null;
-    if (!isAi) {
+    if (!isAi && !isOpen) {
       emailVal = document.getElementById(`slot-email-${i}`).value.trim().toLowerCase();
       if (!emailVal || !emailVal.includes('@') || !emailVal.includes('.')) {
         return showError(`Please provide a valid email address for Team ${i} ("${tName}").`);
@@ -768,6 +821,7 @@ document.getElementById('save-teams-btn').onclick = async () => {
       name: tName,
       is_commissioner: false,
       is_ai: isAi,
+      is_open_slot: isOpen,
       email: emailVal,
       program_size: document.getElementById(`slot-prog-${i}`) ? document.getElementById(`slot-prog-${i}`).value : 'large',
     });
@@ -829,6 +883,16 @@ function renderInvitesSummary(createdTeams) {
             <span class="text-muted" style="font-size:13px;display:block">Managed by you (Commissioner)</span>
           </div>
           <span class="tag tag-accent">Ready</span>
+        </div>
+      `;
+    } else if (t.open_human_slot) {
+      itemDiv.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <strong>${esc(t.name)}</strong>
+            <span class="text-muted" style="font-size:13px;display:block">Open human slot - the first person to claim it from the league link gets it. The AI plays it until then.</span>
+          </div>
+          <span class="tag tag-accent-2">Open</span>
         </div>
       `;
     } else if (t.is_ai_owned) {
