@@ -90,6 +90,7 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
         assert_league_full(db, league)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    teams = db.query(Team).filter(Team.league_id == league.id).order_by(Team.id).all()   # unclaimed slots may have been removed
     offseason_kind = None
     if league.offseason:
         # The next season's draft: the commissioner starts it, the order follows the league format.

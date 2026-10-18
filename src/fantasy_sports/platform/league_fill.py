@@ -6,7 +6,10 @@ from fantasy_sports.platform.db.models.core import League, Team
 
 
 def assert_league_full(db: Session, league: League) -> None:
-    """Raises ValueError if the league has fewer teams than its size. Applies to every draft type."""
+    """Raises ValueError if the league has fewer teams than its size. Applies to every draft type. Starting the draft is also
+    when unclaimed open human slots are resolved per the league's policy (platform/league_join.py)."""
+    from fantasy_sports.platform import league_join
+    league_join.apply_slot_cutoff(db, league, force=True)
     have = db.query(Team).filter(Team.league_id == league.id).count()
     if have < league.size:
         open_spots = league.size - have

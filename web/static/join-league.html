@@ -36,6 +36,7 @@
       </a>
       <a href="/static/index.html">Home</a>
       <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/join-league.html" aria-current="page">Join league</a>
       <a href="/static/create-league.html">Create league</a>
     </div>
     <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
@@ -79,8 +80,28 @@
     <!-- League Full Panel -->
     <div id="league-full-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
       <h3 style="margin:0 0 var(--space-2);font-size:18px">League is Full</h3>
-      <p class="text-muted" style="margin:0 0 var(--space-3)">All spots in this league have been claimed. Check back with the commissioner if more spots open.</p>
+      <p class="text-muted" style="margin:0 0 var(--space-3)" id="league-full-reason">All spots in this league have been claimed. Check back with the commissioner if more spots open.</p>
       <p class="text-muted" style="margin:0;font-size:13px">If you were invited under a different email, try signing out and signing in with that email address.</p>
+    </div>
+
+    <!-- Browse public leagues (no league in the URL) -->
+    <div id="browse-panel" style="display:none">
+      <div id="browse-list" style="display:flex;flex-direction:column;gap:var(--space-3)"></div>
+    </div>
+
+    <!-- Pick a team to join: an open human slot or an AI team to take over -->
+    <div id="pick-team-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
+        <h3 style="margin:0;font-size:18px">Choose your team</h3>
+        <span class="text-muted" style="font-size:13px" id="pick-user-badge"></span>
+      </div>
+      <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px" id="pick-hint"></p>
+      <div id="pick-team-list" style="display:flex;flex-direction:column;gap:var(--space-2);margin-bottom:var(--space-4)"></div>
+      <div class="field">
+        <label for="pick-team-name">Team name (optional)</label>
+        <input type="text" id="pick-team-name" maxlength="80" placeholder="Keep the current name or enter your own">
+      </div>
+      <button type="button" class="btn btn-primary btn-block" id="pick-join-btn" style="padding:10px">Join League</button>
     </div>
 
     <!-- Step 1: Authentication (if not signed in) -->
@@ -198,6 +219,8 @@ const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football (NFL)', nhl: 'Ho
 
 let league = null;
 let teams = [];
+let joinOptions = null;
+let pickedTeamId = null;
 let currentUser = null;
 
 function showAuthTab(tab) {
@@ -224,6 +247,7 @@ document.getElementById('join-reg-form').onsubmit = async (e) => {
     FSC.renderNav();
     // Refresh teams list in case registering claimed an invited placeholder team
     teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
+    await refreshJoinOptions();
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -238,6 +262,7 @@ document.getElementById('join-login-form').onsubmit = async (e) => {
     );
     FSC.renderNav();
     teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
+    await refreshJoinOptions();
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -249,6 +274,7 @@ document.getElementById('join-guest-form').onsubmit = async (e) => {
     currentUser = await FSC.createGuest(document.getElementById('j-guest-name').value.trim());
     FSC.renderNav();
     teams = await api(`/leagues/${leagueId}/teams`).catch(() => []);
+    await refreshJoinOptions();
     renderFlow();
   } catch (err) { showError(err.message); }
 };
@@ -289,6 +315,7 @@ function renderFlow() {
   document.getElementById('league-full-panel').style.display = 'none';
   document.getElementById('auth-panel').style.display = 'none';
   document.getElementById('team-setup-panel').style.display = 'none';
+  document.getElementById('pick-team-panel').style.display = 'none';
 
   if (!currentUser) {
     document.getElementById('auth-panel').style.display = 'block';
@@ -303,8 +330,14 @@ function renderFlow() {
     return;
   }
 
+  if (joinOptions && joinOptions.teams.length) {
+    renderPicker();
+    return;
+  }
+
   if (isFull) {
     document.getElementById('league-full-panel').style.display = 'block';
+    if (joinOptions && joinOptions.reason) document.getElementById('league-full-reason').textContent = joinOptions.reason;
     return;
   }
 
@@ -315,10 +348,86 @@ function renderFlow() {
   document.getElementById('program-size-field').style.display = isPro ? 'none' : 'block';
 }
 
+const KIND_LABEL = {open_slot: 'Open human slot', ai_takeover: 'AI team - take over'};
+
+function renderPicker() {
+  document.getElementById('pick-team-panel').style.display = 'block';
+  document.getElementById('pick-user-badge').textContent = `Signed in as ${currentUser.display_name}`;
+  const list = joinOptions.teams;
+  if (!list.some(t => t.id === pickedTeamId)) {
+    pickedTeamId = (list.find(t => t.id === teamIdParam) || list[0]).id;
+  }
+  const hasAi = list.some(t => t.kind === 'ai_takeover');
+  const cutoff = joinOptions.slot_cutoff ? new Date(joinOptions.slot_cutoff + 'Z').toLocaleString() : null;
+  document.getElementById('pick-hint').textContent =
+    'Open human slots are held for people; an AI team plays until you take it over.' +
+    (hasAi ? ' You take over its roster as it stands.' : '') +
+    (cutoff ? ` Unclaimed open slots are resolved at ${cutoff}.` : '');
+  document.getElementById('pick-team-list').innerHTML = list.map(t => `
+    <label class="card" style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3);cursor:pointer;border:1px solid ${t.id === pickedTeamId ? 'var(--color-accent)' : 'var(--color-divider)'}">
+      <input type="radio" name="pick-team" value="${t.id}" ${t.id === pickedTeamId ? 'checked' : ''} style="width:auto">
+      <span style="flex:1"><strong>${esc(t.name)}</strong></span>
+      <span class="tag ${t.kind === 'open_slot' ? 'tag-accent' : 'tag-neutral'}">${KIND_LABEL[t.kind]}</span>
+    </label>`).join('');
+  document.querySelectorAll('input[name=pick-team]').forEach(r => r.onchange = () => { pickedTeamId = Number(r.value); renderPicker(); });
+}
+
+document.getElementById('pick-join-btn').onclick = async () => {
+  showError('');
+  try {
+    const team = await api(`/leagues/${league.id}/join`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({team_id: pickedTeamId, team_name: document.getElementById('pick-team-name').value.trim() || null}),
+    });
+    location.href = `/static/league.html?league_id=${league.id}&team_id=${team.id}`;
+  } catch (err) {
+    showError(err.message);
+    await refreshJoinOptions();
+    teams = await api(`/leagues/${leagueId}/teams`).catch(() => teams);
+    renderFlow();
+  }
+};
+
+async function refreshJoinOptions() {
+  joinOptions = await api(`/leagues/${leagueId}/join-options`).catch(() => null);
+}
+
+const DRAFT_STATE_LABEL = {not_started: 'Draft not started', in_progress: 'Draft in progress', complete: 'Season under way'};
+
+async function initBrowse() {
+  document.getElementById('league-title').textContent = 'Join a League';
+  document.getElementById('league-summary').textContent = 'Public leagues with a team open to you.';
+  document.getElementById('browse-panel').style.display = 'block';
+  const list = document.getElementById('browse-list');
+  try {
+    const leagues = await api('/leagues/public');
+    if (!leagues.length) {
+      list.innerHTML = `<div class="card elev-sm text-muted" style="padding:var(--space-5)">No public leagues have an open team right now. <a href="/static/create-league.html">Create your own</a>.</div>`;
+      return;
+    }
+    list.innerHTML = leagues.map(l => `
+      <div class="card elev-sm" style="padding:var(--space-4)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:var(--space-2)">
+          <h3 style="margin:0;font-size:18px">${esc(l.name)}</h3>
+          <span class="tag tag-accent">${l.universe_codes.map(c => esc(SPORT_LABELS[c] || c.toUpperCase())).join(' + ')}</span>
+        </div>
+        <div class="text-muted" style="font-size:13px;margin:var(--space-2) 0">
+          ${l.size} teams &middot; ${l.human_teams} managed by people &middot; ${l.draft_type === 'snake' ? 'Snake draft' : 'Recruiting draft'}
+          &middot; ${DRAFT_STATE_LABEL[l.draft_state] || ''}${l.draft_scheduled_at ? ' &middot; draft ' + esc(new Date(l.draft_scheduled_at + 'Z').toLocaleString()) : ''}
+          &middot; ${l.league_type === 'PAID' ? 'Paid' + (l.annual_dues_cents ? ' ($' + (l.annual_dues_cents / 100).toFixed(2) + '/season)' : '') : 'Free'}
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
+          <span style="font-size:13px"><strong>${l.open_slots}</strong> open slot${l.open_slots === 1 ? '' : 's'} &middot; <strong>${l.ai_takeovers}</strong> AI team${l.ai_takeovers === 1 ? '' : 's'} to take over</span>
+          <a class="btn btn-primary" href="/static/join-league.html?league_id=${l.id}">View &amp; Join</a>
+        </div>
+      </div>`).join('');
+  } catch (err) { showError(err.message); }
+}
+
 async function init() {
   if (!leagueId) {
-    showError('No league ID specified in URL. Check your invitation link.');
-    return;
+    return initBrowse();
   }
 
   if (emailParam) {
@@ -334,17 +443,21 @@ async function init() {
       api(`/leagues/${leagueId}`),
       api(`/leagues/${leagueId}/teams`).catch(() => []),
     ]);
+    await refreshJoinOptions();
 
     const openSpots = league.size - teams.length;
+    const joinableCount = joinOptions ? joinOptions.teams.length : 0;
     document.getElementById('league-title').textContent = `Join ${league.name}`;
     
     const invitedTeam = teamIdParam ? teams.find(t => t.id === teamIdParam) : null;
     if (invitedTeam) {
       document.getElementById('league-summary').innerHTML = `You've been invited to take over <strong>${esc(invitedTeam.name)}</strong> for tonight's draft.`;
     } else {
-      document.getElementById('league-summary').textContent = openSpots > 0
-        ? `${openSpots} of ${league.size} spots available for tonight's draft.`
-        : 'All spots are currently filled.';
+      document.getElementById('league-summary').textContent = joinableCount > 0
+        ? `${joinableCount} team${joinableCount === 1 ? '' : 's'} you can join in this ${league.visibility} league.`
+        : openSpots > 0
+          ? `${openSpots} of ${league.size} spots available for tonight's draft.`
+          : 'All spots are currently filled.';
     }
 
     document.getElementById('league-card').style.display = 'block';

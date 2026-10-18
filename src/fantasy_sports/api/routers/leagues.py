@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, require_commissioner_mode
+from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, optional_user, require_commissioner_mode
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
@@ -15,12 +15,13 @@ from fantasy_sports.api.schemas import (
     LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
     SettingChangeOut, SettingVoteOut, SettingVoteRequest,
     FuturePicksOut, KeeperPlayerOut, KeepersOut, KeepersRequest,
+    JoinableTeamOut, JoinLeagueRequest, JoinOptionsOut, PublicLeagueOut,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import setting_changes
+from fantasy_sports.platform import league_join, setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
@@ -106,6 +107,8 @@ def create_league(
         raise HTTPException(400, f"Invalid draft_type '{payload.draft_type}'")
     if payload.league_type == "PAID" and not payload.annual_dues_cents:
         raise HTTPException(400, "A paid league needs an annual dues amount")
+    if payload.allow_ai_takeover_in_season and payload.visibility != "public":
+        raise HTTPException(400, "Taking over AI teams in season is only for public leagues")
 
     hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
                                or payload.points_per_tie != 1 or payload.playoff_teams is not None
@@ -159,6 +162,9 @@ def create_league(
         division_winners_qualify=payload.division_winners_qualify,
         division_winners_seeded_first=payload.division_winners_seeded_first,
         playoff_consolation=payload.playoff_consolation,
+        visibility=payload.visibility,
+        allow_ai_takeover_in_season=payload.allow_ai_takeover_in_season,
+        unfilled_slot_policy=payload.unfilled_slot_policy,
     )
     db.add(league)
     db.flush()  # assigns league.id without committing yet
@@ -338,11 +344,73 @@ def auto_set_ai_lineups(
     return {"week_id": week_id, "teams": done}
 
 
+@router.get("/public", response_model=list[PublicLeagueOut])
+def list_public_leagues(db: Session = Depends(get_db)):
+    """The Join League page: public leagues with at least one team a person could join."""
+    out = []
+    for league in db.query(League).filter(League.visibility == "public").order_by(League.id.desc()).all():
+        if league_join.apply_slot_cutoff(db, league):
+            db.commit()
+        options, _ = league_join.joinable_teams(db, league)
+        if not options:
+            continue
+        teams = db.query(Team).filter(Team.league_id == league.id).all()
+        codes = [c for (c,) in db.query(Universe.code).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id)
+                 .filter(LeagueUniverse.league_id == league.id)]
+        out.append(PublicLeagueOut(
+            id=league.id, name=league.name, universe_codes=codes, size=league.size, draft_type=league.draft_type,
+            draft_scheduled_at=league.draft_scheduled_at, league_type=league.league_type,
+            annual_dues_cents=league.annual_dues_cents, human_teams=sum(1 for t in teams if not t.is_ai_owned),
+            open_slots=sum(1 for _, k in options if k == "open_slot"),
+            ai_takeovers=sum(1 for _, k in options if k == "ai_takeover"),
+            allow_ai_takeover_in_season=league.allow_ai_takeover_in_season, draft_state=draft_state(db, league.id)))
+    return out
+
+
+@router.get("/{league_id}/join-options", response_model=JoinOptionsOut)
+def get_join_options(league_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
+    """Which teams the caller (signed in or not) could join right now, or why none."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if league_join.apply_slot_cutoff(db, league):
+        db.commit()
+    options, reason = league_join.joinable_teams(db, league, user.id if user else None)
+    return JoinOptionsOut(
+        league_id=league.id, can_join=bool(options), reason=reason, slot_cutoff=league_join.slot_cutoff(league),
+        teams=[JoinableTeamOut(id=t.id, name=t.name, kind=k, program_size=t.program_size) for t, k in options])
+
+
+@router.post("/{league_id}/join", response_model=TeamOut)
+def join_league(
+    league_id: int, payload: JoinLeagueRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Join a league by claiming an open human slot or taking over an AI team (rules in platform/league_join.py)."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if league_join.apply_slot_cutoff(db, league):
+        db.commit()
+    team = db.get(Team, payload.team_id)
+    if team is None or team.league_id != league.id:
+        raise HTTPException(404, "Team not found in this league")
+    try:
+        league_join.join(db, league, user.id, team.id, payload.team_name)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(409, str(e))
+    db.commit()
+    db.refresh(team)
+    return next(t for t in get_league_teams(league.id, db) if t.id == team.id)
+
+
 @router.get("/{league_id}", response_model=LeagueOut)
 def get_league(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    if league_join.apply_slot_cutoff(db, league):
+        db.commit()
     if season_rollover.process_keeper_deadline(db, league):
         db.commit()
     if not is_college(db, league.id):
@@ -430,6 +498,14 @@ def update_league_settings(
             raise HTTPException(400, f"The playoff field can't have {league.playoff_byes} byes")
     if payload.pick_trading_enabled is not None:
         league.pick_trading_enabled = payload.pick_trading_enabled
+    if payload.visibility is not None:
+        league.visibility = payload.visibility
+    if payload.allow_ai_takeover_in_season is not None:
+        league.allow_ai_takeover_in_season = payload.allow_ai_takeover_in_season
+    if payload.unfilled_slot_policy is not None:
+        league.unfilled_slot_policy = payload.unfilled_slot_policy
+    if league.allow_ai_takeover_in_season and league.visibility != "public":
+        raise HTTPException(400, "Taking over AI teams in season is only for public leagues")
     if payload.league_type == "PAID" and payload.league_type != league.league_type:
         dues_after = payload.annual_dues_cents if "annual_dues_cents" in sent else league.annual_dues_cents
         if not dues_after:
@@ -662,6 +738,8 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
+    if league_join.apply_slot_cutoff(db, league):
+        db.commit()
     teams = db.query(Team).filter(Team.league_id == league_id).order_by(Team.id).all()
     if not teams:
         raise HTTPException(404, "League not found or has no teams")
@@ -673,7 +751,7 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
         u = user_map.get(t.owner_user_id) if t.owner_user_id else None
         if t.is_ai_owned or not t.owner_user_id:
             is_claimed = False
-            invite_status = "ai"
+            invite_status = "open_slot" if t.open_human_slot else "ai"
             invite_url = None
         elif t.owner_user_id == league.commissioner_user_id:
             is_claimed = True
@@ -705,6 +783,7 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
             is_claimed=is_claimed,
             invite_status=invite_status,
             invite_url=invite_url,
+            open_human_slot=t.open_human_slot,
             ads_enabled=platform_fees.ads_enabled(db, league, t),
         ))
     return results
@@ -816,12 +895,13 @@ def setup_league_teams(
                 program_size=prog_size,
                 invite_url=None,
             ))
-        elif item.is_ai:
+        elif item.is_ai or item.is_open_slot:
             team = Team(
                 league_id=league.id,
                 name=team_name,
                 owner_user_id=None,
                 is_ai_owned=True,
+                open_human_slot=item.is_open_slot,
                 program_size=prog_size,
                 conference_id=conference.id,
             )
@@ -835,6 +915,7 @@ def setup_league_teams(
                 email=None,
                 program_size=prog_size,
                 invite_url=None,
+                open_human_slot=item.is_open_slot,
             ))
         else:
             email_val = (item.email or "").strip().lower()
