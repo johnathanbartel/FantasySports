@@ -29,6 +29,44 @@ def _league_series(db: Session, league_id: int) -> list[LeagueSeries]:
             .order_by(LeagueSeries.start_date, LeagueSeries.team_a_id).all())
 
 
+def _project_start_times(db: Session, universe_id: int, rows: list[LeagueSeries], today: datetime.date) -> None:
+    """A window game with no simulation yet has no wall clock. Its start is when the first of either side's starters begins:
+    the earliest real kickoff, in the window, of a game involving a real team that has a starter in either frozen lineup
+    (the same lineup rule the engine freezes on). Only windows within a week of today are projected; the rest of the season
+    is not worth a lineup resolution each."""
+    from fantasy_sports.platform.nhl_daily_sync import eastern_naive_to_utc
+    from fantasy_sports.sports.hockey.simulator import window_engine
+    from fantasy_sports.platform import pecking_order as po
+    teams: dict[int, Team] = {}
+    games_of: dict[tuple, list] = {}
+    for s in rows:
+        for g in s.daily_games:
+            end = g.calendar_date_end or g.calendar_date
+            if g.window_index is None or g.first_start_at or g.status in ("FINAL", "LIVE", "LIVE_SIMULATING"):
+                continue
+            if end < today or g.calendar_date > today + datetime.timedelta(days=7):
+                continue
+            window = games_of.get((g.calendar_date, end))
+            if window is None:
+                window = games_of[(g.calendar_date, end)] = window_engine.window_games(db, universe_id, g.calendar_date, end)
+            sides = []
+            for tid in (g.home_team_id, g.away_team_id):
+                if tid not in teams:
+                    teams[tid] = db.get(Team, tid)
+                sides.append(teams[tid])
+            if not window or None in sides:
+                continue
+            rosters = [po.roster_players(db, t.id) for t in sides]
+            roster_teams = {pl.real_team_id for r in rosters for _, (_, pl) in r.items() if pl.real_team_id}
+            window_real = {t for gm in window if gm.home_team_id in roster_teams or gm.away_team_id in roster_teams
+                           for t in (gm.home_team_id, gm.away_team_id)}
+            starter_ids = {aid for t in sides for aid in window_engine.freeze_lineup(db, t, window_real)}
+            starter_teams = {pl.real_team_id for r in rosters for _, (aid, pl) in r.items() if aid in starter_ids}
+            kicks = [gm.kickoff_at for gm in window if gm.kickoff_at and (gm.home_team_id in starter_teams or gm.away_team_id in starter_teams)]
+            if kicks:
+                g.first_start_at = eastern_naive_to_utc(min(kicks)).isoformat() + "Z"
+
+
 def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, viewer_user_id: int | None = None) -> SeriesScheduleOut:
     watched_map = {}
     ready_map: dict[int, bool] = {}
@@ -148,22 +186,7 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                     slate_summary = f"{real_total} real NHL games scheduled today"
 
         if nhl:
-            # Games with no simulation yet have no wall clock; their start is the first real NHL puck drop on the window's first day.
-            from fantasy_sports.platform.nhl_daily_sync import eastern_naive_to_utc
-            first_kickoff_by_date: dict[datetime.date, datetime.datetime] = {}
-            for s in rows:
-                for g in s.daily_games:
-                    if getattr(g, "first_start_at", None) or g.status in ("FINAL", "LIVE", "LIVE_SIMULATING"):
-                        continue
-                    if g.calendar_date not in first_kickoff_by_date:
-                        day = datetime.datetime.combine(g.calendar_date, datetime.time.min)
-                        kicks = [k.kickoff_at for k in db.query(Game).filter(
-                            Game.universe_id == nhl.id, Game.kickoff_at >= day + datetime.timedelta(hours=6),
-                            Game.kickoff_at < day + datetime.timedelta(days=1)).all() if k.kickoff_at]
-                        if kicks:
-                            first_kickoff_by_date[g.calendar_date] = min(kicks)
-                    if g.calendar_date in first_kickoff_by_date:
-                        g.first_start_at = eastern_naive_to_utc(first_kickoff_by_date[g.calendar_date]).isoformat() + "Z"
+            _project_start_times(db, nhl.id, rows, current_eastern_date())
 
     for s in rows:
         s.daily_games.sort(key=lambda g: g.calendar_date)
