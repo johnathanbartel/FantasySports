@@ -1619,7 +1619,8 @@ async function renderTrades() {
     const lines = (el.explanations || []).map(x => `<div>${esc(x)}</div>`).join('');
     const missing = (el.missing_prerequisites || []).length ? `<div class="muted">Still needed: ${esc(el.missing_prerequisites.join(', '))}.</div>` : '';
     const signed = tr.commissioner_decision ? `<div>Commissioner: <b>${tr.commissioner_decision === 'approve' ? 'signed off' : 'rejected'}</b>.</div>` : '';
-    const buttons = (isCommissioner && needsSignOff && !tr.commissioner_decision) ? `
+    const ownTeamInTrade = [tr.proposer_team_id, tr.counterparty_team_id].some(id => teamsById[id] && teamsById[id].owner_user_id === me);
+    const buttons = (isCommissioner && needsSignOff && !tr.commissioner_decision && !ownTeamInTrade) ? `
       <div style="display:flex;gap:var(--space-2);margin-top:6px">
         <button type="button" class="btn btn-primary btn-sm" data-commish-decide="${tr.id}" data-decision="approve">Sign off</button>
         <button type="button" class="btn btn-secondary btn-sm" data-commish-decide="${tr.id}" data-decision="reject" style="color:var(--color-danger)">Reject</button>
@@ -2330,7 +2331,30 @@ async function renderLeagueSettings() {
        <p><button type="button" class="btn btn-primary" id="league-type-save">Save</button></p>`
     : `<p>${paid ? 'Paid league - $' + (lg.annual_dues_cents / 100).toFixed(2) + ' annual dues.' : 'Free league - no dues.'}</p>
        <p>Trade deadline: <b>${lg.trade_deadline ? esc(fmtUtc(lg.trade_deadline)) : 'none'}</b></p>`)
-    + `<p class="muted">${paid ? 'Eliminated teams, and teams trading away future picks, must have the relevant seasons dues paid first.' : 'Eliminated teams can trade only for future draft picks, with majority league approval and the commissioner sign-off.'} Once dues are recorded or trades are pending, the type can change only in the offseason.</p></div>`;
+    + `<p class="muted">${paid ? 'Eliminated teams, and teams trading away future picks, must have the relevant seasons dues paid first.' : 'Eliminated teams can trade only for future draft picks, with majority league approval and the commissioner sign-off.'} Once rosters exist, changing the type midseason needs every manager's approval.</p></div>`;
+  const half = Math.floor(ov.teams.length / 2);
+  html += `<div class="card"><h3>Trade Voting</h3>` + (isCommissioner
+    ? `<p><label>Votes needed beyond half the league <input id="vote-extra" type="number" min="1" max="20" value="${lg.trade_vote_extra_votes}" style="width:4em"></label>
+         <span class="muted">(${Math.min(ov.teams.length, half + lg.trade_vote_extra_votes)} of ${ov.teams.length} teams now)</span></p>
+       <p><label>Votes needed when the commissioner's team is in the trade <input id="commish-vote-extra" type="number" min="1" max="20" value="${lg.commissioner_trade_vote_extra_votes}" style="width:4em"></label>
+         <span class="muted">(${Math.min(ov.teams.length, half + lg.commissioner_trade_vote_extra_votes)} of ${ov.teams.length} teams now)</span></p>
+       <p><button type="button" class="btn btn-primary" id="vote-rules-save">Save</button></p>`
+    : `<p>A trade that goes to a league vote needs <b>${Math.min(ov.teams.length, half + lg.trade_vote_extra_votes)}</b> of ${ov.teams.length} votes, or <b>${Math.min(ov.teams.length, half + lg.commissioner_trade_vote_extra_votes)}</b> when the commissioner's team is in it.</p>`)
+    + `<p class="muted">Exactly half never passes. The commissioner has no sign-off on a trade their own team is in; the league decides it.</p></div>`;
+  const pending = (await api(`/leagues/${LEAGUE_ID}/setting-changes`)).filter(c => c.status === 'voting');
+  const SETTING_NAMES = {league_type: 'League type', league_format: 'League format'};
+  const valueName = (f, v) => f === 'league_format' ? fmtName(v) : (v === 'PAID' ? 'Paid' : 'Free');
+  if (pending.length || isCommissioner) {
+    html += `<div class="card"><h3>Votes on League Changes</h3>` + (pending.length ? pending.map(c => `<div style="margin-bottom:var(--space-3)">
+        <p><b>${SETTING_NAMES[c.field]}: ${esc(valueName(c.field, c.old_value))} &rarr; ${esc(valueName(c.field, c.new_value))}</b><br>
+        <span class="muted">Every manager has to approve. One rejection ends it.</span></p>
+        <p>${c.votes.map(v => `${esc(v.team_name)}: <b>${v.vote ? (v.vote === 'approve' ? 'approved' : 'rejected') : 'waiting'}</b>`).join(' &middot; ')}</p>
+        ${c.can_vote ? `<p>${c.my_vote ? 'You ' + (c.my_vote === 'approve' ? 'approved' : 'rejected') + '. ' : ''}<button type="button" class="btn btn-primary setting-vote" data-id="${c.id}" data-vote="approve">Approve</button>
+          <button type="button" class="btn btn-secondary setting-vote" data-id="${c.id}" data-vote="reject">Reject</button></p>` : ''}
+        ${isCommissioner ? `<p><button type="button" class="btn btn-secondary setting-cancel" data-id="${c.id}">Withdraw</button></p>` : ''}</div>`).join('')
+      : `<p class="muted">None open.</p>`)
+      + `<p class="muted">Once rosters exist, changing the league type or format midseason needs every manager's approval, because teams draft to the rules they joined. In the offseason it applies at once.</p></div>`;
+  }
   html += `<div class="card"><h3>Season ${lg.season_number}${lg.offseason ? ' - offseason' : ''}</h3>`;
   if (lg.offseason) {
     html += keeperPhase
@@ -2360,7 +2384,8 @@ async function renderLeagueSettings() {
   };
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   const sel = $('league-format');
-  if (sel) sel.onchange = () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {league_format: sel.value})), 'League format saved.');
+  if (sel) sel.onchange = () => call(async () => { await api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {league_format: sel.value})); },
+    'League format saved. If rosters exist, it stays as it was until every manager approves (see Votes on League Changes).');
   on('keeper-settings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
     keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
@@ -2375,7 +2400,12 @@ async function renderLeagueSettings() {
   on('league-type-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
     league_type: $('league-type').value,
     annual_dues_cents: $('league-dues').value === '' ? null : Math.round(parseFloat($('league-dues').value) * 100),
-    trade_deadline: localInputToUtc($('trade-deadline').value)})), 'League type and trade rules saved.'));
+    trade_deadline: localInputToUtc($('trade-deadline').value)})), 'League type and trade rules saved. A type change midseason waits for every manager to approve (see Votes on League Changes).'));
+  on('vote-rules-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
+    trade_vote_extra_votes: parseInt($('vote-extra').value, 10), commissioner_trade_vote_extra_votes: parseInt($('commish-vote-extra').value, 10)})),
+    'Trade voting rules saved.'));
+  document.querySelectorAll('.setting-vote').forEach(b => b.onclick = () => call(() => api(`/leagues/${LEAGUE_ID}/setting-changes/${b.dataset.id}/vote`, jsonOpts('POST', {vote: b.dataset.vote})), 'Vote recorded.'));
+  document.querySelectorAll('.setting-cancel').forEach(b => b.onclick = () => call(() => api(`/leagues/${LEAGUE_ID}/setting-changes/${b.dataset.id}/cancel`, {method: 'POST'}), 'Vote withdrawn.'));
   on('keeper-finalize', () => { if (confirm('Close keeper selection now? Teams that have not picked are trimmed automatically and everyone not kept is released.')) call(() => api(`/leagues/${LEAGUE_ID}/keepers/finalize`, {method: 'POST'}), 'Keepers closed.'); });
   on('rollover-btn', () => {
     if (!confirm(`Start season ${lg.season_number + 1}? This archives season ${lg.season_number} and opens the offseason. It clears the season's matchups, lineups and scores${keepsRosters ? '' : ' and every roster'}.`)) return;

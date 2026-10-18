@@ -196,6 +196,17 @@
         <span class="hint">Keeper and Dynasty leagues can trade picks for this many upcoming drafts.</span>
       </div>
 
+      <div class="field">
+        <label for="trade-vote-extra">Votes a trade needs beyond half the league</label>
+        <input type="number" id="trade-vote-extra" min="1" max="20" value="1">
+        <span class="hint">1 means half the teams plus 1, so exactly half never passes. Applies to trades that go to a league vote.</span>
+      </div>
+      <div class="field">
+        <label for="commissioner-vote-extra">Votes needed when the commissioner's team is in the trade</label>
+        <input type="number" id="commissioner-vote-extra" min="1" max="20" value="2">
+        <span class="hint">2 means half the teams plus 2. The commissioner has no sign-off on their own trades; the league decides.</span>
+      </div>
+
       <div id="hockey-settings-fields" style="display:none">
         <div class="field">
           <label for="standings-mode">Standings are sorted by</label>
@@ -503,6 +514,8 @@ function leagueSettingsPayload() {
   const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
   const format = document.getElementById('league-format').value;
   const out = {league_format: format};
+  out.trade_vote_extra_votes = num('trade-vote-extra') || 1;
+  out.commissioner_trade_vote_extra_votes = num('commissioner-vote-extra') || 2;
   if (format === 'keeper') {
     out.keeper_draft_style = document.getElementById('keeper-style').value;
     out.keeper_limit = num('keeper-limit');

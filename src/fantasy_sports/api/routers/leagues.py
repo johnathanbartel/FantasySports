@@ -2,7 +2,7 @@ import datetime
 import random
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -13,17 +13,19 @@ from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
     LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
+    SettingChangeOut, SettingVoteOut, SettingVoteRequest,
     FuturePicksOut, KeeperPlayerOut, KeepersOut, KeepersRequest,
     LeagueTeamsSetupRequest, LeagueTeamsSetupResponse, RosterSlotOut,
     SandboxLeagueRequest, SetupStructureRequest, StandingsRow, TeamAlignmentItem, TeamAssignOut,
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
+from fantasy_sports.platform import setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
-    AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
+    AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, LeagueSettingChange, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
     RecruitingDraft, RecruitingSettings, RosterEntry, RosterSlotDefinition, SeasonDues,
     Team, Trade, Universe, User, Week, WeeklyMatchup,
 )
@@ -146,6 +148,8 @@ def create_league(
         league_type=payload.league_type,
         annual_dues_cents=payload.annual_dues_cents,
         trade_deadline=payload.trade_deadline,
+        trade_vote_extra_votes=payload.trade_vote_extra_votes,
+        commissioner_trade_vote_extra_votes=payload.commissioner_trade_vote_extra_votes,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -367,13 +371,27 @@ def rename_league(
 
 @router.patch("/{league_id}/settings", response_model=LeagueOut)
 def update_league_settings(
-    league_id: int, payload: LeagueSettingsRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+    league_id: int, payload: LeagueSettingsRequest, response: Response, db: Session = Depends(get_db), user: User = Depends(current_user)
 ):
     """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}."""
     league = assert_commissioner(db, user, league_id)
     sent = payload.model_fields_set
-    if payload.league_format is not None:
-        league.league_format = payload.league_format
+    opened: list[LeagueSettingChange] = []
+
+    def change_voted(field: str, new_value: str | None) -> None:
+        """league_type / league_format: applied at once before the first draft and in the offseason; midseason every
+        person-managed team has to approve first (platform/setting_changes.py)."""
+        if new_value is None or new_value == getattr(league, field):
+            return
+        if not setting_changes.needs_vote(db, league):
+            setattr(league, field, new_value)
+            return
+        try:
+            opened.append(setting_changes.propose(db, league, field, new_value, user.id))
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+
+    change_voted("league_format", payload.league_format)
     if payload.keeper_draft_style is not None:
         league.keeper_draft_style = payload.keeper_draft_style
     hockey_fields = (payload.standings_mode is not None or payload.points_per_win is not None
@@ -412,18 +430,19 @@ def update_league_settings(
             raise HTTPException(400, f"The playoff field can't have {league.playoff_byes} byes")
     if payload.pick_trading_enabled is not None:
         league.pick_trading_enabled = payload.pick_trading_enabled
-    if payload.league_type is not None and payload.league_type != league.league_type:
-        # Unsafe midseason: open trades were judged under the old rules and dues records are obligations to keep.
-        open_trades = db.query(Trade).filter(Trade.league_id == league.id, Trade.status.in_(("proposed", "voting", "in_review"))).count()
-        has_dues = db.query(SeasonDues).filter_by(league_id=league.id).count()
-        if not league.offseason and (open_trades or has_dues):
-            raise HTTPException(409, "The league type can't change midseason while trades are pending or dues have been "
-                                     "recorded. Wait for the offseason.")
-        league.league_type = payload.league_type          # existing dues records and picks are never touched
+    if payload.league_type == "PAID" and payload.league_type != league.league_type:
+        dues_after = payload.annual_dues_cents if "annual_dues_cents" in sent else league.annual_dues_cents
+        if not dues_after:
+            raise HTTPException(400, "A paid league needs an annual dues amount")
+    change_voted("league_type", payload.league_type)      # existing dues records and picks are never touched
     if "annual_dues_cents" in sent:
         league.annual_dues_cents = payload.annual_dues_cents
     if "trade_deadline" in sent:
         league.trade_deadline = payload.trade_deadline
+    if payload.trade_vote_extra_votes is not None:
+        league.trade_vote_extra_votes = payload.trade_vote_extra_votes
+    if payload.commissioner_trade_vote_extra_votes is not None:
+        league.commissioner_trade_vote_extra_votes = payload.commissioner_trade_vote_extra_votes
     if league.league_type == "PAID" and not league.annual_dues_cents:
         raise HTTPException(400, "A paid league needs an annual dues amount")
     if payload.platform_plan is not None and payload.platform_plan != league.platform_plan:
@@ -448,7 +467,68 @@ def update_league_settings(
         elimination.recalculate_league(db, league.id, clear_stale=True)
     db.commit()
     db.refresh(league)
+    if opened:
+        response.headers["X-Setting-Changes-Opened"] = ",".join(str(c.id) for c in opened)
     return league
+
+
+def _setting_change_out(db: Session, change: LeagueSettingChange, user: User) -> SettingChangeOut:
+    cast = {v.team_id: v.vote for v in change.votes}
+    teams = setting_changes.voters(db, change.league_id)
+    mine = next((t for t in teams if t.owner_user_id == user.id), None)
+    return SettingChangeOut(
+        id=change.id, league_id=change.league_id, field=change.field, old_value=change.old_value, new_value=change.new_value,
+        status=change.status, created_at=change.created_at, resolved_at=change.resolved_at,
+        votes=[SettingVoteOut(team_id=t.id, team_name=t.name, vote=cast.get(t.id)) for t in teams],
+        my_vote=cast.get(mine.id) if mine else None, can_vote=bool(mine) and change.status == "voting")
+
+
+@router.get("/{league_id}/setting-changes", response_model=list[SettingChangeOut])
+def list_setting_changes(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Votes on midseason league type / format changes, newest first. Commissioner or a manager in the league."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if league.commissioner_user_id != user.id and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
+        raise HTTPException(403, "You are not a member of this league")
+    rows = db.query(LeagueSettingChange).filter_by(league_id=league_id).order_by(LeagueSettingChange.id.desc()).all()
+    return [_setting_change_out(db, c, user) for c in rows]
+
+
+def _get_change(db: Session, league_id: int, change_id: int) -> LeagueSettingChange:
+    change = db.get(LeagueSettingChange, change_id)
+    if change is None or change.league_id != league_id:
+        raise HTTPException(404, "Setting change not found")
+    return change
+
+
+@router.post("/{league_id}/setting-changes/{change_id}/vote", response_model=SettingChangeOut)
+def vote_setting_change(
+    league_id: int, change_id: int, payload: SettingVoteRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    change = _get_change(db, league_id, change_id)
+    try:
+        setting_changes.vote(db, change, user.id, payload.vote)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    db.commit()
+    db.refresh(change)
+    return _setting_change_out(db, change, user)
+
+
+@router.post("/{league_id}/setting-changes/{change_id}/cancel", response_model=SettingChangeOut)
+def cancel_setting_change(league_id: int, change_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    """Commissioner action: withdraws an open vote."""
+    assert_commissioner(db, user, league_id)
+    change = _get_change(db, league_id, change_id)
+    try:
+        setting_changes.cancel(db, change, user.id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    db.commit()
+    return _setting_change_out(db, change, user)
 
 
 @router.post("/{league_id}/rollover", response_model=LeagueOut)

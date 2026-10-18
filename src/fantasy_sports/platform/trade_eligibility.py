@@ -19,7 +19,10 @@ Rules (see the CFG-06 matrix):
   * AD_FREE league (FS-036): a person-managed team sending picks needs each pick season's platform fee (the deposit) secured,
     once per team per season; in a PAID + AD_FREE league that is on top of the dues. See platform_fees.py.
   * FREE league, eliminated team involved: majority league approval AND the commissioner's sign-off
-    (ELIMINATED_FREE_LEAGUE_TRADE). Neither can stand in for the other.
+    (ELIMINATED_FREE_LEAGUE_TRADE). Neither can stand in for the other. If the commissioner's own team is in the trade there is
+    no sign-off: the league alone decides, at the higher commissioner-trade threshold (votes_needed).
+  * Votes needed: teams // 2 + league.trade_vote_extra_votes (default 1); with the commissioner's team in the trade,
+    + league.commissioner_trade_vote_extra_votes (default 2).
   * Eliminated team sending picks while no valuation policy is installed: not blocked - the league votes (majority only,
     no commissioner sign-off; in a FREE league the vote plus sign-off above applies). Dues rules still apply first.
   * Everything else follows the ordinary flow (trades.py): the counterparty accepts, or the league votes if an AI is involved.
@@ -237,7 +240,11 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
     # Approvals.
     if eliminated and league.league_type == "FREE":
         res.approval_requirements.append(ELIMINATED_FREE_LEAGUE_TRADE)
-        res.explanations.append("This free-league trade requires majority league approval and commissioner sign-off.")
+        if commissioner_involved(league, a, b):
+            res.explanations.append("The commissioner's team is in this trade, so there is no commissioner sign-off. It needs "
+                                    f"{votes_needed(db, league, a, b)} league votes instead.")
+        else:
+            res.explanations.append("This free-league trade requires majority league approval and commissioner sign-off.")
     elif needs_vote:
         res.approval_requirements.append(ELIMINATED_PICK_TRADE_VOTE)
     else:
@@ -266,9 +273,24 @@ def commissioner_approval(db: Session, trade_id: int) -> TradeApproval | None:
     return db.query(TradeApproval).filter_by(trade_id=trade_id, approval_type=ELIMINATED_FREE_LEAGUE_TRADE).one_or_none()
 
 
+def commissioner_involved(league: League, *teams: Team) -> bool:
+    """True when the commissioner's own team is on either side of the trade."""
+    return any(t.owner_user_id is not None and t.owner_user_id == league.commissioner_user_id for t in teams)
+
+
+def votes_needed(db: Session, league: League, *teams: Team) -> int:
+    """Approvals a trade needs from the league: half the teams plus the league's configured extra votes (default 1, so exactly
+    half never passes), or plus the commissioner-trade extra (default 2) when the commissioner's team is in the trade."""
+    total = db.query(Team).filter_by(league_id=league.id).count()
+    extra = (league.commissioner_trade_vote_extra_votes if commissioner_involved(league, *teams)
+             else league.trade_vote_extra_votes)
+    return min(total, total // 2 + max(1, extra))
+
+
 def majority_reached(db: Session, trade: Trade) -> bool:
-    total = db.query(Team).filter_by(league_id=trade.league_id).count()
-    return db.query(TradeVote).filter_by(trade_id=trade.id, vote="approve").count() >= total // 2 + 1
+    league = db.get(League, trade.league_id)
+    needed = votes_needed(db, league, trade.proposer_team, trade.counterparty_team)
+    return db.query(TradeVote).filter_by(trade_id=trade.id, vote="approve").count() >= needed
 
 
 def evaluate_trade(db: Session, trade: Trade, now: datetime.datetime | None = None) -> EligibilityResult:
@@ -299,6 +321,14 @@ def evaluate_trade(db: Session, trade: Trade, now: datetime.datetime | None = No
     if ELIMINATED_FREE_LEAGUE_TRADE not in res.approval_requirements:
         return res
 
+    if commissioner_involved(league, p, c):
+        # The commissioner can't sign off a trade their own team is in; the league's higher vote threshold replaces it.
+        if majority_reached(db, trade):
+            res.status = APPROVED_FOR_EXECUTION
+        else:
+            res.missing_prerequisites.append("majority league approval")
+            res.status = AWAITING_LEAGUE_VOTE
+        return res
     approval = commissioner_approval(db, trade.id)
     if approval is not None and approval.decision == "reject":
         res.status = BLOCKED

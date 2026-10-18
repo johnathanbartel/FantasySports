@@ -146,12 +146,43 @@ lid, (a, b, c, d) = make_league("Free")
 check(client.get(f"/leagues/{lid}").json()["league_type"] == "FREE", "default type is FREE")
 check(client.patch(f"/leagues/{lid}/settings", json={"league_type": "PAID"}, headers=HDR["a"]).status_code == 403, "only the commissioner")
 check(client.patch(f"/leagues/{lid}/settings", json={"league_type": "PAID"}, headers=HDR["commish"]).status_code == 400, "needs dues")
+# Rosters exist, so this is midseason: the commissioner's change opens a vote and only applies when every manager approves.
 resp = client.patch(f"/leagues/{lid}/settings", json={"league_type": "PAID", "annual_dues_cents": DUES}, headers=HDR["commish"])
-check(resp.status_code == 200 and resp.json()["league_type"] == "PAID" and resp.json()["annual_dues_cents"] == DUES, resp.text)
+check(resp.status_code == 200 and resp.json()["league_type"] == "FREE" and resp.headers.get("X-Setting-Changes-Opened"), resp.text)
+cid = int(resp.headers["X-Setting-Changes-Opened"])
+check(client.patch(f"/leagues/{lid}/settings", json={"league_type": "PAID"}, headers=HDR["commish"]).status_code == 409,
+      "only one open vote per setting")
+check(client.post(f"/leagues/{lid}/setting-changes/{cid}/vote", json={"vote": "approve"}, headers=HDR["stranger"]).status_code == 403,
+      "only a manager in the league votes")
+for who in ("a", "b", "c"):
+    resp = client.post(f"/leagues/{lid}/setting-changes/{cid}/vote", json={"vote": "approve"}, headers=HDR[who])
+    check(resp.status_code == 200 and resp.json()["status"] == "voting", "three of four approving is not enough: " + resp.text)
+check(client.get(f"/leagues/{lid}").json()["league_type"] == "FREE", "still FREE")
+resp = client.post(f"/leagues/{lid}/setting-changes/{cid}/vote", json={"vote": "approve"}, headers=HDR["d"])
+check(resp.status_code == 200 and resp.json()["status"] == "applied", resp.text)
+check(client.get(f"/leagues/{lid}").json()["league_type"] == "PAID", "every manager approved: applied")
+check(client.post(f"/leagues/{lid}/setting-changes/{cid}/vote", json={"vote": "reject"}, headers=HDR["d"]).status_code == 409, "closed")
 check(pay(lid, a, 2).status_code == 200, "commissioner records dues")
 resp = client.patch(f"/leagues/{lid}/settings", json={"league_type": "FREE"}, headers=HDR["commish"])
-check(resp.status_code == 409, "type can't change midseason once dues are recorded")
+check(resp.status_code == 200 and resp.json()["league_type"] == "PAID", "back to FREE is a vote too")
+cid = int(resp.headers["X-Setting-Changes-Opened"])
+resp = client.post(f"/leagues/{lid}/setting-changes/{cid}/vote", json={"vote": "reject"}, headers=HDR["b"])
+check(resp.json()["status"] == "rejected" and client.get(f"/leagues/{lid}").json()["league_type"] == "PAID", "one rejection ends it")
 check(db.query(SeasonDues).filter_by(league_id=lid).count() == 1, "the obligation is untouched")
+# league_format is voted on the same way (redraft -> dynasty strands a roster of veterans).
+resp = client.patch(f"/leagues/{lid}/settings", json={"league_format": "traditional_redraft"}, headers=HDR["commish"])
+fid = int(resp.headers["X-Setting-Changes-Opened"])
+check(resp.json()["league_format"] == "dynasty", "format unchanged until the vote passes")
+check(client.post(f"/leagues/{lid}/setting-changes/{fid}/cancel", headers=HDR["a"]).status_code == 403, "only the commissioner withdraws")
+check(client.post(f"/leagues/{lid}/setting-changes/{fid}/cancel", headers=HDR["commish"]).json()["status"] == "cancelled", "")
+rows = client.get(f"/leagues/{lid}/setting-changes", headers=HDR["a"]).json()
+check([r["status"] for r in rows] == ["cancelled", "rejected", "applied"] and len(rows[0]["votes"]) == 4, rows)
+# Offseason or before the first draft: no vote.
+lg = db.get(League, lid)
+lg.offseason = True
+db.commit()
+check(client.patch(f"/leagues/{lid}/settings", json={"league_type": "FREE"}, headers=HDR["commish"]).json()["league_type"] == "FREE",
+      "offseason changes apply at once")
 
 # ---- FREE league: active teams ---------------------------------------------------------------------------------------
 lid, (a, b, c, d) = make_league("FreeB")
@@ -246,6 +277,50 @@ try:
     check(resp.status_code == 200 and resp.json()["status"] == "proposed", "with a valuation it's ordinary review: " + resp.text)
 finally:
     trade_eligibility.set_future_value_evaluator(None)
+
+# ---- Vote thresholds ----------------------------------------------------------------------------------------------------
+def pick_vote_trade(lid, a, c):
+    """An eliminated team a sends a pick to c: no valuation policy, so the league votes on it."""
+    ra = roster(a)
+    for team, season in ((a, 2), (a, 3), (c, 2)):
+        pay(lid, team, season)
+    resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
+    assert resp.status_code == 200 and resp.json()["status"] == "voting", resp.text
+    return resp.json()
+
+
+lid, (a, b, c, d) = make_league("VoteCfg", "PAID")
+eliminate(lid, a)
+check(client.patch(f"/leagues/{lid}/settings", json={"trade_vote_extra_votes": 0}, headers=HDR["commish"]).status_code == 422,
+      "at least one vote past half")
+check(client.patch(f"/leagues/{lid}/settings", json={"trade_vote_extra_votes": 2}, headers=HDR["a"]).status_code == 403, "")
+check(client.patch(f"/leagues/{lid}/settings", json={"trade_vote_extra_votes": 2}, headers=HDR["commish"]).json()["trade_vote_extra_votes"] == 2,
+      "configurable")
+t = pick_vote_trade(lid, a, c)
+check(t["majority_needed"] == 4, t)
+check(vote(t["id"], b, "b").status_code == 200 and vote(t["id"], c, "c").status_code == 200 and status_of(t["id"]) == "voting",
+      "three of four is under the configured threshold")
+check(vote(t["id"], d, "d").json()["status"] == "accepted", "four of four")
+
+lid, (a, b, c, d) = make_league("CommishVote", "PAID")
+db.get(Team, a).owner_user_id = users["commish"].id          # the commissioner manages team a
+db.commit()
+eliminate(lid, a)
+ra = roster(a)
+resp = propose(lid, a, b, "commish", send=[ra[0]], receive=[roster(b)[0]], receive_picks=[(2, 1, b)])
+check(resp.status_code == 400 and "dues" in resp.json()["detail"], resp.text)
+for team, season in ((a, 2), (a, 3), (c, 2)):
+    pay(lid, team, season)
+resp = propose(lid, a, c, "commish", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
+check(resp.status_code == 200 and resp.json()["status"] == "voting", resp.text)
+t = resp.json()
+check(t["majority_needed"] == 4 and t["eligibility"]["status"] == "AWAITING_LEAGUE_VOTE", "commissioner trades need half + 2: " + str(t))
+check(decide(t["id"], "commish").status_code == 400, "no commissioner sign-off on their own trade")
+check(vote(t["id"], b, "b").status_code == 200 and vote(t["id"], c, "c").status_code == 200 and status_of(t["id"]) == "voting",
+      "three of four (the ordinary threshold) is not enough")
+check(vote(t["id"], d, "d").json()["status"] == "accepted", "half + 2 executes it")
+check(client.patch(f"/leagues/{lid}/settings", json={"commissioner_trade_vote_extra_votes": 1}, headers=HDR["commish"]).status_code == 200, "")
+check(db.get(League, lid).commissioner_trade_vote_extra_votes == 1, "")
 
 # ---- Future draft pick redraft: eliminated teams can't sign, drop or claim ------------------------------------------
 lid, (a, b, c, d) = make_league("FprElim", "FREE", "future_pick_redraft")

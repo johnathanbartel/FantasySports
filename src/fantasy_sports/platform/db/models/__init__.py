@@ -8,6 +8,8 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     User,
     Universe,
     League,
+    LeagueSettingChange,
+    LeagueSettingVote,
     LeagueUniverse,
     Team,
     Conference,

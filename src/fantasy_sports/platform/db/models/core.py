@@ -167,6 +167,10 @@ class League(Base):
     league_type: Mapped[str] = mapped_column(String(4), default="FREE", server_default="FREE")
     annual_dues_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trade_deadline: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Trades that need a league vote pass with (teams // 2) + this many approvals, so exactly half never passes. The second
+    # applies when the commissioner's own team is in the trade (no commissioner sign-off exists then).
+    trade_vote_extra_votes: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    commissioner_trade_vote_extra_votes: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
@@ -1173,6 +1177,44 @@ class TradeApproval(Base):
     approval_type: Mapped[str] = mapped_column(String(40))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     decision: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class LeagueSettingChange(Base):
+    """A midseason change to league_type or league_format. It applies only once every person-managed team approves; any
+    rejection kills it (platform/setting_changes.py). status: voting | applied | rejected | cancelled."""
+
+    __tablename__ = "league_setting_changes"
+    __table_args__ = (
+        CheckConstraint("field IN ('league_type', 'league_format')", name="ck_setting_change_field"),
+        CheckConstraint("status IN ('voting', 'applied', 'rejected', 'cancelled')", name="ck_setting_change_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    field: Mapped[str] = mapped_column(String(20))
+    old_value: Mapped[str] = mapped_column(String(24))
+    new_value: Mapped[str] = mapped_column(String(24))
+    proposed_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(10), default="voting")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+    votes: Mapped[list["LeagueSettingVote"]] = relationship(cascade="all, delete-orphan")
+
+
+class LeagueSettingVote(Base):
+    __tablename__ = "league_setting_votes"
+    __table_args__ = (
+        UniqueConstraint("change_id", "team_id", name="uq_setting_vote_team"),
+        CheckConstraint("vote IN ('approve', 'reject')", name="ck_setting_vote"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    change_id: Mapped[int] = mapped_column(ForeignKey("league_setting_changes.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    vote: Mapped[str] = mapped_column(String(10))
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
 
 
