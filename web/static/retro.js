@@ -131,6 +131,12 @@ const Retro = (() => {
     }
     return `<svg class="sprite" width="${9 * px}" height="${9 * px}" viewBox="-1 -1 9 9" shape-rendering="crispEdges" aria-hidden="true"><rect x="-1" y="-1" width="9" height="9" fill="#14102a"/><rect x="0" y="0" width="7" height="7" fill="#fff" fill-opacity=".92"/>${cells}</svg>`;
   }
+  // A league's uploaded logo, or its generated badge when it has none. `l` needs name and logo_url.
+  function leagueMark(l, px = 4) {
+    if (!l.logo_url) return badge(l.name, px);
+    const size = 9 * px, safe = String(l.logo_url).replace(/[&<>"']/g, c => '&#' + c.charCodeAt(0) + ';');
+    return `<img src="${safe}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px;object-fit:contain;flex:none;border:var(--bw, 2px) solid var(--ink)">`;
+  }
   // <span data-sprite="puck" data-px="3"></span> and <span data-badge="Team Name"></span> fill themselves in.
   function hydrate(scope = document) {
     scope.querySelectorAll('[data-sprite]:not([data-done])').forEach(el => { el.innerHTML = sprite(el.dataset.sprite, +el.dataset.px || 4); el.dataset.done = 1; });
@@ -140,5 +146,5 @@ const Retro = (() => {
   document.addEventListener('DOMContentLoaded', () => { mountSoundToggle(); hydrate(); detectTheme(); loadArena(); });
   // Sport ball/puck sprite for a list of universe codes (nhl, nfl, ncaaf, ...).
   const sportSprite = (codes, px = 4) => { const c = (codes || []).find(x => THEME_BY_UNIVERSE[x]); return sprite(SPRITE_BY_THEME[THEME_BY_UNIVERSE[c]] || 'star', px); };
-  return { setTheme, sportSprite, click, whistle, sprite, badge, hydrate, THEME_BY_UNIVERSE };
+  return { setTheme, sportSprite, click, whistle, sprite, badge, leagueMark, hydrate, THEME_BY_UNIVERSE };
 })();

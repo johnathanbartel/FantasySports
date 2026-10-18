@@ -2,7 +2,7 @@ import datetime
 import random
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -12,7 +12,7 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
-    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
+    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSlugRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
     SettingChangeOut, SettingVoteOut, SettingVoteRequest,
     FuturePicksOut, KeeperPlayerOut, KeepersOut, KeepersRequest,
     JoinableTeamOut, JoinLeagueRequest, JoinOptionsOut, PublicLeagueOut,
@@ -21,7 +21,7 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import league_join, setting_changes
+from fantasy_sports.platform import league_branding, league_join, setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
@@ -226,6 +226,8 @@ class DashboardLeague(BaseModel):
     my_team_names: list[str]
     draft_state: str            # not_started / in_progress / complete
     draft_scheduled_at: datetime.datetime | None
+    slug: str | None = None
+    logo_url: str | None = None
 
 
 def _draft_state(db: Session, league: League) -> str:
@@ -260,6 +262,7 @@ def my_dashboard(db: Session = Depends(get_db), user: User = Depends(current_use
             teams_filled=filled[lg.id], is_commissioner=lg.commissioner_user_id == user.id,
             my_team_ids=[t.id for t in mine[lg.id]], my_team_names=[t.name for t in mine[lg.id]],
             draft_state=_draft_state(db, lg), draft_scheduled_at=lg.draft_scheduled_at,
+            slug=lg.slug, logo_url=lg.logo_url,
         )
         for lg in leagues
     ]
@@ -363,7 +366,8 @@ def list_public_leagues(db: Session = Depends(get_db)):
             annual_dues_cents=league.annual_dues_cents, human_teams=sum(1 for t in teams if not t.is_ai_owned),
             open_slots=sum(1 for _, k in options if k == "open_slot"),
             ai_takeovers=sum(1 for _, k in options if k == "ai_takeover"),
-            allow_ai_takeover_in_season=league.allow_ai_takeover_in_season, draft_state=draft_state(db, league.id)))
+            allow_ai_takeover_in_season=league.allow_ai_takeover_in_season, draft_state=draft_state(db, league.id),
+            slug=league.slug, logo_url=league.logo_url))
     return out
 
 
@@ -402,6 +406,79 @@ def join_league(
     db.commit()
     db.refresh(team)
     return next(t for t in get_league_teams(league.id, db) if t.id == team.id)
+
+
+@router.get("/by-slug/{slug}", response_model=LeagueOut)
+def get_league_by_slug(slug: str, db: Session = Depends(get_db)):
+    league = db.query(League).filter(League.slug == slug.strip().lower()).first()
+    if league is None:
+        raise HTTPException(404, "League not found")
+    return league
+
+
+@router.put("/{league_id}/slug", response_model=LeagueOut)
+def set_league_slug(
+    league_id: int, payload: LeagueSlugRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: sets (or, with null, clears) the league's custom URL, served at /l/<slug>."""
+    league = assert_commissioner(db, user, league_id)
+    if payload.slug is None or not payload.slug.strip():
+        league.slug = None
+    else:
+        try:
+            slug = league_branding.normalize_slug(payload.slug)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        taken = db.query(League.id).filter(League.slug == slug, League.id != league.id).first()
+        if taken:
+            raise HTTPException(409, "That custom URL is already taken")
+        league.slug = slug
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.put("/{league_id}/logo", response_model=LeagueOut)
+async def upload_league_logo(
+    league_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: the request body is the image itself (PNG, JPEG, WebP or GIF, up to 512 KB)."""
+    league = assert_commissioner(db, user, league_id)
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > league_branding.MAX_LOGO_BYTES:
+            raise HTTPException(413, f"The logo must be {league_branding.MAX_LOGO_BYTES // 1024} KB or smaller")
+    content_type = league_branding.sniff_image(bytes(data))
+    if content_type is None:
+        raise HTTPException(400, "The logo must be a PNG, JPEG, WebP or GIF image")
+    league.logo_data = bytes(data)
+    league.logo_content_type = content_type
+    league.logo_updated_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.delete("/{league_id}/logo", response_model=LeagueOut)
+def delete_league_logo(league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    league = assert_commissioner(db, user, league_id)
+    league.logo_data = None
+    league.logo_content_type = None
+    league.logo_updated_at = None
+    db.commit()
+    db.refresh(league)
+    return league
+
+
+@router.get("/{league_id}/logo")
+def get_league_logo(league_id: int, db: Session = Depends(get_db)):
+    league = db.get(League, league_id)
+    if league is None or league.logo_updated_at is None or not league.logo_data:
+        raise HTTPException(404, "No logo")
+    return Response(content=league.logo_data, media_type=league.logo_content_type,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @router.get("/{league_id}", response_model=LeagueOut)
