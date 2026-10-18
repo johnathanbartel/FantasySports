@@ -196,7 +196,7 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
         return out
 
     total_teams = db.query(Team).filter_by(league_id=trade.league_id).count()
-    majority_needed = (total_teams // 2) + 1
+    majority_needed = trade_eligibility.votes_needed(db, league, p_team, c_team)
 
     team_map = {t.id: t.name for t in db.query(Team).filter_by(league_id=trade.league_id)}
     votes_out = [

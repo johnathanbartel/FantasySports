@@ -66,6 +66,10 @@ class LeagueCreateRequest(BaseModel):
     league_type: Literal["FREE", "PAID"] = "FREE"
     annual_dues_cents: int | None = Field(default=None, ge=1, le=10_000_000)
     trade_deadline: datetime.datetime | None = None
+    # Votes a trade needs beyond half the league: 1 = half + 1 (exactly half never passes); the second is for trades that
+    # include the commissioner's own team, which have no commissioner sign-off.
+    trade_vote_extra_votes: int = Field(default=1, ge=1, le=20)
+    commissioner_trade_vote_extra_votes: int = Field(default=2, ge=1, le=20)
     # Hockey only (rejected for other sports when changed from the defaults).
     standings_mode: Literal["points", "win_pct"] = "points"
     points_per_win: int = Field(default=3, ge=0, le=20)
@@ -97,6 +101,8 @@ class LeagueSettingsRequest(BaseModel):
     league_type: Literal["FREE", "PAID"] | None = None
     annual_dues_cents: int | None = Field(default=None, ge=1, le=10_000_000)    # send null to clear
     trade_deadline: datetime.datetime | None = None                          # send null to clear
+    trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
+    commissioner_trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
     platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
     trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
     trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
@@ -197,6 +203,8 @@ class LeagueOut(ORMModel):
     league_type: str
     annual_dues_cents: int | None
     trade_deadline: datetime.datetime | None
+    trade_vote_extra_votes: int
+    commissioner_trade_vote_extra_votes: int
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int
@@ -210,6 +218,30 @@ class LeagueOut(ORMModel):
     division_winners_qualify: bool
     division_winners_seeded_first: bool
     playoff_consolation: bool
+
+
+class SettingVoteOut(BaseModel):
+    team_id: int
+    team_name: str
+    vote: str | None            # None = hasn't voted
+
+
+class SettingChangeOut(BaseModel):
+    id: int
+    league_id: int
+    field: str
+    old_value: str
+    new_value: str
+    status: str
+    created_at: datetime.datetime
+    resolved_at: datetime.datetime | None
+    votes: list[SettingVoteOut]         # one row per person-managed team
+    my_vote: str | None = None
+    can_vote: bool = False
+
+
+class SettingVoteRequest(BaseModel):
+    vote: Literal["approve", "reject"]
 
 
 class RolloverRequest(BaseModel):

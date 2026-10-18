@@ -119,7 +119,8 @@ def check_majority_vote(db: Session, trade: Trade, now: datetime.datetime) -> bo
     Returns True if trade was executed, False otherwise.
     """
     total_teams = db.query(Team).filter_by(league_id=trade.league_id).count()
-    majority_needed = (total_teams // 2) + 1
+    league = db.get(League, trade.league_id)
+    majority_needed = trade_eligibility.votes_needed(db, league, trade.proposer_team, trade.counterparty_team)
     approvals = db.query(TradeVote).filter_by(trade_id=trade.id, vote="approve").count()
     rejections = db.query(TradeVote).filter_by(trade_id=trade.id, vote="reject").count()
 
@@ -298,7 +299,7 @@ def commissioner_decide(
     """The commissioner's sign-off (or rejection) on a free-league trade involving an eliminated team.
 
     Only the league's commissioner may; it cannot stand in for the league vote (execution still needs the majority), and a
-    commissioner who manages a team in the trade cannot decide it (the conflict-of-interest policy is still open)."""
+    commissioner whose own team is in the trade has no sign-off at all: the league decides at a higher vote threshold."""
     now = now or datetime.datetime.utcnow()
     league = db.get(League, trade.league_id)
     if league is None or league.commissioner_user_id != user_id:
@@ -310,9 +311,9 @@ def commissioner_decide(
     res = trade_eligibility.evaluate_trade(db, trade, now)
     if trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE not in res.approval_requirements:
         raise ValueError("This trade doesn't need commissioner sign-off")
-    if any(t.owner_user_id == user_id for t in (trade.proposer_team, trade.counterparty_team)):
-        raise ValueError("The commissioner manages a team in this trade, so can't sign it off - the league hasn't set a "
-                         "conflict-of-interest policy yet")
+    if trade_eligibility.commissioner_involved(league, trade.proposer_team, trade.counterparty_team):
+        raise ValueError("The commissioner's team is in this trade, so there is no commissioner sign-off. The league decides "
+                         "it at the higher vote threshold.")
     if trade_eligibility.commissioner_approval(db, trade.id) is not None:
         raise ValueError("The commissioner has already decided this trade")
     db.add(TradeApproval(trade_id=trade.id, approval_type=trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE,

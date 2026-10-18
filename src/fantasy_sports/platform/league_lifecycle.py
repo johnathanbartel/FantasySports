@@ -41,6 +41,8 @@ from fantasy_sports.platform.db.models.core import (
     TradedPick,
     TradeItem,
     TradeVote,
+    LeagueSettingChange,
+    LeagueSettingVote,
     WeeklyContest,
     WeeklyContestEntry,
     WeeklyContestPairing,
@@ -146,6 +148,11 @@ def delete_league(db: Session, league_id: int) -> None:
         db.query(TradeVote).filter(TradeVote.trade_id.in_(trade_ids)).delete(synchronize_session=False)
         db.query(TradeItem).filter(TradeItem.trade_id.in_(trade_ids)).delete(synchronize_session=False)
         db.query(Trade).filter(Trade.id.in_(trade_ids)).delete(synchronize_session=False)
+
+    change_ids = [c.id for c in db.query(LeagueSettingChange).filter_by(league_id=league_id)]
+    if change_ids:
+        db.query(LeagueSettingVote).filter(LeagueSettingVote.change_id.in_(change_ids)).delete(synchronize_session=False)
+        db.query(LeagueSettingChange).filter(LeagueSettingChange.id.in_(change_ids)).delete(synchronize_session=False)
 
     # 9. Team-level child records (the keeper rows and season archive point at teams, so they go first)
     db.query(TradedPick).filter(TradedPick.league_id == league_id).delete(synchronize_session=False)
