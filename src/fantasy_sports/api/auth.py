@@ -21,7 +21,7 @@ import secrets
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import entitlements
+from fantasy_sports.platform import commissioner, entitlements
 from fantasy_sports.platform.db.models.core import League, Team, User, UserSession
 from fantasy_sports.platform.db.session import get_db
 
@@ -91,8 +91,18 @@ def assert_commissioner(db: Session, user: User, league_id: int) -> League:
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    if league.commissioner_user_id != user.id:
+    if not commissioner.is_commissioner(db, league, user.id):
         raise HTTPException(403, "Only the league commissioner can do that")
+    return league
+
+
+def assert_primary_commissioner(db: Session, user: User, league_id: int) -> League:
+    """For what belongs to the commissioner role itself (co-commissioners, deleting the league): not a co-commissioner."""
+    league = db.get(League, league_id)
+    if league is None:
+        raise HTTPException(404, "League not found")
+    if league.commissioner_user_id != user.id:
+        raise HTTPException(403, "Only the league's own commissioner can do that")
     return league
 
 
@@ -102,19 +112,27 @@ def require_commissioner_mode(db: Session, user: User) -> None:
         raise HTTPException(403, "Commissioner mode is a premium feature - it isn't switched on for your account")
 
 
-def assert_can_manage_team(db: Session, user: User, team_id: int) -> Team:
+def assert_can_manage_team(db: Session, user: User, team_id: int, commissioners_may: bool = False) -> Team:
     """Who may act for a team (set its lineup, ...): its human owner, or - for an
     AI-owned team - the league's commissioner, if they have commissioner mode.
-    An AI team has no owner, so no other token can ever act for it."""
+    An AI team has no owner, so no other token can ever act for it.
+
+    commissioners_may=True (lineups and lines only) also lets a commissioner or co-commissioner act for a team a person owns;
+    see acting_for_another() to log it."""
     team = db.get(Team, team_id)
     if team is None:
         raise HTTPException(404, "Team not found")
+    if commissioners_may and not (not team.is_ai_owned and team.owner_user_id == user.id):
+        if commissioner.is_commissioner(db, db.get(League, team.league_id), user.id):
+            if team.is_ai_owned:
+                require_commissioner_mode(db, user)         # AI teams stay a premium feature, as before
+            return team
     if not team.is_ai_owned:
         if team.owner_user_id != user.id:
             raise HTTPException(403, "You don't own this team")
         return team
     league = db.get(League, team.league_id)
-    if league.commissioner_user_id != user.id:
+    if not commissioner.is_commissioner(db, league, user.id):
         raise HTTPException(403, "Only the league's commissioner can act for an AI team")
     require_commissioner_mode(db, user)
     return team
@@ -124,4 +142,10 @@ def can_override_game_lock(db: Session, user: User, team: Team) -> bool:
     """A player's lineup spot locks when his game starts. Only the league's commissioner, with commissioner mode,
     may change a locked one (to correct history: results are derived live, so they update)."""
     league = db.get(League, team.league_id)
-    return league.commissioner_user_id == user.id and entitlements.has_feature(db, user, entitlements.COMMISSIONER_MODE)
+    return commissioner.is_commissioner(db, league, user.id) and entitlements.has_feature(db, user, entitlements.COMMISSIONER_MODE)
+
+
+def acting_for_another(db: Session, user: User, team: Team, action: str, detail: dict | None = None) -> None:
+    """Records a commissioner's edit of a team they don't own in the league's action log (the caller commits)."""
+    if team.owner_user_id != user.id:
+        commissioner.log_action(db, team.league_id, user.id, action, team.id, detail)

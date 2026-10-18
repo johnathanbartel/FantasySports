@@ -2,12 +2,12 @@ import datetime
 import random
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_commissioner, assert_owns_team, current_user, optional_user, require_commissioner_mode
+from fantasy_sports.api.auth import assert_commissioner, assert_primary_commissioner, assert_owns_team, current_user, optional_user, require_commissioner_mode
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
@@ -21,7 +21,7 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import league_branding, league_join, setting_changes
+from fantasy_sports.platform import commissioner, league_branding, league_join, notifications, setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
@@ -418,10 +418,12 @@ def get_league_by_slug(slug: str, db: Session = Depends(get_db)):
 
 @router.put("/{league_id}/slug", response_model=LeagueOut)
 def set_league_slug(
-    league_id: int, payload: LeagueSlugRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+    league_id: int, payload: LeagueSlugRequest, background: BackgroundTasks, db: Session = Depends(get_db),
+    user: User = Depends(current_user)
 ):
     """Commissioner action: sets (or, with null, clears) the league's custom URL, served at /l/<slug>."""
     league = assert_commissioner(db, user, league_id)
+    before = notifications.snapshot(league)
     if payload.slug is None or not payload.slug.strip():
         league.slug = None
     else:
@@ -433,6 +435,7 @@ def set_league_slug(
         if taken:
             raise HTTPException(409, "That custom URL is already taken")
         league.slug = slug
+    _email_settings_change(db, background, league, before, user)
     db.commit()
     db.refresh(league)
     return league
@@ -501,25 +504,44 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{league_id}", response_model=LeagueOut)
 def rename_league(
-    league_id: int, payload: LeagueRenameRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+    league_id: int, payload: LeagueRenameRequest, background: BackgroundTasks, db: Session = Depends(get_db),
+    user: User = Depends(current_user)
 ):
     """Commissioner action: renames the league."""
     league = assert_commissioner(db, user, league_id)
+    before = notifications.snapshot(league)
     new_name = payload.name.strip()
     if not new_name:
         raise HTTPException(400, "League name cannot be empty")
     league.name = new_name
+    _email_settings_change(db, background, league, before, user)
     db.commit()
     db.refresh(league)
     return league
 
 
+def _email_settings_change(db: Session, background: BackgroundTasks, league: League, before: dict, user: User,
+                           opened: list | None = None, by_vote: bool = False) -> None:
+    """Queues the 'settings changed' email (and one per vote opened), and sends them once the response is out."""
+    notifications.queue_settings_changed(db, league, notifications.diff(before, notifications.snapshot(league)),
+                                         "The league (by vote)" if by_vote else user.display_name)
+    for change in opened or []:
+        notifications.queue_message(
+            db, league, "setting_vote_opened", f"{league.name}: vote on a settings change",
+            f"{user.display_name} proposed changing the league's {change.field.replace('_', ' ')} from {change.old_value} to "
+            f"{change.new_value}. It only takes effect if every manager approves. Vote on the League Settings tab.")
+    background.add_task(notifications.deliver_pending)
+
+
 @router.patch("/{league_id}/settings", response_model=LeagueOut)
 def update_league_settings(
-    league_id: int, payload: LeagueSettingsRequest, response: Response, db: Session = Depends(get_db), user: User = Depends(current_user)
+    league_id: int, payload: LeagueSettingsRequest, response: Response, background: BackgroundTasks,
+    db: Session = Depends(get_db), user: User = Depends(current_user)
 ):
-    """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}."""
+    """Commissioner action: changes the league's settings. Anyone can read them through GET /leagues/{id}. Everyone in
+    the league is emailed what changed (platform/notifications.py)."""
     league = assert_commissioner(db, user, league_id)
+    before = notifications.snapshot(league)
     sent = payload.model_fields_set
     opened: list[LeagueSettingChange] = []
 
@@ -618,6 +640,7 @@ def update_league_settings(
         # The standings or the playoff field changed, so what was proven under the old rules is proven again under the new.
         db.flush()
         elimination.recalculate_league(db, league.id, clear_stale=True)
+    _email_settings_change(db, background, league, before, user, opened)
     db.commit()
     db.refresh(league)
     if opened:
@@ -642,7 +665,7 @@ def list_setting_changes(league_id: int, db: Session = Depends(get_db), user: Us
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    if league.commissioner_user_id != user.id and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
+    if not commissioner.is_commissioner(db, league, user.id) and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
         raise HTTPException(403, "You are not a member of this league")
     rows = db.query(LeagueSettingChange).filter_by(league_id=league_id).order_by(LeagueSettingChange.id.desc()).all()
     return [_setting_change_out(db, c, user) for c in rows]
@@ -657,15 +680,20 @@ def _get_change(db: Session, league_id: int, change_id: int) -> LeagueSettingCha
 
 @router.post("/{league_id}/setting-changes/{change_id}/vote", response_model=SettingChangeOut)
 def vote_setting_change(
-    league_id: int, change_id: int, payload: SettingVoteRequest, db: Session = Depends(get_db), user: User = Depends(current_user)
+    league_id: int, change_id: int, payload: SettingVoteRequest, background: BackgroundTasks, db: Session = Depends(get_db),
+    user: User = Depends(current_user)
 ):
     change = _get_change(db, league_id, change_id)
+    league = db.get(League, league_id)
+    before = notifications.snapshot(league)
     try:
         setting_changes.vote(db, change, user.id, payload.vote)
     except PermissionError as e:
         raise HTTPException(403, str(e))
     except ValueError as e:
         raise HTTPException(409, str(e))
+    if change.status == "applied":                       # the last approval just made the change real
+        _email_settings_change(db, background, league, before, user, by_vote=True)
     db.commit()
     db.refresh(change)
     return _setting_change_out(db, change, user)
@@ -785,7 +813,8 @@ def list_seasons(league_id: int, db: Session = Depends(get_db)):
     """League history: every archived season, newest first, with its final standings."""
     rows = db.query(LeagueSeason).filter_by(league_id=league_id).order_by(LeagueSeason.season_number.desc()).all()
     return [LeagueSeasonSummary(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
-                                champion_team_id=r.champion_team_id, standings=r.data.get("standings", [])) for r in rows]
+                                champion_team_id=r.champion_team_id, standings=r.data.get("standings", []),
+                                label=r.data.get("label"), note=r.commissioner_note, edited_at=r.edited_at) for r in rows]
 
 
 @router.get("/{league_id}/seasons/{season_number}", response_model=LeagueSeasonOut)
@@ -794,15 +823,16 @@ def get_season(league_id: int, season_number: int, db: Session = Depends(get_db)
     if r is None:
         raise HTTPException(404, "That season isn't in the league's history")
     return LeagueSeasonOut(season_number=r.season_number, league_format=r.league_format, archived_at=r.archived_at,
-                           champion_team_id=r.champion_team_id, standings=r.data.get("standings", []), data=r.data)
+                           champion_team_id=r.champion_team_id, standings=r.data.get("standings", []), data=r.data,
+                           label=r.data.get("label"), note=r.commissioner_note, edited_at=r.edited_at)
 
 
 @router.delete("/{league_id}")
 def delete_league(
     league_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)
 ):
-    """Commissioner action: deletes the league and all associated child records."""
-    assert_commissioner(db, user, league_id)
+    """The league's own commissioner (not a co-commissioner) deletes the league and all associated child records."""
+    assert_primary_commissioner(db, user, league_id)
     purge_league(db, league_id)
     db.commit()
     return {"status": "deleted", "league_id": league_id}

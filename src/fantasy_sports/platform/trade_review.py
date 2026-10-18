@@ -24,7 +24,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import trade_eligibility, trades
+from fantasy_sports.platform import commissioner, trade_eligibility, trades
 from fantasy_sports.platform.db.models.core import League, Team, Trade, TradeApproval, TradeVeto
 
 log = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def veto_by_commissioner(db: Session, trade: Trade, user_id: int, reason: str | 
     of commissioner_decide)."""
     now = now or datetime.datetime.utcnow()
     league = db.get(League, trade.league_id)
-    if league is None or league.commissioner_user_id != user_id:
+    if league is None or not commissioner.is_commissioner(db, league, user_id):
         raise PermissionError("Only the league commissioner can do that")
     if league.trade_review_mode not in ("commissioner", "both"):
         raise ValueError("The commissioner can't veto trades in this league's review mode")

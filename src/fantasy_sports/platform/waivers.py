@@ -14,6 +14,8 @@ Waivers: a dropped player is on waivers for 24 hours, and teams claim him in wai
     standings, then to the team drafted later. If no week is fully complete yet the order is the reverse of the first
     round of the draft (the team that picked last claims first).
   * Winning a claim sends that team to the back of the order until the next reset.
+  * A commissioner can set the order by hand (platform/commissioner.py); it holds until the next reset, and a team that wins
+    a claim after it was set still drops to the back.
 
 Goal differential exists for NHL leagues (series standings). Other leagues have no weekly goal differential here, so
 their order is the draft fallback all season - PROVISIONAL, until their standings are wired in.
@@ -27,7 +29,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import elimination, series_standings
+from fantasy_sports.platform import commissioner, elimination, series_standings
 from fantasy_sports.platform.db.models.core import (
     Draft,
     DraftPick,
@@ -44,7 +46,7 @@ WAIVER_HOURS = 24
 WAIVER = "waiver"                      # FreeAgencyTransaction.reason for a signing won off waivers
 PACIFIC = "America/Los_Angeles"
 _PST = datetime.timedelta(hours=-8)    # used only when the platform has no tz database (Windows without tzdata)
-BASIS_GOAL_DIFF, BASIS_DRAFT = "goal_diff", "draft"
+BASIS_GOAL_DIFF, BASIS_DRAFT, BASIS_COMMISSIONER = "goal_diff", "draft", "commissioner"
 
 
 # ---- the weekly reset (midnight Pacific, Saturday night -> Sunday) --------------------------------------------------
@@ -82,6 +84,7 @@ def waiver_until(db: Session, league_id: int, now: datetime.datetime) -> dict[in
     """asset id -> the moment his waiver period ends, for every player dropped in the last 24 hours and not signed since."""
     drops = db.query(FreeAgencyTransaction).filter(
         FreeAgencyTransaction.league_id == league_id, FreeAgencyTransaction.kind == "drop",
+        FreeAgencyTransaction.reason != commissioner.EDIT,         # a commissioner's correction skips waivers
         FreeAgencyTransaction.created_at > now - datetime.timedelta(hours=WAIVER_HOURS),
     ).order_by(FreeAgencyTransaction.id).all()
     latest = {t.draftable_asset_id: t for t in drops}
@@ -105,7 +108,7 @@ def dropped_by(db: Session, league_id: int, asset_ids: list[int]) -> dict[int, i
 # ---- the order ----------------------------------------------------------------------------------------------------
 @dataclass
 class WaiverOrder:
-    basis: str                                     # BASIS_GOAL_DIFF or BASIS_DRAFT
+    basis: str                                     # BASIS_GOAL_DIFF, BASIS_DRAFT or BASIS_COMMISSIONER
     teams: list[int]                               # team ids, first claim first
     goal_diff: dict[int, int] = field(default_factory=dict)
     reset_at: datetime.datetime | None = None
@@ -160,9 +163,15 @@ def waiver_order(db: Session, league_id: int, at: datetime.datetime | None = Non
     league = db.get(League, league_id)
     reset = last_reset(at)
     order = _base_order(db, league, reset)
+    since = reset
+    manual = commissioner.latest_waiver_override(db, league_id, reset, at)
+    if manual is not None:
+        listed = [t for t in manual.team_order if t in order.teams]
+        order.teams = listed + [t for t in order.teams if t not in listed]
+        order.basis, since = BASIS_COMMISSIONER, manual.set_at
     wins = db.query(WaiverClaim).filter(
         WaiverClaim.league_id == league_id, WaiverClaim.status == "won",
-        WaiverClaim.resolved_at >= reset, WaiverClaim.resolved_at <= at).order_by(WaiverClaim.resolved_at, WaiverClaim.id).all()
+        WaiverClaim.resolved_at >= since, WaiverClaim.resolved_at <= at).order_by(WaiverClaim.resolved_at, WaiverClaim.id).all()
     last_win = {c.team_id: i for i, c in enumerate(wins)}
     if last_win:
         moved = sorted(last_win, key=last_win.get)

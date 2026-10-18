@@ -48,6 +48,13 @@ def ensure_latest_schema(engine):
             if "review_ends_at" not in cols:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN review_ends_at DATETIME"))
 
+        if "league_seasons" in tables:
+            cols = {c["name"] for c in insp.get_columns("league_seasons")}
+            if "commissioner_note" not in cols:
+                conn.execute(text("ALTER TABLE league_seasons ADD COLUMN commissioner_note VARCHAR(500)"))
+            if "edited_at" not in cols:
+                conn.execute(text("ALTER TABLE league_seasons ADD COLUMN edited_at DATETIME"))
+
         if "season_dues" in tables:
             cols = {c["name"] for c in insp.get_columns("season_dues")}
             if "committed_by_trade_id" not in cols:

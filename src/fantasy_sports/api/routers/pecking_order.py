@@ -9,7 +9,7 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_can_manage_team, can_override_game_lock, current_user
+from fantasy_sports.api.auth import acting_for_another, assert_can_manage_team, can_override_game_lock, current_user
 from fantasy_sports.api.schemas import (
     InjuredListRequest, InjuryAlertOut, PeckingOrderGroupOut, PeckingOrderOut, PeckingOrderPlayerOut, PeckingOrderResolveRequest,
     PeckingOrderResolvedOut, PeckingOrderSetRequest, PeckingOrderVacancyOut,
@@ -222,13 +222,14 @@ def set_pecking_order(team_id: int, payload: PeckingOrderSetRequest, db: Session
                       user: User = Depends(current_user)):
     """Replaces the ranking of each group named (all-or-nothing). Same authority as setting a lineup:
     the team's owner, or the commissioner (with commissioner mode) for an AI-owned team."""
-    team = assert_can_manage_team(db, user, team_id)
+    team = assert_can_manage_team(db, user, team_id, commissioners_may=True)
     try:
         locked = game_lock.locked_assets(db, team.league_id)
         before = _spots(db, team, locked)
         po.replace_groups(db, team, payload.assignments)
         db.flush()
         _assert_locked_spots_unchanged(db, user, team, before, locked)
+        acting_for_another(db, user, team, "lines_edit")
     except ValueError as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -241,8 +242,9 @@ def set_injured_list(team_id: int, payload: InjuredListRequest, db: Session = De
                      user: User = Depends(current_user)):
     """Moves one of the team's players onto (on=true) or off (on=false) its injured list. Same authority as setting
     the lines. Only injured players can go on; the list holds a fixed number (platform/injuries.py)."""
-    team = assert_can_manage_team(db, user, team_id)
+    team = assert_can_manage_team(db, user, team_id, commissioners_may=True)
     try:
+        acting_for_another(db, user, team, "injured_list_edit", {"asset_id": payload.draftable_asset_id, "on": payload.on})
         if not can_override_game_lock(db, user, team):
             game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
         if payload.on:

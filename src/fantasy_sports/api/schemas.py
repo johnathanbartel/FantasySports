@@ -310,6 +310,9 @@ class LeagueSeasonSummary(BaseModel):
     archived_at: datetime.datetime
     champion_team_id: int | None = None
     standings: list[dict]
+    label: str | None = None             # a commissioner's name for the season ("2023"), shown instead of "Season N"
+    note: str | None = None
+    edited_at: datetime.datetime | None = None     # set once a commissioner has corrected or added the season
 
 
 class LeagueSeasonOut(LeagueSeasonSummary):

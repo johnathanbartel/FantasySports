@@ -13,6 +13,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from fantasy_sports.platform import commissioner
 from fantasy_sports.platform.db.models.core import (
     League, LeagueSettingChange, LeagueSettingVote, RosterEntry, Team,
 )
@@ -87,7 +88,7 @@ def vote(db: Session, change: LeagueSettingChange, user_id: int, decision: str,
 def cancel(db: Session, change: LeagueSettingChange, user_id: int, now: datetime.datetime | None = None) -> LeagueSettingChange:
     now = now or datetime.datetime.utcnow()
     league = _league(db, change)
-    if league.commissioner_user_id != user_id:
+    if not commissioner.is_commissioner(db, league, user_id):
         raise PermissionError("Only the commissioner can withdraw a change")
     if change.status != "voting":
         raise ValueError(f"This vote is closed ({change.status})")

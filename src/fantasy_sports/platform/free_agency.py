@@ -32,7 +32,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
-from fantasy_sports.platform import elimination, pecking_order, season, waivers
+from fantasy_sports.platform import commissioner, elimination, pecking_order, season, waivers
 from fantasy_sports.platform.league_features import is_college, roster_limit
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
@@ -113,10 +113,12 @@ def team_money(db: Session, team: Team) -> dict:
     accepted = db.query(MatchupRequest).filter_by(league_id=team.league_id, status="accepted")
     sent = sum(r.offer_amount for r in accepted.filter_by(from_team_id=team.id))        # matchup offers this team paid
     received = sum(r.offer_amount for r in accepted.filter_by(to_team_id=team.id))      # ... and was paid
+    adjustment = commissioner.faab_adjustment(db, team.id)        # the commissioner's correction to the balance
     return {
+        "faab_adjustment": adjustment,
         "season_budget_total": season_total, "recruited_cost": recruited, "fa_spent": signed,
         "schedule_cash_sent": sent, "schedule_cash_received": received,
-        "roster_cost": recruited + signed, "fa_money": season_total - recruited - signed - sent + received,
+        "roster_cost": recruited + signed, "fa_money": season_total - recruited - signed - sent + received + adjustment,
     }
 
 

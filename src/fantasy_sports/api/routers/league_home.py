@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
-from fantasy_sports.platform import calendar, entitlements, free_agency, game_lock, pick_trading, rankings, season, waivers
+from fantasy_sports.platform import calendar, commissioner, entitlements, free_agency, game_lock, pick_trading, rankings, season, waivers
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
@@ -100,6 +100,7 @@ class OverviewOut(BaseModel):
     roster_size: int
     commissioner_user_id: int
     commissioner_name: str | None
+    co_commissioner_user_ids: list[int] = []     # same powers as the commissioner, bar the role's own (platform/commissioner.py)
     season_weeks: int
     playoff_weeks: int
     draft: DraftStatus
@@ -181,6 +182,7 @@ def league_overview(league_id: int, db: Session = Depends(get_db)):
         league_id=league.id, name=league.name, slug=league.slug, logo_url=league.logo_url, draft_type=league.draft_type, universe_codes=universe_codes, size=league.size,
         roster_size=limit, commissioner_user_id=league.commissioner_user_id,
         commissioner_name=user_map[league.commissioner_user_id].display_name if league.commissioner_user_id in user_map else None,
+        co_commissioner_user_ids=sorted(commissioner.co_commissioner_ids(db, league_id)),
         season_weeks=season.SEASON_WEEKS,
         playoff_weeks=season.PLAYOFF_WEEKS, draft=draft, free_agency_open=free_agency.is_open(db, league_id),
         ai_teams_with_open_spots=sum(1 for t in teams if t.is_ai_owned and t.open_spots > 0), teams=teams,
@@ -275,8 +277,7 @@ def fa_summary(team_id: int, db: Session = Depends(get_db), user: User | None = 
     limit = roster_limit(db, league)
     can_see = user is not None and (
         (not team.is_ai_owned and team.owner_user_id == user.id)
-        or (team.is_ai_owned and league.commissioner_user_id == user.id
-            and entitlements.has_feature(db, user, entitlements.COMMISSIONER_MODE))
+        or commissioner.is_commissioner(db, league, user.id)     # a commissioner sees every team's balance
     )
     money = free_agency.team_money(db, team) if can_see and is_college(db, team.league_id) else None
     return FaSummaryOut(
@@ -376,7 +377,7 @@ class WaiverPlayerOut(BaseModel):
 
 
 class WaiversOut(BaseModel):
-    basis: str                         # "goal_diff" / "draft"
+    basis: str                         # "goal_diff" / "draft" / "commissioner"
     basis_note: str
     reset_at: datetime.datetime        # the last reset, naive UTC
     next_reset_at: datetime.datetime
@@ -394,7 +395,9 @@ def league_waivers(league_id: int, team_id: int | None = None, db: Session = Dep
     db.commit()
     order = waivers.waiver_order(db, league_id, now)
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}
-    note = ("Reverse of goal differential through the last fully completed week: the worst differential claims first."
+    note = ("Set by hand by a commissioner."
+            if order.basis == waivers.BASIS_COMMISSIONER else
+            "Reverse of goal differential through the last fully completed week: the worst differential claims first."
             if order.basis == waivers.BASIS_GOAL_DIFF else
             "Reverse of the first round of the draft, until a full week of games has been completed.")
     note += " It resets at midnight Pacific every Saturday night, and a team that wins a claim drops to the back until then."

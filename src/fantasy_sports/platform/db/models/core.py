@@ -29,6 +29,7 @@ from sqlalchemy import (
     JSON,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
     event,
     func,
@@ -238,6 +239,9 @@ class LeagueSeason(Base):
     # The season's champion, if the commissioner named one at rollover: it picks last in the next draft.
     champion_team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     data: Mapped[dict] = mapped_column(JSON)
+    # Commissioner edits to the record (platform/commissioner.py): a note on the season and when it was last edited.
+    commissioner_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    edited_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class KeeperCandidate(Base):
@@ -1614,3 +1618,76 @@ class WeeklyContestSlot(Base):
     salary: Mapped[int] = mapped_column(Integer)
 
     draftable_asset: Mapped["DraftableAsset"] = relationship()
+
+
+class LeagueCoCommissioner(Base):
+    """A co-commissioner: another user with the commissioner's powers in one league (platform/commissioner.py). Only the
+    primary commissioner (leagues.commissioner_user_id) can add or remove one, delete the league, or hand it over."""
+
+    __tablename__ = "league_co_commissioners"
+    __table_args__ = (UniqueConstraint("league_id", "user_id", name="uq_co_commissioner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    added_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class TeamAdjustment(Base):
+    """Commissioner corrections to one team's counters: transaction_adjustment is added to the team's transaction count and
+    faab_adjustment to its free-agency money (the FAAB balance). Never touches the underlying signings, so the log stays true."""
+
+    __tablename__ = "team_adjustments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), unique=True)
+    transaction_adjustment: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    faab_adjustment: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class WaiverOrderOverride(Base):
+    """A waiver order the commissioner set by hand (team_order = team ids, first claim first). It applies from set_at until
+    the next weekly reset, when the order is rebuilt from the standings (platform/waivers.py). Append-only."""
+
+    __tablename__ = "waiver_order_overrides"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_order: Mapped[list] = mapped_column(JSON)
+    set_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    set_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class CommissionerAction(Base):
+    """Audit trail of what commissioners did on other people's behalf (roster and lineup edits, balances, history, co-commissioners)."""
+
+    __tablename__ = "commissioner_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(40))
+    team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class EmailOutbox(Base):
+    """An email the platform wants to send (platform/notifications.py). status: queued -> sent | failed | not_configured
+    (no SMTP server is set, so it was only recorded)."""
+
+    __tablename__ = "email_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int | None] = mapped_column(ForeignKey("leagues.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    to_email: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(15), default="queued")
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    sent_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)

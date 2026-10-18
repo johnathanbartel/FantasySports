@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_asset_position
-from fantasy_sports.platform import dues, manager_replacement, pick_trading, trade_eligibility, trade_review, trades
+from fantasy_sports.platform import commissioner, dues, manager_replacement, pick_trading, trade_eligibility, trade_review, trades
 from fantasy_sports.platform import trade_hub as trade_hub_logic
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, League, RealTeam, RosterEntry, SeasonDues, Team, Trade, TradeBlockEntry, TradeVote, User,
@@ -426,7 +426,7 @@ def process_trade_review(league_id: int, db: Session = Depends(get_db), user: Us
     league = db.get(League, league_id)
     if league is None:
         raise HTTPException(404, "League not found")
-    if league.commissioner_user_id != user.id and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
+    if not commissioner.is_commissioner(db, league, user.id) and not db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id).first():
         raise HTTPException(403, "You are not in this league")
     return {"processed": _run_review_queue(db, league_id)}
 
@@ -653,7 +653,7 @@ def list_dues(league_id: int, db: Session = Depends(get_db), user: User = Depend
     if league is None:
         raise HTTPException(404, "League not found")
     q = db.query(SeasonDues).filter_by(league_id=league_id)
-    if league.commissioner_user_id != user.id:
+    if not commissioner.is_commissioner(db, league, user.id):
         mine = [t.id for t in db.query(Team).filter_by(league_id=league_id, owner_user_id=user.id)]
         if not mine:
             raise HTTPException(403, "You are not in this league")
