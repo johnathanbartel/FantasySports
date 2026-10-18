@@ -154,10 +154,12 @@ function render() {
   document.getElementById('nav-brand').textContent = league.name;
   const week = weeks.find(w => w.id === weekId);
   document.getElementById('kicker').textContent = `${team ? team.name.toUpperCase() : ''} · WEEK ${week ? week.week_number : ''} · ${week ? week.season_year : ''}`;
-  const acting = team && team.is_ai_owned;
+  const acting = team && (team.is_ai_owned || team.owner_user_id !== me);
   const banner = document.getElementById('acting-banner');
   banner.style.display = acting ? 'block' : 'none';
-  if (acting) banner.innerHTML = `<strong>Commissioner mode:</strong> you're acting as commissioner for <strong>${esc(team.name)}</strong>, an AI-owned team. Changes you save here are its lineup.`;
+  if (acting) banner.innerHTML = team.is_ai_owned
+    ? `<strong>Commissioner mode:</strong> you're acting as commissioner for <strong>${esc(team.name)}</strong>, an AI-owned team. Changes you save here are its lineup.`
+    : `<strong>Commissioner:</strong> you're editing the lineup of <strong>${esc(team.name)}</strong>, a team another person manages. The change is logged on the Commissioner tab.`;
 
   const box = document.getElementById('slots');
   box.innerHTML = '';
@@ -241,9 +243,9 @@ async function start() {
   document.querySelectorAll('.ly').forEach(e => e.textContent = LAST);
   document.getElementById('nav-board').href = `/static/recruiting-board.html?league_id=${LEAGUE_ID}`;
   document.getElementById('nav-league').href = `/static/league.html?league_id=${LEAGUE_ID}`;
-  const [lg, allTeams, sl, wk, ent] = await Promise.all([
+  const [lg, allTeams, sl, wk, ent, lgOverview] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}`), api(`/leagues/${LEAGUE_ID}/teams`), api(`/leagues/${LEAGUE_ID}/roster-slots`),
-    api(`/leagues/${LEAGUE_ID}/weeks`), api('/entitlements/me'),
+    api(`/leagues/${LEAGUE_ID}/weeks`), api('/entitlements/me'), api(`/leagues/${LEAGUE_ID}/overview`),
   ]);
   league = lg; slots = sl; weeks = wk;
   try {   // a ranked team shows its poll rank next to its name
@@ -251,9 +253,11 @@ async function start() {
     const rank = Object.fromEntries(poll.ranked.map(r => [r.team_id, r.rank]));
     allTeams.forEach(t => { if (rank[t.id]) t.name = `#${rank[t.id]} ${t.name}`; });
   } catch (e) {}
-  canActForAi = ent.commissioner_mode && league.commissioner_user_id === me;
-  // Teams you can set a lineup for: your own, plus (commissioner mode) the league's AI teams.
-  teams = allTeams.filter(t => (!t.is_ai_owned && t.owner_user_id === me) || (t.is_ai_owned && canActForAi));
+  const isCommish = league.commissioner_user_id === me || (lgOverview.co_commissioner_user_ids || []).includes(me);
+  canActForAi = ent.commissioner_mode && isCommish;
+  // Teams you can set a lineup for: your own, any team a person manages if you are a commissioner or co-commissioner,
+  // plus (commissioner mode) the league's AI teams.
+  teams = allTeams.filter(t => (!t.is_ai_owned && (t.owner_user_id === me || isCommish)) || (t.is_ai_owned && canActForAi));
   if (!teams.length) { showError('You have no team in this league to set a lineup for.'); return; }
   const wantTeam = Number(params.get('team_id'));
   teamId = teams.find(t => t.id === wantTeam)?.id ?? teams[0].id;

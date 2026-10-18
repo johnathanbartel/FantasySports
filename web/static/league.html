@@ -112,6 +112,7 @@
 <script src="/static/assign-team-modal.js?v=20261013"></script>
 <script src="/static/conference-modal.js?v=20261013"></script>
 <script src="/static/scoring-modal.js?v=20261013"></script>
+<script src="/static/commissioner-tab.js?v=20261018"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -171,11 +172,11 @@ const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
-              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['league-settings', 'League Settings'], ['rankings', 'Rankings']];
+              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['league-settings', 'League Settings'], ['commissioner', 'Commissioner'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
-const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : label]).filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))));
+const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : label]).filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))) && (id !== 'commissioner' || isCommissioner));
 
-let me = null, ov = null, canActForAi = false, isCommissioner = false;
+let me = null, ov = null, canActForAi = false, isCommissioner = false;   // isCommissioner: the commissioner or a co-commissioner
 let tab = 'home';
 let teamsById = {};
 let activeTeamId = null;              // the team the Roster / Transactions tabs are looking at
@@ -191,6 +192,8 @@ const $ = (id) => document.getElementById(id);
 // ---- who can do what -----------------------------------------------------------------
 const myTeam = () => ov.teams.find(t => !t.is_ai_owned && t.owner_user_id === me);
 const canManage = (t) => t && ((!t.is_ai_owned && t.owner_user_id === me) || (t.is_ai_owned && canActForAi));
+// Lines and lineups: the team's manager, or any commissioner for a team a person manages (AI teams still need commissioner mode).
+const canSetLines = (t) => canManage(t) || !!(t && !t.is_ai_owned && isCommissioner);
 const activeTeam = () => teamsById[activeTeamId];
 const posTag = (p) => `<span class="tag tag-neutral" style="min-width:34px;justify-content:center">${POS_LABEL[p] || p || '-'}</span>`;
 
@@ -222,7 +225,7 @@ async function go(id, extra = {}) {
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
   try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, trades: renderTrades, schedule: renderSchedule,
-                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, 'league-settings': renderLeagueSettings, rankings: renderRankings})[id](); }
+                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, 'league-settings': renderLeagueSettings, commissioner: renderCommissioner, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
 
@@ -353,7 +356,7 @@ async function renderHome() {
             <a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${mine.id}">Set lineup</a>
             ${mine.open_spots && ov.free_agency_open ? `<button class="btn btn-primary" data-go="transactions" data-team="${mine.id}">Fill through free agency</button>` : ''}</div></div>`
           : `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)"><div class="card-kicker">Commissioner</div><h3 style="margin:2px 0 4px">${esc(ov.commissioner_name || 'Commissioner')}</h3>
-             <div class="muted" style="font-size:13px">${isCommissioner ? 'You run this league' + (canActForAi ? ' and can act for its AI teams (commissioner mode).' : '.') : 'You have no team in this league.'}</div></div>`}
+             <div class="muted" style="font-size:13px">${isCommissioner ? (ov.commissioner_user_id === me ? 'You run this league' : 'You are a co-commissioner of this league') + (canActForAi ? ' and can act for its AI teams (commissioner mode).' : '.') : 'You have no team in this league.'}</div></div>`}
         <div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
           <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Standings</h3><a href="#" id="all-standings">Full standings</a></div>
           ${played ? standings.slice(0, 5).map((s, i) => `<div class="row"><span class="muted" style="width:18px">${i + 1}</span><span style="flex:1">${tn(s.team_id, s.team_name)}</span><strong>${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</strong></div>`).join('')
@@ -666,7 +669,7 @@ async function renderHockeyRoster() {
 }
 
 function paintHockeyRoster() {
-  const t = activeTeam(), can = canManage(t);
+  const t = activeTeam(), can = canSetLines(t);
   const grid = RosterGrid.build(gridGroups);
   const total = gridGroups.reduce((n, g) => n + g.ranked.length + g.unranked.length, 0);
   const counts = Object.fromEntries(gridGroups.map(g => [g.position_group, g.ranked.length + g.unranked.length]));
@@ -817,7 +820,7 @@ function paintHockeyRoster() {
 
     ${injuryAlertsHtml()}
     ${dropBar}
-    <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-3 are the backups, in order.' : 'Only the manager of this team can change the lines.'}</p>
+    <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-3 are the backups, in order.' : 'Only the manager of this team (or a commissioner) can change the lines.'}</p>
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
       <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
         ${Array.from({length: (typeof RosterGrid !== 'undefined' && RosterGrid.LINES) ? RosterGrid.LINES : 3}, (_, i) => i + 1).map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
@@ -1388,7 +1391,7 @@ async function renderRoster() {
     <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap;margin-bottom:var(--space-4)">
       <div><div class="card-kicker">${esc(t.program_size)} · ${esc(t.division_name ? ((t.conference_name || 'Conference') + ' · ' + t.division_name) : (t.conference_name || ''))} ${t.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</div><h2 style="margin:2px 0 0">${esc(t.name)}</h2></div>
       <div style="display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap">${teamPicker('team-pick')}
-        ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Set lineup</a>` : ''}</div>
+        ${canSetLines(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Set lineup</a>` : ''}</div>
     </div>
     <div style="display:flex;gap:var(--space-3);flex-wrap:wrap;margin-bottom:var(--space-4)">
       ${statCard('Roster', `${roster.length} / ${ov.roster_size}`, open > 0 ? `${open} open spot${open === 1 ? '' : 's'}` : 'Full')}
@@ -2230,7 +2233,7 @@ function wireSchedule(state) {
 async function showMatchup(m, index, wk) {
   view.schedMatchup = index;
   const [a, b] = await Promise.all([m.team_a_id, m.team_b_id].map(id => api(`/teams/${id}/week-breakdown?week_id=${m.week_id}`)));
-  const canEdit = (id) => teamsById[id] && ((!teamsById[id].is_ai_owned && teamsById[id].owner_user_id === me) || (teamsById[id].is_ai_owned && canActForAi));
+  const canEdit = (id) => canSetLines(teamsById[id]);
   const side = (t) => `<div class="card elev-sm" style="padding:var(--space-4);overflow-x:auto">
       <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">${tn(t.team_id, t.team_name)}</h3><strong>${m.scored ? t.total_points.toFixed(1) + ' pts' : ''}</strong></div>
       ${m.scored ? `<div class="muted" style="font-size:12px">starters' summed credit ${fmt(t.raw_credit)}</div>` : ''}
@@ -2280,7 +2283,8 @@ async function renderLeagueSettings() {
   const style = KEEPER_STYLES.find(s => s[0] === lg.keeper_draft_style) || KEEPER_STYLES[0];
   const needsRefill = isKeeper && lg.keeper_draft_style !== 'rookie_resign';
   const keeperPhase = lg.offseason && isKeeper && !lg.keepers_finalized;
-  let html = `<div class="card"><h3>League Format</h3>` + (isCommissioner
+  let html = (isCommissioner ? `<div class="note" style="margin-bottom:var(--space-4)">Everyone in the league is emailed when a league setting changes.</div>` : '')
+    + `<div class="card"><h3>League Format</h3>` + (isCommissioner
     ? `<select id="league-format">${LEAGUE_FORMATS.map(([v, l]) => `<option value="${v}"${v === lg.league_format ? ' selected' : ''}>${l}</option>`).join('')}</select>`
     : `<p>${esc(fmtName(lg.league_format))}</p><p class="muted">Only the commissioner can change league settings.</p>`)
     + `<p class="muted">${esc(LEAGUE_FORMAT_NOTES[lg.league_format] || '')}</p></div>`;
@@ -2393,7 +2397,8 @@ async function renderLeagueSettings() {
   }
   html += `</div><div id="keeper-pick-card"></div>`;
 
-  html += `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>Season ${s.season_number} - ${esc(fmtName(s.league_format))}${s.champion_team_id && teamsById[s.champion_team_id] ? ' - champion: ' + esc(teamsById[s.champion_team_id].name) : (s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : '')}</summary>
+  html += `<div class="card"><h3>League History</h3>` + (seasons.length ? seasons.map(s => `<details><summary>${s.label ? esc(s.label) : 'Season ' + s.season_number} - ${esc(fmtName(s.league_format))}${s.champion_team_id && teamsById[s.champion_team_id] ? ' - champion: ' + esc(teamsById[s.champion_team_id].name) : (s.standings[0] ? ' - top seed: ' + esc(s.standings[0].team_name) : '')}</summary>
+      ${s.note ? `<p class="muted" style="margin:var(--space-2) 0">${esc(s.note)}</p>` : ''}${s.edited_at ? '<p class="muted" style="margin:0 0 var(--space-2);font-size:12px">Corrected by a commissioner.</p>' : ''}
       <table><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th></tr>${s.standings.map(r => `<tr><td>${r.rank}</td><td>${esc(r.team_name)}</td><td>${r.wins ?? ''}</td><td>${r.losses ?? ''}</td><td>${r.ties ?? ''}</td></tr>`).join('')}</table></details>`).join('')
     : `<p class="muted">No archived seasons yet.</p>`) + `</div>`;
   $('content').innerHTML = html;
@@ -2499,11 +2504,25 @@ async function renderRankings() {
     </div>`;
 }
 
+// ---- COMMISSIONER (commissioner and co-commissioners only; web/static/commissioner-tab.js) ---------------------------
+async function renderCommissioner() {
+  await refreshOverview();
+  await CommissionerTab.render({
+    leagueId: LEAGUE_ID, api, esc, content: $('content'), showError, showResult, teamsById, me,
+    reload: () => go('commissioner'),
+    editLines: (teamId) => isHockey() ? go('roster', {team_id: teamId}) : (location.href = `/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${teamId}`),
+  });
+}
+
+// What a team has done: its signings and completed trades, plus any commissioner adjustment (GET /leagues/{id}/transaction-counts).
+const txnCounts = async () => Object.fromEntries((await api(`/leagues/${LEAGUE_ID}/transaction-counts`).catch(() => [])).map(c => [c.team_id, c]));
+const txnCell = (counts, id) => { const c = counts[id]; return c ? `<td title="${c.signings} signings + ${c.trades} trades${c.adjustment ? ', adjusted by the commissioner' : ''}">${c.total}</td>` : '<td class="muted">-</td>'; };
+
 // ---- STANDINGS -------------------------------------------------------------------------------------------
 async function renderStandings() {
   await refreshOverview();
   if (isHockey()) return renderHockeyStandings();
-  const rows = await api(`/leagues/${LEAGUE_ID}/standings`);
+  const [rows, counts] = await Promise.all([api(`/leagues/${LEAGUE_ID}/standings`), txnCounts()]);
   const played = rows.some(r => r.wins + r.losses + r.ties > 0);
   const byConf = {};
   rows.forEach(r => {
@@ -2514,15 +2533,15 @@ async function renderStandings() {
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in once weekly matchups are scored - every team is 0-0 until then.</div>')
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => b.wins - a.wins || b.points_for - a.points_for || a.team_name.localeCompare(b.team_name));
-      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}${r.eliminated ? ' <span class="pill" title="Mathematically eliminated from the playoffs">out</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td></tr>`).join('')}
+      return `<div><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><table class="table"><thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th><th title="Free-agent and waiver signings plus completed trades">Txns</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}${r.eliminated ? ' <span class="pill" title="Mathematically eliminated from the playoffs">out</span>' : ''}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td>${r.points_for.toFixed(1)}</td><td>${r.points_against.toFixed(1)}</td>${txnCell(counts, r.team_id)}</tr>`).join('')}
         </tbody></table></div>`; }).join('') + '</div>';
 }
 
 // NHL standings: built from the simulated games the viewer may see (the same ones the scoreboard shows).
 async function renderHockeyStandings() {
-  const [sres, odds] = await Promise.all([api(`/leagues/${LEAGUE_ID}/series-standings`),
-    api(`/leagues/${LEAGUE_ID}/playoff-odds`).catch(() => null)]);    // the estimate is a bonus; the table works without it
+  const [sres, odds, counts] = await Promise.all([api(`/leagues/${LEAGUE_ID}/series-standings`),
+    api(`/leagues/${LEAGUE_ID}/playoff-odds`).catch(() => null), txnCounts()]);    // the estimate is a bonus; the table works without it
   const oddsOf = Object.fromEntries((odds?.teams || []).map(o => [o.team_id, o]));
   const oddsPct = (o) => !o ? '<span class="muted">-</span>' : o.eliminated ? '<span class="pill">out</span>'
     : (o.playoff_probability >= 0.995 ? '>99' : o.playoff_probability < 0.005 ? '<1' : Math.round(o.playoff_probability * 100)) + '%';
@@ -2538,11 +2557,11 @@ async function renderHockeyStandings() {
   });
   const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
-    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in. <strong>Playoff %</strong> is an estimate, not a guarantee: the rest of the season is simulated ${odds ? odds.simulations.toLocaleString() : ''} times from each team's goals scored and against (its Pythagorean record), and only a proven "out" removes a team.</p>`
+    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in. <strong>Txns</strong>: the team's free-agent and waiver signings plus completed trades. <strong>Playoff %</strong> is an estimate, not a guarantee: the rest of the season is simulated ${odds ? odds.simulations.toLocaleString() : ''} times from each team's goals scored and against (its Pythagorean record), and only a proven "out" removes a team.</p>`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,760px),1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
-      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th></tr></thead><tbody>
-        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td><td>${oddsPct(oddsOf[r.team_id])}</td></tr>`).join('')}
+      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th><th title="Free-agent and waiver signings plus completed trades">Txns</th></tr></thead><tbody>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td><td>${oddsPct(oddsOf[r.team_id])}</td>${txnCell(counts, r.team_id)}</tr>`).join('')}
         </tbody></table></div></div>`; }).join('') + '</div>';
 }
 
@@ -2687,7 +2706,7 @@ async function renderTeams() {
             ${rosterBudgetLine}
             <div style="display:flex;gap:var(--space-2);margin-top:4px">
               <button class="btn btn-secondary" data-go="roster" data-team="${t.id}">Roster</button>
-              ${canManage(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}
+              ${canSetLines(t) ? `<a class="btn btn-secondary" href="/static/lineup.html?league_id=${LEAGUE_ID}&team_id=${t.id}">Lineup</a>` : ''}
             </div>
           </div>`;
         }).join('')}
@@ -2850,7 +2869,7 @@ async function start() {
   try { const cfg = await fetch('/config').then(r => r.json()); if (cfg.last_season) LAST = String(cfg.last_season); } catch (e) {}
   await refreshOverview();
   const ent = await api('/entitlements/me');
-  isCommissioner = ov.commissioner_user_id === me;
+  isCommissioner = ov.commissioner_user_id === me || (ov.co_commissioner_user_ids || []).includes(me);
   canActForAi = isCommissioner && ent.commissioner_mode;
   $('nav-brand').textContent = ov.name;
   $('league-name').innerHTML = (ov.logo_url ? Retro.leagueMark(ov, 5) : Retro.sportSprite(ov.universe_codes, 5)) + ' ' + esc(ov.name);

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from fantasy_sports.api.auth import assert_commissioner, current_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.schemas import DraftBoardAsset, RosterEntryOut, TeamCreateRequest, TeamOut
-from fantasy_sports.platform import lineups
+from fantasy_sports.platform import commissioner, lineups
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.draft_stats import current_season_stats, stats_by_asset
@@ -87,7 +87,7 @@ def update_team(
     if team is None:
         raise HTTPException(404, "Team not found")
     league = db.get(League, team.league_id)
-    is_commish = bool(league and league.commissioner_user_id == user.id)
+    is_commish = bool(league and commissioner.is_commissioner(db, league, user.id))
     is_owner = bool(team.owner_user_id == user.id)
     if not (is_owner or is_commish):
         raise HTTPException(403, "You can only update your own team or as commissioner")

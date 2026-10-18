@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 import logging
 
-from fantasy_sports.platform import game_lock, pecking_order, pick_trading, trade_eligibility
+from fantasy_sports.platform import commissioner, game_lock, pecking_order, pick_trading, trade_eligibility
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
@@ -302,7 +302,7 @@ def commissioner_decide(
     commissioner whose own team is in the trade has no sign-off at all: the league decides at a higher vote threshold."""
     now = now or datetime.datetime.utcnow()
     league = db.get(League, trade.league_id)
-    if league is None or league.commissioner_user_id != user_id:
+    if league is None or not commissioner.is_commissioner(db, league, user_id):
         raise PermissionError("Only the league commissioner can do that")
     if decision not in ("approve", "reject"):
         raise ValueError("Decision must be 'approve' or 'reject'")

@@ -8,6 +8,10 @@ from fantasy_sports.platform.db.models.core import (
     AuctionRound,
     AuctionTeamBudget,
     BankedCredit,
+    CommissionerAction,
+    EmailOutbox,
+    TeamAdjustment,
+    WaiverOrderOverride,
     Conference,
     Division,
     Draft,
@@ -16,6 +20,7 @@ from fantasy_sports.platform.db.models.core import (
     League,
     KeeperCandidate,
     KeeperSubmission,
+    LeagueCoCommissioner,
     LeagueSeason,
     LeagueSeries,
     LeagueUniverse,
@@ -153,6 +158,10 @@ def delete_league(db: Session, league_id: int) -> None:
     if change_ids:
         db.query(LeagueSettingVote).filter(LeagueSettingVote.change_id.in_(change_ids)).delete(synchronize_session=False)
         db.query(LeagueSettingChange).filter(LeagueSettingChange.id.in_(change_ids)).delete(synchronize_session=False)
+
+    # Commissioner tools (platform/commissioner.py): these point at teams and the league, so they go before both
+    for model in (CommissionerAction, TeamAdjustment, WaiverOrderOverride, LeagueCoCommissioner, EmailOutbox):
+        db.query(model).filter(model.league_id == league_id).delete(synchronize_session=False)
 
     # 9. Team-level child records (the keeper rows and season archive point at teams, so they go first)
     db.query(TradedPick).filter(TradedPick.league_id == league_id).delete(synchronize_session=False)

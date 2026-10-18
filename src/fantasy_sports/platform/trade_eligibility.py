@@ -35,9 +35,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
-from fantasy_sports.platform import dues, elimination, pick_trading, platform_fees
+from fantasy_sports.platform import commissioner, dues, elimination, pick_trading, platform_fees
 from fantasy_sports.platform.db.models.core import (
     League, PlatformSeasonFee, RosterEntry, SeasonDues, Team, Trade, TradeApproval, TradeVote,
 )
@@ -275,7 +275,8 @@ def commissioner_approval(db: Session, trade_id: int) -> TradeApproval | None:
 
 def commissioner_involved(league: League, *teams: Team) -> bool:
     """True when the commissioner's own team is on either side of the trade."""
-    return any(t.owner_user_id is not None and t.owner_user_id == league.commissioner_user_id for t in teams)
+    ids = commissioner.commissioner_ids(object_session(league), league)       # the commissioner or a co-commissioner
+    return any(t.owner_user_id is not None and t.owner_user_id in ids for t in teams)
 
 
 def votes_needed(db: Session, league: League, *teams: Team) -> int:
@@ -383,7 +384,7 @@ def validate_trade_eligibility(db: Session, trade_id: int, league_id: int, actin
         res.block("TRADE_NOT_FOUND", "Trade not found in this league.")
         return res
     member = acting_user_id is not None and (
-        league.commissioner_user_id == acting_user_id
+        commissioner.is_commissioner(db, league, acting_user_id)
         or db.query(Team).filter_by(league_id=league_id, owner_user_id=acting_user_id).first() is not None)
     if not member:
         res.block("NOT_AUTHORIZED", "You are not a member of this league.")

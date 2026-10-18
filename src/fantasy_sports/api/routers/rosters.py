@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.api.auth import assert_can_manage_team, can_override_game_lock, current_user
+from fantasy_sports.api.auth import acting_for_another, assert_can_manage_team, can_override_game_lock, current_user
 from fantasy_sports.api.helpers import draftable_asset_display_name
 from fantasy_sports.api.schemas import LineupEntryOut, LineupSetRequest
 from fantasy_sports.platform import game_lock, lineups
@@ -46,9 +46,9 @@ def set_lineup(
     a player id, or - for a slot that holds several players, like RB or BENCH -
     a list of ids. Every player must be on the team's roster and eligible for
     the slot, and no slot may be over its count. The caller must own the team;
-    for an AI-owned team, the league's commissioner may act for it, but only
-    with commissioner mode (a premium feature)."""
-    team = assert_can_manage_team(db, user, team_id)
+    a commissioner or co-commissioner may set any team's lineup (logged), but only
+    with commissioner mode (a premium feature) for an AI-owned team."""
+    team = assert_can_manage_team(db, user, team_id, commissioners_may=True)
     week = _week_for_team(db, team, payload.week_id)
     try:
         pairs = lineups.build_lineup(db, team, payload.assignments)
@@ -56,6 +56,7 @@ def set_lineup(
         raise HTTPException(400, str(e))
     _check_locks(db, user, team, week, pairs)
     entries = lineups.save_lineup(db, team, payload.week_id, pairs)
+    acting_for_another(db, user, team, "lineup_edit", {"week_id": payload.week_id})
     db.commit()
     return _out(entries, payload.week_id)
 
@@ -63,11 +64,12 @@ def set_lineup(
 @router.post("/{team_id}/lineup/auto", response_model=list[LineupEntryOut])
 def auto_lineup(team_id: int, week_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Sets the team's best lineup for the week (the same logic the AI teams use)."""
-    team = assert_can_manage_team(db, user, team_id)
+    team = assert_can_manage_team(db, user, team_id, commissioners_may=True)
     week = _week_for_team(db, team, week_id)
     pairs = lineups.build_lineup(db, team, lineups.best_lineup(db, team))
     _check_locks(db, user, team, week, pairs)
     entries = lineups.save_lineup(db, team, week_id, pairs)
+    acting_for_another(db, user, team, "lineup_auto", {"week_id": week_id})
     db.commit()
     return _out(entries, week_id)
 
