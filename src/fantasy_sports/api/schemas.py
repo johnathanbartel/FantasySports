@@ -86,8 +86,15 @@ class LeagueCreateRequest(BaseModel):
     unfilled_slot_policy: Literal["fill_ai", "remove"] = "fill_ai"
     # Who can reset a completed draft (platform/draft_reset.py).
     draft_reset_policy: Literal["unanimous", "commissioner", "off"] = "unanimous"
+    # Who picks first (platform/draft_order.py): "random" or "manual". A manual order is set slot by slot in the teams step.
+    draft_order_mode: Literal["random", "manual"] = "random"
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
+
+
+class DraftOrderRequest(BaseModel):
+    mode: Literal["random", "manual"]
+    team_order: list[int] | None = None      # manual only: every team id once, first pick first
 
 
 class LeagueSlugRequest(BaseModel):
@@ -141,6 +148,7 @@ class TeamSetupItem(BaseModel):
     email: str | None = None
     program_size: str = "large"
     is_open_slot: bool = False      # a human slot anyone can claim (no email); AI-run until claimed
+    draft_position: int | None = Field(default=None, ge=1, le=64)    # needed for every team when the league's draft order is manual
 
 
 class LeagueTeamsSetupRequest(BaseModel):
@@ -222,6 +230,7 @@ class LeagueOut(ORMModel):
     trade_vote_extra_votes: int
     commissioner_trade_vote_extra_votes: int
     draft_reset_policy: str = "unanimous"
+    draft_order_mode: str = "random"
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int
@@ -419,7 +428,8 @@ class TeamOut(ORMModel):
     invite_status: str = "ai"
     invite_url: str | None = None
     open_human_slot: bool = False
-    ads_enabled: bool = True        # False only for an AD_FREE league's team whose current-season platform fee is secured
+    draft_position: int | None = None
+    ads_enabled: bool = True       # False only for an AD_FREE league's team whose current-season platform fee is secured
 
 
 class RosterEntryOut(BaseModel):

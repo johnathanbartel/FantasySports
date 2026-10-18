@@ -110,6 +110,7 @@ class League(Base):
         CheckConstraint("visibility IN ('public', 'private')", name="ck_league_visibility"),
         CheckConstraint("unfilled_slot_policy IN ('fill_ai', 'remove')", name="ck_league_unfilled_slot_policy"),
         CheckConstraint("draft_reset_policy IN ('unanimous', 'commissioner', 'off')", name="ck_league_draft_reset_policy"),
+        CheckConstraint("draft_order_mode IN ('random', 'manual')", name="ck_league_draft_order_mode"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -180,6 +181,9 @@ class League(Base):
     # 'unanimous' (the default) needs every person-managed team to approve, 'commissioner' lets the commissioner do it alone,
     # and 'off' refuses a reset of a completed draft.
     draft_reset_policy: Mapped[str] = mapped_column(String(12), default="unanimous", server_default="unanimous")
+    # Who picks first (platform/draft_order.py): 'random' = shuffled when the draft starts, 'manual' = the commissioner's
+    # order, saved as teams.draft_position.
+    draft_order_mode: Mapped[str] = mapped_column(String(10), default="random", server_default="random")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
@@ -396,6 +400,8 @@ class Team(Base):
     # The Trade Hub plan a manager picks: "win_now" or "rebuilding" (platform/trade_hub.py). An AI team's plan is never read from
     # here - it is Win Now until the team is mathematically eliminated, then Rebuilding.
     trade_plan: Mapped[str] = mapped_column(String(12), default="win_now", server_default="win_now")
+    # 1-based slot in a manually ordered draft (leagues.draft_order_mode = 'manual'); NULL when the draft order is random.
+    draft_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     league: Mapped["League"] = relationship(back_populates="teams")

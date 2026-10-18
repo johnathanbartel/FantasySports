@@ -207,8 +207,11 @@ function renderSetup(teams) {
   const panel = document.getElementById('setup-panel');
   panel.style.display = 'block';
   const open = league.size - teams.length;
+  const draftOrderManual = league.draft_order_mode === 'manual';
   if (!currentTeamOrder.length || currentTeamOrder.length !== teams.length) {
-    currentTeamOrder = teams.map(t => t.id);
+    // A draft order the commissioner set in League Settings comes first; otherwise team id order.
+    currentTeamOrder = (draftOrderManual ? teams.slice().sort((a, b) => (a.draft_position ?? 1e9) - (b.draft_position ?? 1e9) || a.id - b.id) : teams)
+      .map(t => t.id);
   }
   const myTeam = Object.values(teamsById).find(t => me && t.owner_user_id === me.user_id);
   const inviteUrl = `${location.origin}/static/join-league.html?league_id=${LEAGUE_ID}`;
@@ -233,7 +236,8 @@ function renderSetup(teams) {
       <div style="margin:var(--space-3) 0;padding:var(--space-3);border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
           <span style="font-size:13px;font-weight:600">Draft Order (Round 1)</span>
-          ${isCommissioner() ? `<button type="button" class="btn btn-secondary" id="randomize-order-btn" style="font-size:12px;padding:3px 10px">🎲 Randomize Order</button>` : ''}
+          ${isCommissioner() && draftOrderManual ? `<span class="text-muted" style="font-size:12px">Set in League Settings</span>` : ''}
+          ${isCommissioner() && !draftOrderManual ? `<button type="button" class="btn btn-secondary" id="randomize-order-btn" style="font-size:12px;padding:3px 10px">🎲 Randomize Order</button>` : ''}
         </div>
         <div id="draft-order-list" style="display:flex;flex-wrap:wrap;gap:8px"></div>
       </div>
@@ -332,7 +336,7 @@ function clockFormHtml() {
       <label>Mode<br><select id="clk-mode"><option value="live" selected>Live: seconds per pick</option><option value="none">No clock (manual picks)</option><option value="slow">Slow: hours per pick</option></select></label>
       <label id="clk-val-wrap" hidden>Time per pick<br><input id="clk-val" type="number" min="1" step="any" value="60" style="width:100px"> <span id="clk-unit">seconds</span></label>
       <label><input type="checkbox" id="clk-night"> Pause overnight</label>
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="clk-randomize" checked> Randomize draft order on start</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="clk-randomize" ${league && league.draft_order_mode === 'manual' ? 'disabled' : 'checked'}> ${league && league.draft_order_mode === 'manual' ? 'Draft order set in League Settings' : 'Randomize draft order on start'}</label>
     </div>
     <div id="clk-night-wrap" hidden style="display:none;gap:var(--space-4);flex-wrap:wrap;align-items:flex-end;margin-top:var(--space-2)">
       <label>From<br><input id="clk-from" type="time" value="22:00"></label>

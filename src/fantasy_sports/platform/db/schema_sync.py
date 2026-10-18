@@ -38,7 +38,8 @@ def ensure_latest_schema(engine):
                               ("platform_fee_cents", "INTEGER"),
                               ("trade_review_hours", "INTEGER DEFAULT 24 NOT NULL"),
                               ("trade_review_mode", "VARCHAR(12) DEFAULT 'both' NOT NULL"),
-                              ("draft_reset_policy", "VARCHAR(12) DEFAULT 'unanimous' NOT NULL")):
+                              ("draft_reset_policy", "VARCHAR(12) DEFAULT 'unanimous' NOT NULL"),
+                              ("draft_order_mode", "VARCHAR(10) DEFAULT 'random' NOT NULL")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
 
@@ -93,6 +94,8 @@ def ensure_latest_schema(engine):
                 conn.execute(text("ALTER TABLE teams ADD COLUMN trade_plan VARCHAR(12) DEFAULT 'win_now' NOT NULL"))
             if "division_id" not in cols:
                 conn.execute(text("ALTER TABLE teams ADD COLUMN division_id INTEGER REFERENCES divisions(id)"))
+            if "draft_position" not in cols:
+                conn.execute(text("ALTER TABLE teams ADD COLUMN draft_position INTEGER"))
 
         if "drafts" in tables:
             cols = {c["name"] for c in insp.get_columns("drafts")}

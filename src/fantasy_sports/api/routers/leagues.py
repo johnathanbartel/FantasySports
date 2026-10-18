@@ -12,7 +12,7 @@ from fantasy_sports.api.helpers import draftable_asset_display_name, draftable_a
 from fantasy_sports.api.schemas import (
     ConferenceCreateRequest, ConferenceOut, ConferenceUpdateRequest,
     DivisionCreateRequest, DivisionOut, DivisionUpdateRequest,
-    LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSlugRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
+    DraftOrderRequest, LeagueAlignmentRequest, LeagueCreateRequest, LeagueOut, LeagueRenameRequest, LeagueSlugRequest, LeagueSeasonOut, LeagueSeasonSummary, LeagueSettingsRequest, RolloverRequest,
     SettingChangeOut, SettingVoteOut, SettingVoteRequest,
     FuturePicksOut, KeeperPlayerOut, KeepersOut, KeepersRequest,
     JoinableTeamOut, JoinLeagueRequest, JoinOptionsOut, PublicLeagueOut,
@@ -21,7 +21,7 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import commissioner, league_branding, league_join, notifications, setting_changes
+from fantasy_sports.platform import commissioner, draft_order, league_branding, league_join, notifications, setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
@@ -154,6 +154,7 @@ def create_league(
         trade_vote_extra_votes=payload.trade_vote_extra_votes,
         commissioner_trade_vote_extra_votes=payload.commissioner_trade_vote_extra_votes,
         draft_reset_policy=payload.draft_reset_policy,
+        draft_order_mode=payload.draft_order_mode,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -651,6 +652,25 @@ def update_league_settings(
     return league
 
 
+@router.put("/{league_id}/draft-order", response_model=LeagueOut)
+def set_draft_order(
+    league_id: int, payload: DraftOrderRequest, background: BackgroundTasks,
+    db: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """Commissioner action: draft in random order (shuffled when the draft starts), or in a fixed order given as team ids,
+    first pick first. Only before the draft starts. Everyone in the league is emailed the change."""
+    league = assert_commissioner(db, user, league_id)
+    before = notifications.snapshot(league)
+    try:
+        draft_order.set_order(db, league, payload.mode, payload.team_order)
+    except draft_order.DraftOrderError as e:
+        raise HTTPException(400, str(e))
+    _email_settings_change(db, background, league, before, user)
+    db.commit()
+    db.refresh(league)
+    return league
+
+
 def _setting_change_out(db: Session, change: LeagueSettingChange, user: User) -> SettingChangeOut:
     cast = {v.team_id: v.vote for v in change.votes}
     teams = setting_changes.voters(db, change.league_id)
@@ -894,6 +914,7 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
             invite_status=invite_status,
             invite_url=invite_url,
             open_human_slot=t.open_human_slot,
+            draft_position=t.draft_position,
             ads_enabled=platform_fees.ads_enabled(db, league, t),
         ))
     return results
@@ -972,6 +993,21 @@ def setup_league_teams(
         for t in existing_teams:
             db.delete(t)
         db.flush()
+
+    # A manual draft order: each slot says where it picks (none given = the slot order), and the positions must be a clean 1..N.
+    slot_positions: list[int | None] = [None] * len(payload.teams)
+    if league.draft_order_mode == "manual":
+        given = [item.draft_position for item in payload.teams]
+        if all(p is None for p in given):
+            slot_positions = list(range(1, len(given) + 1))
+        elif any(p is None for p in given):
+            raise HTTPException(400, "Give every team a draft position, or none of them")
+        else:
+            try:
+                draft_order.validate_positions(given, len(given))
+            except draft_order.DraftOrderError as e:
+                raise HTTPException(400, str(e))
+            slot_positions = given
 
     results: list[TeamSetupResult] = []
     has_commissioner = False
@@ -1065,6 +1101,9 @@ def setup_league_teams(
 
     if not has_commissioner:
         raise HTTPException(400, "One of the teams must be marked as the commissioner's team")
+
+    for result, position in zip(results, slot_positions):
+        db.get(Team, result.id).draft_position = position
 
     db.commit()
     return LeagueTeamsSetupResponse(league_id=league.id, teams=results)

@@ -17,7 +17,7 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import auto_schedule, draft_clock, pecking_order, pick_trading, season_rollover
+from fantasy_sports.platform import auto_schedule, draft_clock, draft_order, pecking_order, pick_trading, season_rollover
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import is_college, roster_spots
@@ -109,7 +109,11 @@ def start_draft(payload: DraftStartRequest, db: Session = Depends(get_db), user:
         except season_rollover.RolloverError as e:
             raise HTTPException(409, str(e))
         payload = payload.model_copy(update={"team_order": offseason_order, "randomize_order": offseason_order is None})
-    if payload.team_order:
+    manual_teams = None if league.offseason else draft_order.manual_order(db, league)
+    if manual_teams is not None:
+        # The commissioner fixed the order in league settings; the draft screen's shuffle doesn't override it.
+        teams = manual_teams
+    elif payload.team_order:
         team_map = {t.id: t for t in teams}
         if set(payload.team_order) == set(team_map.keys()):
             teams = [team_map[tid] for tid in payload.team_order]
