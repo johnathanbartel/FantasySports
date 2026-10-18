@@ -177,6 +177,16 @@
       </div>
 
       <div class="field">
+        <label for="draft-reset-policy">Resetting a draft after it is complete</label>
+        <select id="draft-reset-policy" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
+          <option value="unanimous">Every manager must approve (recommended)</option>
+          <option value="commissioner">The commissioner decides alone</option>
+          <option value="off">Not allowed</option>
+        </select>
+        <span class="hint">While a draft is running the commissioner can always reset it, to the start or to a chosen pick. This is who can undo one once it is complete, and only until games are scored or players are traded or signed.</span>
+      </div>
+
+      <div class="field">
         <label for="league-format">League format</label>
         <select id="league-format" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
           <option value="traditional_redraft">Traditional Redraft</option>
@@ -543,6 +553,7 @@ function leagueSettingsPayload() {
   out.visibility = document.getElementById('league-visibility').value;
   out.allow_ai_takeover_in_season = out.visibility === 'public' && document.getElementById('allow-ai-takeover').checked;
   out.unfilled_slot_policy = document.getElementById('unfilled-slot-policy').value;
+  out.draft_reset_policy = document.getElementById('draft-reset-policy').value;
   out.trade_vote_extra_votes = num('trade-vote-extra') || 1;
   out.commissioner_trade_vote_extra_votes = num('commissioner-vote-extra') || 2;
   if (format === 'keeper') {

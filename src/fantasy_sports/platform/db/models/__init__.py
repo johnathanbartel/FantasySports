@@ -10,6 +10,8 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     League,
     LeagueSettingChange,
     LeagueSettingVote,
+    DraftResetRequest,
+    DraftResetVote,
     LeagueUniverse,
     Team,
     Conference,
