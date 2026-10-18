@@ -165,8 +165,9 @@ def add_player(
     league = db.get(League, team.league_id)
     if not is_open(db, league.id):
         raise ValueError("Free agency opens when the draft ends")
-    if elimination.transactions_locked(league, team):
-        raise ValueError(elimination.TRANSACTIONS_LOCKED_MESSAGE)
+    locked, why = elimination.free_agency_locked(league, team)
+    if locked:
+        raise ValueError(why)
     until = waivers.waiver_until(db, league.id, now).get(asset_id)
     if until is not None:
         raise ValueError(f"He is on waivers until {until:%Y-%m-%d %H:%M} UTC - place a claim instead")
@@ -186,8 +187,9 @@ def drop_player(
     now = now or datetime.datetime.utcnow()
     if not is_open(db, team.league_id):
         raise ValueError("Free agency opens when the draft ends")
-    if elimination.transactions_locked(db.get(League, team.league_id), team):
-        raise ValueError(elimination.TRANSACTIONS_LOCKED_MESSAGE)
+    locked, why = elimination.free_agency_locked(db.get(League, team.league_id), team)
+    if locked:
+        raise ValueError(why)
     entry = db.query(RosterEntry).filter_by(team_id=team.id, draftable_asset_id=asset_id).first()
     if entry is None:
         raise ValueError("That player isn't on this team's roster")

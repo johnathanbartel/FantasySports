@@ -180,8 +180,9 @@ def place_claim(db: Session, team: Team, asset_id: int, now: datetime.datetime |
     process(db, team.league_id, now)
     if not free_agency.is_open(db, team.league_id):
         raise ValueError("Free agency opens when the draft ends")
-    if elimination.transactions_locked(db.get(League, team.league_id), team):
-        raise ValueError(elimination.TRANSACTIONS_LOCKED_MESSAGE)
+    locked, why = elimination.free_agency_locked(db.get(League, team.league_id), team)
+    if locked:
+        raise ValueError(why)
     until = waiver_until(db, team.league_id, now).get(asset_id)
     if until is None:
         raise ValueError("That player isn't on waivers - sign him from the free-agent list")

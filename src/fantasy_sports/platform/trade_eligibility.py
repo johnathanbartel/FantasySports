@@ -10,13 +10,15 @@ Rules (see the CFG-06 matrix):
   * Draft picks need pick trading on in the league (and the pick inside the tradeable horizon).
   * Eliminated team: current players alone can't be traded. It must receive net positive future draft value.
       - receives picks and sends none: net positive by definition;
-      - receives picks and sends picks: needs a valuation, and none is approved - blocked as an unresolved policy until
+      - receives picks and sends picks: needs a valuation, and none is approved - goes to a league vote until
         set_future_value_evaluator() installs one (the AI's pick valuation in pick_trading.py is not an approved policy).
   * PAID league: an eliminated team needs next season's dues secured; any team sending picks needs the dues secured for each
     season whose picks it sends. A season is never counted twice. Only confirmed ('paid') records count. AI-owned teams
     have nobody to pay, so they owe nothing (open policy question).
   * FREE league, eliminated team involved: majority league approval AND the commissioner's sign-off
     (ELIMINATED_FREE_LEAGUE_TRADE). Neither can stand in for the other.
+  * Eliminated team sending picks while no valuation policy is installed: not blocked - the league votes (majority only,
+    no commissioner sign-off; in a FREE league the vote plus sign-off above applies). Dues rules still apply first.
   * Everything else follows the ordinary flow (trades.py): the counterparty accepts, or the league votes if an AI is involved.
 """
 
@@ -49,6 +51,7 @@ EXECUTABLE = (ELIGIBLE_FOR_REVIEW, APPROVED_FOR_EXECUTION)
 # Approval requirements
 ELIMINATED_FREE_LEAGUE_TRADE = "ELIMINATED_FREE_LEAGUE_TRADE"
 STANDARD_TRADE_APPROVAL = "STANDARD_TRADE_APPROVAL"
+ELIMINATED_PICK_TRADE_VOTE = "ELIMINATED_PICK_TRADE_VOTE"   # league majority only; no commissioner sign-off
 
 # Net future draft value: a valuation of (incoming picks, outgoing picks, outgoing players) for one team; True = net positive.
 FutureValueEvaluator = Callable[[Session, League, Team, list[PickRef], list[PickRef], list[int]], bool]
@@ -137,6 +140,7 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
     has_picks = bool(a_picks or b_picks)
     sides = ((a, a_players, a_picks, b_picks), (b, b_players, b_picks, a_picks))
     eliminated = [t for t, *_ in sides if elimination.is_eliminated(league, t)]
+    needs_vote = False       # an eliminated team sends picks and no approved valuation exists: the league decides
 
     # An eliminated team must come away with net positive future draft value.
     for team, players, out_picks, in_picks in sides:
@@ -150,9 +154,9 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
             positive = (_future_value_evaluator(db, league, team, list(in_picks), list(out_picks), list(players))
                         if _future_value_evaluator else None)
             if positive is None:
-                res.block("UNRESOLVED_VALUATION_POLICY",
-                          "This trade swaps future picks for an eliminated team, and no approved draft-pick valuation exists to "
-                          "decide whether it is net positive. It stays blocked until the league adopts one.")
+                needs_vote = True
+                res.explanations.append("This trade sends future picks from an eliminated team, and no approved draft-pick "
+                                        "valuation exists, so the league votes on it.")
             elif not positive:
                 res.block("ELIMINATED_NO_FUTURE_VALUE",
                           f"{team.name} is eliminated and would not receive net positive future draft value.")
@@ -203,6 +207,8 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
     if eliminated and league.league_type == "FREE":
         res.approval_requirements.append(ELIMINATED_FREE_LEAGUE_TRADE)
         res.explanations.append("This free-league trade requires majority league approval and commissioner sign-off.")
+    elif needs_vote:
+        res.approval_requirements.append(ELIMINATED_PICK_TRADE_VOTE)
     else:
         res.approval_requirements.append(STANDARD_TRADE_APPROVAL)
     res.status = ELIGIBLE_FOR_REVIEW
@@ -250,7 +256,16 @@ def evaluate_trade(db: Session, trade: Trade, now: datetime.datetime | None = No
         return res
     p, c, p_players, c_players, p_picks, c_picks = _trade_parts(trade)
     res = _evaluate_proposal(db, league, p, c, p_players, c_players, p_picks, c_picks, now)
-    if res.status != ELIGIBLE_FOR_REVIEW or ELIMINATED_FREE_LEAGUE_TRADE not in res.approval_requirements:
+    if res.status != ELIGIBLE_FOR_REVIEW:
+        return res
+    if ELIMINATED_PICK_TRADE_VOTE in res.approval_requirements:
+        if majority_reached(db, trade):
+            res.status = APPROVED_FOR_EXECUTION
+        else:
+            res.missing_prerequisites.append("majority league approval")
+            res.status = AWAITING_LEAGUE_VOTE
+        return res
+    if ELIMINATED_FREE_LEAGUE_TRADE not in res.approval_requirements:
         return res
 
     approval = commissioner_approval(db, trade.id)

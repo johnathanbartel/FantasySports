@@ -196,7 +196,8 @@ def propose_trade(
                                                       receive_asset_ids, send_picks, receive_picks, now)
     if not eligibility.executable:
         raise ValueError(eligibility.message())
-    special = trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE in eligibility.approval_requirements
+    special = bool({trade_eligibility.ELIMINATED_FREE_LEAGUE_TRADE, trade_eligibility.ELIMINATED_PICK_TRADE_VOTE}
+                   & set(eligibility.approval_requirements))
 
     has_ai = proposer_team.is_ai_owned or counterparty_team.is_ai_owned
     voting = has_ai or special       # a special trade is put to the league whoever owns the teams

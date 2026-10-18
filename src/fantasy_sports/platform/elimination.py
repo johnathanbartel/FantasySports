@@ -49,6 +49,21 @@ def transactions_locked(league: League, team: Team) -> bool:
             and not team.is_ai_owned and is_eliminated(league, team))
 
 
+FA_LOCKED_MESSAGE = ("Your team has been mathematically eliminated. Eliminated teams in a future draft pick redraft league "
+                     "cannot sign, drop or claim players.")
+
+
+def free_agency_locked(league: League, team: Team) -> tuple[bool, str]:
+    """(locked, why) for free-agent signings, drops and waiver claims. Everything transactions_locked covers, plus
+    eliminated person-managed teams in a future draft pick redraft league (paid or free); their trades follow the
+    ordinary eliminated-team rules."""
+    if transactions_locked(league, team):
+        return True, TRANSACTIONS_LOCKED_MESSAGE
+    if league.league_format == "future_pick_redraft" and not team.is_ai_owned and is_eliminated(league, team):
+        return True, FA_LOCKED_MESSAGE
+    return False, ""
+
+
 def mark_eliminated(db: Session, league: League, team: Team) -> None:
     """Records that the team is mathematically eliminated from this season's playoffs. Flushes."""
     team.eliminated_season = league.season_number

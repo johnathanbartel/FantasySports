@@ -220,17 +220,39 @@ resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], receive_pic
 check(pay(lid, c, 2).status_code == 200, "")
 pay(lid, c, 3)
 resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
-check(resp.status_code == 400 and "valuation" in resp.json()["detail"], "pick-for-pick needs a valuation policy: " + resp.text)
+check(resp.status_code == 400 and "3" in resp.json()["detail"] and "dues" in resp.json()["detail"],
+      "extra outgoing season needs its own dues first: " + resp.text)
+check(pay(lid, a, 3).status_code == 200, "")
+check(pay(lid, a, 2, ref="x").status_code == 400, "season 2 is not charged twice")
+# Eliminated team sends picks and no valuation policy exists: it goes to the league (majority only, no commissioner).
+resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
+check(resp.status_code == 200 and resp.json()["status"] == "voting", "pick-sending eliminated trade goes to a vote: " + resp.text)
+tid = resp.json()["id"]
+check(resp.json()["eligibility"]["approval_requirements"] == [trade_eligibility.ELIMINATED_PICK_TRADE_VOTE], resp.text)
+check(resp.json()["eligibility"]["status"] == "AWAITING_LEAGUE_VOTE", "")
+check(decide(tid, "commish").status_code == 400, "no commissioner sign-off is involved")
+check(vote(tid, b, "b").status_code == 200 and status_of(tid) == "voting", "not yet a majority")
+resp = vote(tid, d, "d")
+check(resp.status_code == 200 and resp.json()["status"] == "accepted", "majority executes it: " + resp.text)
+# With an approved valuation the vote is not needed.
 trade_eligibility.set_future_value_evaluator(lambda *args: True)
 try:
-    resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
-    check(resp.status_code == 400 and "3" in resp.json()["detail"], "extra outgoing season needs its own dues: " + resp.text)
-    check(pay(lid, a, 3).status_code == 200, "")
-    check(pay(lid, a, 2, ref="x").status_code == 400, "season 2 is not charged twice")
-    resp = propose(lid, a, c, "a", send=[ra[2]], receive=[roster(c)[0]], send_picks=[(3, 1, a)], receive_picks=[(2, 1, c)])
-    check(resp.status_code == 200, "with 2 and 3 secured it's eligible: " + resp.text)
+    resp = propose(lid, a, c, "a", send=[ra[3]], receive=[roster(c)[1]], send_picks=[(3, 2, a)], receive_picks=[(2, 2, c)])
+    check(resp.status_code == 200 and resp.json()["status"] == "proposed", "with a valuation it's ordinary review: " + resp.text)
 finally:
     trade_eligibility.set_future_value_evaluator(None)
+
+# ---- Future draft pick redraft: eliminated teams can't sign, drop or claim ------------------------------------------
+lid, (a, b, c, d) = make_league("FprElim", "FREE", "future_pick_redraft")
+ra, rb = roster(a), roster(b)
+eliminate(lid, a)
+for path, aid, what in (("free-agency/drop", ra[0], "drop"), ("free-agency/add", rb[0], "sign"), ("waivers/claim", rb[0], "claim")):
+    resp = client.post(f"/teams/{a}/{path}", json={"draftable_asset_id": aid}, headers=HDR["a"])
+    check(resp.status_code == 400 and "future draft pick" in resp.json()["detail"], f"eliminated team can't {what}: " + resp.text)
+check(client.post(f"/teams/{b}/free-agency/drop", json={"draftable_asset_id": rb[0]}, headers=HDR["b"]).status_code == 200,
+      "a team still alive can drop")
+resp = propose(lid, a, b, "a", send=[ra[1]], receive=[rb[1]])
+check(resp.status_code == 400 and "future draft value" in resp.json()["detail"], "trade rules unchanged: " + resp.text)
 
 # ---- Traditional redraft: eliminated teams are locked (FREE) or pay next season's dues first (PAID) ---------------------
 lid, (a, b, c, d) = make_league("FreeTrad", "FREE", "traditional_redraft")
