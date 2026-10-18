@@ -38,6 +38,10 @@ log = logging.getLogger(__name__)
 PickRef = tuple[int, int, int]      # (season_number of the draft, round, original team id)
 
 
+class GameLocked(ValueError):
+    """A traded player is locked by a game in progress; the trade can be retried once the lock lifts."""
+
+
 def _roster_count(db: Session, team_id: int) -> int:
     return db.query(RosterEntry).filter_by(team_id=team_id).count()
 
@@ -253,6 +257,14 @@ def respond_trade(
         db.flush()
         return trade
 
+    # FS-036: a person-to-person trade waits out the league's review window instead of executing at once. One that isn't
+    # eligible right now keeps the old path (execute_trade records the refusal), and a league with no window executes as before.
+    from fantasy_sports.platform import trade_review
+    league = db.get(League, trade.league_id)
+    if league is not None and trade_review.review_applies(league):
+        if trade_eligibility.evaluate_trade(db, trade, now).executable:
+            trade_review.start_review(db, trade, league, now)
+            return trade
     execute_trade(db, trade, now)
     return trade
 
@@ -319,11 +331,14 @@ def commissioner_decide(
 def cancel_trade(
     db: Session, trade: Trade, team: Team, now: datetime.datetime | None = None
 ) -> Trade:
-    """Proposer cancels an active trade proposal."""
+    """Proposer cancels an active trade proposal. While a trade is in its review window either manager can cancel it."""
     now = now or datetime.datetime.utcnow()
-    if trade.status not in ("proposed", "voting"):
+    if trade.status not in ("proposed", "voting", "in_review"):
         raise ValueError(f"Cannot cancel trade in status '{trade.status}'")
-    if team.id != trade.proposer_team_id:
+    if trade.status == "in_review":
+        if team.id not in (trade.proposer_team_id, trade.counterparty_team_id):
+            raise ValueError("Only a team in the trade can cancel it")
+    elif team.id != trade.proposer_team_id:
         raise ValueError("Only the proposing team can cancel the trade")
 
     trade.status = "cancelled"
@@ -336,8 +351,10 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     """Executes an approved trade: transfers roster entries, updates pecking order/lineups, logs transactions."""
     now = now or datetime.datetime.utcnow()
     db.refresh(trade, with_for_update=True)       # serialises concurrent executions of the same trade
-    if trade.status not in ("proposed", "voting"):
+    if trade.status not in ("proposed", "voting", "in_review"):
         raise ValueError(f"Trade is already {trade.status}")
+    if trade.status == "in_review" and (trade.review_ends_at is None or now < trade.review_ends_at):
+        raise ValueError("This trade is still in its review window and can't execute early")
     # CFG-06: recheck the deadline, ownership, elimination, dues, votes and sign-off right before anything moves.
     eligibility = trade_eligibility.evaluate_trade(db, trade, now)
     if eligibility.status == trade_eligibility.BLOCKED:
@@ -354,7 +371,10 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
     p_items = _players(trade, p_team.id)
     c_items = _players(trade, c_team.id)
     p_picks, c_picks = _picks(trade, p_team.id), _picks(trade, c_team.id)
-    game_lock.assert_unlocked(db, trade.league_id, [*p_items, *c_items], now)   # proposed before his game, accepted after
+    try:
+        game_lock.assert_unlocked(db, trade.league_id, [*p_items, *c_items], now)   # proposed before his game, accepted after
+    except ValueError as e:
+        raise GameLocked(str(e)) from e
 
     p_roster ={r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=p_team.id)}
     c_roster = {r.draftable_asset_id for r in db.query(RosterEntry).filter_by(team_id=c_team.id)}
@@ -418,6 +438,10 @@ def execute_trade(db: Session, trade: Trade, now: datetime.datetime | None = Non
 
     pick_trading.transfer(db, league, p_picks, c_team.id)
     pick_trading.transfer(db, league, c_picks, p_team.id)
+
+    # FS-036: dues and platform fees that backed this trade can't be refunded from now on.
+    for row in trade_eligibility.commit_backing_records(db, trade):
+        log.info("trade %s committed %s %s", trade.id, type(row).__name__, row.id)
 
     trade.status = "accepted"
     trade.resolved_at = now

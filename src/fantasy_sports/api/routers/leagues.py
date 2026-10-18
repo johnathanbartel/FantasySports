@@ -19,7 +19,7 @@ from fantasy_sports.api.schemas import (
     TeamAssignRequest, TeamInviteOut, TeamInviteRequest, TeamOut,
     TeamSetupResult, WeekOut,
 )
-from fantasy_sports.platform import calendar, elimination, game_lock, lineups, playoffs, scoring, season_rollover
+from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
@@ -414,7 +414,7 @@ def update_league_settings(
         league.pick_trading_enabled = payload.pick_trading_enabled
     if payload.league_type is not None and payload.league_type != league.league_type:
         # Unsafe midseason: open trades were judged under the old rules and dues records are obligations to keep.
-        open_trades = db.query(Trade).filter(Trade.league_id == league.id, Trade.status.in_(("proposed", "voting"))).count()
+        open_trades = db.query(Trade).filter(Trade.league_id == league.id, Trade.status.in_(("proposed", "voting", "in_review"))).count()
         has_dues = db.query(SeasonDues).filter_by(league_id=league.id).count()
         if not league.offseason and (open_trades or has_dues):
             raise HTTPException(409, "The league type can't change midseason while trades are pending or dues have been "
@@ -426,6 +426,14 @@ def update_league_settings(
         league.trade_deadline = payload.trade_deadline
     if league.league_type == "PAID" and not league.annual_dues_cents:
         raise HTTPException(400, "A paid league needs an annual dues amount")
+    if payload.platform_plan is not None and payload.platform_plan != league.platform_plan:
+        if db.query(Draft).filter_by(league_id=league.id, status="in_progress").first() is not None:
+            raise HTTPException(409, "The platform plan can't change while a draft is in progress")
+        platform_fees.set_plan(db, league, payload.platform_plan)
+    if payload.trade_review_hours is not None:
+        league.trade_review_hours = payload.trade_review_hours
+    if payload.trade_review_mode is not None:
+        league.trade_review_mode = payload.trade_review_mode
     if payload.pick_trade_seasons is not None:
         league.pick_trade_seasons = payload.pick_trade_seasons
     if "keeper_limit" in sent:
@@ -617,6 +625,7 @@ def get_league_teams(league_id: int, db: Session = Depends(get_db)):
             is_claimed=is_claimed,
             invite_status=invite_status,
             invite_url=invite_url,
+            ads_enabled=platform_fees.ads_enabled(db, league, t),
         ))
     return results
 

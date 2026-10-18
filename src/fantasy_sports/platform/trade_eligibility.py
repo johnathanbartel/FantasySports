@@ -15,6 +15,9 @@ Rules (see the CFG-06 matrix):
   * PAID league: an eliminated team needs next season's dues secured; any team sending picks needs the dues secured for each
     season whose picks it sends. A season is never counted twice. Only confirmed ('paid') records count. AI-owned teams
     have nobody to pay, so they owe nothing (open policy question).
+  * FREE league: future picks can't be traded at all (FREE_LEAGUE_PICK_TRADING_LOCKED).
+  * AD_FREE league (FS-036): a person-managed team sending picks needs each pick season's platform fee (the deposit) secured,
+    once per team per season; in a PAID + AD_FREE league that is on top of the dues. See platform_fees.py.
   * FREE league, eliminated team involved: majority league approval AND the commissioner's sign-off
     (ELIMINATED_FREE_LEAGUE_TRADE). Neither can stand in for the other.
   * Eliminated team sending picks while no valuation policy is installed: not blocked - the league votes (majority only,
@@ -31,8 +34,10 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import dues, elimination, pick_trading
-from fantasy_sports.platform.db.models.core import League, RosterEntry, Team, Trade, TradeApproval, TradeVote
+from fantasy_sports.platform import dues, elimination, pick_trading, platform_fees
+from fantasy_sports.platform.db.models.core import (
+    League, PlatformSeasonFee, RosterEntry, SeasonDues, Team, Trade, TradeApproval, TradeVote,
+)
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +138,9 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
                 why = pick_trading.pick_available(db, league, season, rnd, original)
                 if why:
                     res.block("FUTURE_PICK_UNAVAILABLE", why)
+        # FS-036: free leagues have no dues behind them, so they can't trade future picks at all.
+        if league.league_type == "FREE":
+            res.block("FREE_LEAGUE_PICK_TRADING_LOCKED", "Draft pick trading needs league dues. Free leagues can't trade picks.")
     if res.blocking_codes:
         res.status = BLOCKED
         return res
@@ -191,17 +199,40 @@ def _evaluate_proposal(db: Session, league: League, a: Team, b: Team, a_players:
                            f"season's league dues ({season}) for {names[team_id]}.")
                 else:
                     why = f"{names[team_id]} must secure {season} league dues before trading away a {season} draft pick."
-                res.payment_requirements.append({"team_id": team_id, "team_name": names[team_id], "season_number": season,
-                                                 "amount_cents": remaining})
+                res.payment_requirements.append({"kind": "league_dues", "team_id": team_id, "team_name": names[team_id],
+                                                 "season_number": season, "amount_cents": remaining})
                 res.missing_prerequisites.append(f"{names[team_id]}: {season} dues")
                 res.explanations.append(why)
-        if res.payment_requirements:
-            res.status = AWAITING_PAYMENT
+        if not res.payment_requirements:
+            for team_id, seasons in needed.items():
+                if any(t.id == team_id for t in eliminated):
+                    res.explanations.append(f"{names[team_id]}'s {league.season_number + 1} league dues are secured. "
+                                            "You are eligible to submit future-asset trades.")
+
+    # FS-036: in an AD_FREE league a person-managed team sending picks needs each pick season's platform fee (the deposit)
+    # secured, once per team per season. This sits beside the dues gate: a PAID + AD_FREE league needs both.
+    if league.platform_plan == platform_fees.AD_FREE and has_picks:
+        if not league.platform_fee_cents:
+            res.block("PLATFORM_FEE_NOT_CONFIGURED", "This league is ad-free but the platform fee hasn't been set.")
+            res.status = BLOCKED
             return res
-        for team_id, seasons in needed.items():
-            if any(t.id == team_id for t in eliminated):
-                res.explanations.append(f"{names[team_id]}'s {league.season_number + 1} league dues are secured. "
-                                        "You are eligible to submit future-asset trades.")
+        names = {t.id: t.name for t in (a, b)}
+        for team, _players, out_picks, _in in sides:
+            if team.is_ai_owned:
+                continue
+            for season in sorted({season for season, _r, _o in out_picks}):
+                if platform_fees.is_secured(db, league, team.id, season):
+                    continue
+                remaining = league.platform_fee_cents - platform_fees.secured_cents(db, team.id, season)
+                res.payment_requirements.append({"kind": "platform_fee", "team_id": team.id, "team_name": team.name,
+                                                 "season_number": season, "amount_cents": remaining})
+                res.missing_prerequisites.append(f"{team.name}: {season} platform deposit")
+                res.explanations.append(f"{names[team.id]} must pay the {season} platform deposit before trading a {season} "
+                                        "draft pick. It's charged once per season and counts toward that season's fee.")
+
+    if res.payment_requirements:
+        res.status = AWAITING_PAYMENT
+        return res
 
     # Approvals.
     if eliminated and league.league_type == "FREE":
@@ -245,7 +276,7 @@ def evaluate_trade(db: Session, trade: Trade, now: datetime.datetime | None = No
     now = now or datetime.datetime.utcnow()
     if trade.status == "accepted":
         return EligibilityResult(status=EXECUTED, explanations=["This trade has been executed."])
-    if trade.status not in ("proposed", "voting"):
+    if trade.status not in ("proposed", "voting", "in_review"):
         res = EligibilityResult(status=BLOCKED)
         res.block("TRADE_CLOSED", f"This trade is {trade.status}." + (f" {trade.failure_reason}" if trade.failure_reason else ""))
         return res
@@ -282,6 +313,34 @@ def evaluate_trade(db: Session, trade: Trade, now: datetime.datetime | None = No
     res.status = (AWAITING_LEAGUE_VOTE if not voted else AWAITING_COMMISSIONER_APPROVAL if not signed
                   else APPROVED_FOR_EXECUTION)
     return res
+
+
+def commit_backing_records(db: Session, trade: Trade) -> list:
+    """FS-036: marks every paid dues and platform-fee record that backed this trade as committed to it, so it can't be refunded
+    afterwards. Backing = a person-managed sender's pick seasons (dues in a PAID league, platform fee in an AD_FREE league) and,
+    in a PAID league, an eliminated team's next-season dues. Only records with no earlier trade are touched: the first trade
+    that used a record keeps it. Returns the rows marked; the caller flushes."""
+    league = db.get(League, trade.league_id)
+    p, c, _pp, _cp, p_picks, c_picks = _trade_parts(trade)
+    marked = []
+    for team, picks in ((p, p_picks), (c, c_picks)):
+        if team.is_ai_owned:
+            continue
+        seasons = {season for season, _r, _o in picks}
+        dues_seasons = set(seasons)
+        if league.league_type == "PAID" and elimination.is_eliminated(league, team):
+            dues_seasons.add(league.season_number + 1)
+        if league.league_type == "PAID":
+            for season in dues_seasons:
+                marked += [r for r in db.query(SeasonDues).filter_by(team_id=team.id, season_number=season, status="paid")
+                           if r.committed_by_trade_id is None]
+        if league.platform_plan == platform_fees.AD_FREE:
+            for season in seasons:
+                marked += [r for r in db.query(PlatformSeasonFee).filter_by(team_id=team.id, season_number=season, status="paid")
+                           if r.committed_by_trade_id is None]
+    for row in marked:
+        row.committed_by_trade_id = trade.id
+    return marked
 
 
 def validate_trade_eligibility(db: Session, trade_id: int, league_id: int, acting_user_id: int | None,

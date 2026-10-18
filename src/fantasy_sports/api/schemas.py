@@ -97,6 +97,9 @@ class LeagueSettingsRequest(BaseModel):
     league_type: Literal["FREE", "PAID"] | None = None
     annual_dues_cents: int | None = Field(default=None, ge=1, le=10_000_000)    # send null to clear
     trade_deadline: datetime.datetime | None = None                          # send null to clear
+    platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
+    trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
+    trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
     standings_mode: Literal["points", "win_pct"] | None = None
     points_per_win: int | None = Field(default=None, ge=0, le=20)
     points_per_tie: int | None = Field(default=None, ge=0, le=20)
@@ -194,6 +197,10 @@ class LeagueOut(ORMModel):
     league_type: str
     annual_dues_cents: int | None
     trade_deadline: datetime.datetime | None
+    platform_plan: str
+    platform_fee_cents: int | None
+    trade_review_hours: int
+    trade_review_mode: str
     standings_mode: str
     points_per_win: int
     points_per_tie: int
@@ -354,6 +361,7 @@ class TeamOut(ORMModel):
     is_claimed: bool = False
     invite_status: str = "ai"
     invite_url: str | None = None
+    ads_enabled: bool = True        # False only for an AD_FREE league's team whose current-season platform fee is secured
 
 
 class RosterEntryOut(BaseModel):

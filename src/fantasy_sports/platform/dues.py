@@ -61,12 +61,19 @@ def record_payment(db: Session, league: League, team: Team, season: int, amount_
 
 def set_status(db: Session, league: League, row: SeasonDues, status: str, user_id: int | None,
                now: datetime.datetime | None = None) -> SeasonDues:
-    """Moves a record to a new status (pending -> paid, paid -> refunded / disputed, ...). Flushes."""
+    """Moves a record to a new status (pending -> paid, paid -> refunded / disputed, ...). A record that backed an executed
+    future-pick trade (committed_by_trade_id) can't be refunded, only disputed or failed. Flushes."""
     now = now or datetime.datetime.utcnow()
     if row.league_id != league.id:
         raise ValueError("Payment is not in this league")
     if status not in STATUSES:
         raise ValueError(f"Status must be one of {', '.join(STATUSES)}")
+    if status == "refunded" and row.committed_by_trade_id is not None:
+        raise ValueError(f"This payment backed executed trade {row.committed_by_trade_id} and can't be refunded")
+    if row.committed_by_trade_id is not None and status in ("disputed", "failed") and row.status == "paid":
+        # A chargeback is possible; the executed trade stays, and the season is unsecured again for the next pick trade.
+        log.warning("dues on committed trade %s moved to %s: team %s season %s is no longer secured",
+                    row.committed_by_trade_id, status, row.team_id, row.season_number)
     if status == "paid" and row.status != "paid":
         others = sum(r.amount_cents for r in db.query(SeasonDues).filter_by(team_id=row.team_id, season_number=row.season_number,
                                                                           status="paid"))

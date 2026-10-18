@@ -102,6 +102,9 @@ class League(Base):
             name="ck_league_format",
         ),
         CheckConstraint("league_type IN ('FREE', 'PAID')", name="ck_league_type"),
+        CheckConstraint("platform_plan IN ('AD_SUPPORTED', 'AD_FREE')", name="ck_league_platform_plan"),
+        CheckConstraint("trade_review_mode IN ('none', 'commissioner', 'league', 'both')", name="ck_league_trade_review_mode"),
+        CheckConstraint("trade_review_hours BETWEEN 0 AND 72", name="ck_league_trade_review_hours"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -164,6 +167,14 @@ class League(Base):
     league_type: Mapped[str] = mapped_column(String(4), default="FREE", server_default="FREE")
     annual_dues_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     trade_deadline: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
+    # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
+    platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
+    platform_fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # FS-036 (platform/trade_review.py): how long an accepted person-to-person trade waits before it executes (0 = no
+    # window), and who can veto it in that time.
+    trade_review_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    trade_review_mode: Mapped[str] = mapped_column(String(12), default="both", server_default="both")
     # Hockey standings (platform/series_standings.py): sorted by points (points_per_win / points_per_tie) or win percentage.
     standings_mode: Mapped[str] = mapped_column(String(10), default="points", server_default="points")
     points_per_win: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
@@ -1073,6 +1084,9 @@ class Trade(Base):
       'rejected': trade was voted down by the league.
       'cancelled': proposer withdrew the trade.
       'blocked': an eligibility recheck refused it (platform/trade_eligibility.py); failure_reason says why.
+      'in_review': accepted by both managers and waiting out the league's review window (platform/trade_review.py);
+        it executes once review_ends_at passes unless it is vetoed or cancelled first.
+      'vetoed': the commissioner or the league vetoed it during the review window.
     """
 
     __tablename__ = "trades"
@@ -1086,6 +1100,8 @@ class Trade(Base):
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     # Why the trade was blocked (status 'blocked'): recorded when the last eligibility recheck refused it.
     failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # When an 'in_review' trade becomes executable (naive UTC).
+    review_ends_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
 
     league: Mapped["League"] = relationship(foreign_keys=[league_id])
     proposer_team: Mapped["Team"] = relationship(foreign_keys=[proposer_team_id])
@@ -1182,6 +1198,47 @@ class SeasonDues(Base):
     recorded_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    # Set when this paid record backed an executed future-pick trade; from then on it can't be refunded (FS-036).
+    committed_by_trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
+
+
+class PlatformSeasonFee(Base):
+    """One payment record for a franchise's platform fee (the "deposit") for one season in an AD_FREE league. Mirrors
+    SeasonDues: the credit belongs to the franchise, only 'paid' counts, rows are never deleted. recorded_by is the
+    operator's name (there is no admin role)."""
+
+    __tablename__ = "platform_season_fees"
+    __table_args__ = (
+        UniqueConstraint("league_id", "payment_reference", name="uq_platform_season_fees_reference"),
+        CheckConstraint("status IN ('pending', 'paid', 'failed', 'refunded', 'disputed')", name="ck_platform_season_fees_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    season_number: Mapped[int] = mapped_column(Integer)
+    required_cents: Mapped[int] = mapped_column(Integer)      # the league's platform fee when this row was recorded
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    payment_reference: Mapped[str] = mapped_column(String(120))
+    recorded_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+    committed_by_trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
+
+
+class TradeVeto(Base):
+    """A league veto of an 'in_review' trade, cast by a person-managed team that isn't in the trade. The commissioner's
+    veto is a TradeApproval (approval_type COMMISSIONER_VETO) instead."""
+
+    __tablename__ = "trade_vetoes"
+    __table_args__ = (UniqueConstraint("trade_id", "team_id", name="uq_trade_veto_team"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trade_id: Mapped[int] = mapped_column(ForeignKey("trades.id"), index=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
 
 
 class TradeVote(Base):

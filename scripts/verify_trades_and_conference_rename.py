@@ -163,9 +163,13 @@ def main():
     token2 = res2.json()["token"]
     headers2 = {"Authorization": f"Bearer {token2}"}
 
+    # FS-036: by default an accepted human trade now waits out a 24-hour review window; this check is about the swap itself,
+    # so the league has no window here (the review window is covered by seed_trade_review_smoke_test.py).
+    no_window = client.patch(f"/leagues/{league.id}/settings", json={"trade_review_hours": 0}, headers=headers)
+    check(no_window.status_code == 200, f"Commissioner turns the review window off (was {no_window.status_code})")
     accept_res = client.post(f"/trades/{trade_id}/respond", json={"team_id": team2.id, "accept": True}, headers=headers2)
     check(accept_res.status_code == 200, f"Accept trade status 200 (was {accept_res.status_code})")
-    check(accept_res.json()["status"] == "accepted", "Human trade executed upon counterparty acceptance")
+    check(accept_res.json()["status"] == "accepted", "Human trade executed upon counterparty acceptance (no review window)")
 
     # Verify players actually swapped
     t1_new_roster = {r["draftable_asset_id"] for r in client.get(f"/teams/{team1.id}/roster").json()}
