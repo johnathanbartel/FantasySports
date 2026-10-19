@@ -73,6 +73,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_nfl_defense_smoke_test.py` | Offline synthetic-play checks of NFL individual/group/team defense credit, tie-outs, baselines | `.venv` | No | No |
 | `scripts/seed_nfl_smoke_test.py` | Offline in-memory NFL universe, league-creation, roster-slot, and snake-draft smoke test for group, team and individual defense modes | `.venv-api` | No | No (in-memory only) |
 | `scripts/seed_nfl_universe.py` | Idempotently adds the `nfl` universe and v1 roster slot definitions to the configured database | `.venv-api` | No | Yes (`DATABASE_URL`; additive-only, safe to re-run) |
+| `scripts/seed_draft_grades_smoke_test.py` | NHL projected points and draft grades: aging curves, regression and no-history prior, games played from ice time, lineup depth cover, pick value against the projection board, `GET /leagues/{id}/draft-grades` and `/power-rankings` | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_trade_hub_smoke_test.py` | Trade Hub and Trade Block: deadline, manager plans, AI teams Win Now until mathematically eliminated, block add/remove | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_trade_eligibility_smoke_test.py` | CFG-06 paid/free league trade eligibility: dues, eliminated teams, majority + commissioner approval, deadline, execution rechecks, franchise continuity | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_player_card_smoke_test.py` | Player card endpoint: bio, injury, simulation stats and game log from a published sim game (G/A/SOG/SV/SO), spoiler rule, schedule, acquisition, transactions, % owned (mock drafts excluded), trade block, and the add/claim/cancel/drop/trade buttons per situation | `.venv-api` | No | Yes (throwaway test DB) |
@@ -99,6 +100,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_eligibility_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_hub_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_player_card_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_draft_grades_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_elimination_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_elimination_engine.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_playoff_odds.py`
