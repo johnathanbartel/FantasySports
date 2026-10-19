@@ -221,7 +221,7 @@
             <option value="season">season</option>
           </select>
         </span>
-        <span class="hint">Days and weeks run on Pacific time (a week is Sunday to Saturday). Game and series follow a hockey team's fantasy schedule; in other sports both are the week.</span>
+        <span class="hint">Days and weeks run on Pacific time (a week is Sunday to Saturday). Game and series follow the fantasy schedule of a hockey or basketball team; in other sports both are the week.</span>
       </div>
 
       <div class="field">
@@ -503,11 +503,12 @@ const PROGRAM_SIZES = ['large', 'moderate', 'small'];
 const isNfl = () => document.getElementById('universe').value === 'nfl';
 const isNhl = () => document.getElementById('universe').value === 'nhl';
 const isNba = () => document.getElementById('universe').value === 'nba';
+const isWindowSport = () => isNhl() || isNba();   // same fantasy windows, series and standings settings
 const isProSport = () => isNfl() || isNhl() || isNba();
 
 function getSportRosterSize() {
   const universe = document.getElementById('universe').value;
-  if (universe === 'nba') return 13; // placeholder until NBA roster slots are defined
+  if (universe === 'nba') return 15; // 5 starters (PG SG SF PF C) + 10 bench
   if (universe === 'nhl') return 18; // 3 lines of 6 (6 starters + 12 bench)
   if (universe === 'nfl') {
     const def = document.getElementById('defense-mode').value;
@@ -528,7 +529,7 @@ function updateRosterRounds() {
   const hint = document.getElementById('draft-rounds-hint');
   if (hint) {
     const u = document.getElementById('universe').value;
-    const desc = u === 'nba' ? 'NBA (placeholder)' : u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
+    const desc = u === 'nba' ? 'NBA (5 starters + 10 bench)' : u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
     hint.textContent = `Locked: set automatically to ${rounds} rounds by ${desc} roster size.`;
   }
 }
@@ -603,7 +604,7 @@ function updateSettingsFields() {
   const picksOn = document.getElementById('pick-trading-enabled').checked;
   document.getElementById('pick-trading-field').style.display = picksFormat ? 'flex' : 'none';
   document.getElementById('pick-trade-field').style.display = ((keeper || dynasty) && picksOn) ? 'flex' : 'none';
-  document.getElementById('hockey-settings-fields').style.display = isNhl() ? 'block' : 'none';
+  document.getElementById('hockey-settings-fields').style.display = isWindowSport() ? 'block' : 'none';
   const size = Number(document.getElementById('league-size').value) || 0;
   const def = Math.max(1, Math.floor(size * 0.33 + 0.5));
   document.getElementById('playoff-teams').placeholder = String(def);
@@ -648,7 +649,7 @@ function leagueSettingsPayload() {
   }
   if (format !== 'traditional_redraft') out.pick_trading_enabled = document.getElementById('pick-trading-enabled').checked;
   if (format === 'keeper' || format === 'dynasty') out.pick_trade_seasons = num('pick-trade-seasons') || 2;
-  if (isNhl()) {
+  if (isWindowSport()) {
     out.standings_mode = document.getElementById('standings-mode').value;
     out.points_per_win = num('points-win') ?? 3;
     out.points_per_tie = num('points-tie') ?? 1;

@@ -68,6 +68,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_draft_order_smoke_test.py` | Manual draft order: positions set in the wizard's teams step, bad or half-given sets refused, `PUT /leagues/{id}/draft-order` (commissioner only, switching back to random, settings email), draft start uses the saved order over the draft screen's shuffle and snakes it, order locked once the draft starts | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_league_branding_smoke_test.py` | League logo and custom URL: slug rules and uniqueness, commissioner-only, `/l/<slug>` redirect, logo type/size checks, serving, removal | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_chat_smoke_test.py` | Chat: league room, draft room and direct messages - members only, validation, rate limit, removal rules, DMs private even from the commissioner, polling with `after_id`, unread counts | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/seed_nba_smoke_test.py` | NBA stand-up: universe and 15 roster slots (5 starters + 10 bench) seeded on demand by league creation, 15 draft rounds, series length 5/7/10 and the series schedule shared with hockey (window sport set), window lock, a draft pick, NHL unaffected | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/verify_hockey_toi_substitution.py` | Offline check that a starter with no ice time in his counting game is replaced by the next player on the pecking order (early, late, skipped chains, unstored boxscore) | `.venv-api` | No (network functions are faked) | No (throwaway temp DB) |
 | `scripts/seed_hockey_universe.py` | Idempotently adds the "nhl" universe + roster slot definitions to whatever `DATABASE_URL` points at, so NHL leagues can be created from the same site already hosting CFB leagues | `.venv-api` | No | Yes (`DATABASE_URL`; additive-only, safe to re-run) |
@@ -92,6 +93,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_auction_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_hockey_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_nba_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_join_league_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_mock_draft_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_commissioner_tools_smoke_test.py`
