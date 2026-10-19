@@ -161,6 +161,8 @@ def create_league(
         waiver_processing_days=payload.waiver_processing_days,
         acquisition_type=payload.acquisition_type,
         acquisition_budget=payload.acquisition_budget,
+        acquisition_limit=payload.acquisition_limit,
+        acquisition_limit_period=payload.acquisition_limit_period,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -635,6 +637,10 @@ def update_league_settings(
         league.acquisition_type = payload.acquisition_type
     if "acquisition_budget" in sent:
         league.acquisition_budget = payload.acquisition_budget
+    if "acquisition_limit" in sent:
+        league.acquisition_limit = payload.acquisition_limit
+    if payload.acquisition_limit_period is not None:
+        league.acquisition_limit_period = payload.acquisition_limit_period
     if payload.waiver_hours is not None or "waiver_processing_days" in sent or payload.acquisition_type is not None:
         if payload.waiver_hours is not None:
             league.waiver_hours = payload.waiver_hours

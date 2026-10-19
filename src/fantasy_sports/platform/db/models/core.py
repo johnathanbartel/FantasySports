@@ -196,6 +196,10 @@ class League(Base):
     # (whole dollars), else acquisition_budget (NULL = the default). It starts over each season.
     acquisition_type: Mapped[str] = mapped_column(String(12), default="waivers", server_default="waivers")
     acquisition_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Acquisition limit (platform/acquisition_limits.py): the most players a team may acquire in one period; NULL = no limit
+    # (the default). The period is "day", "week", "game", "series" or "season".
+    acquisition_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    acquisition_limit_period: Mapped[str] = mapped_column(String(8), default="week", server_default="week")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")

@@ -2602,6 +2602,15 @@ async function renderLeagueSettings() {
          <button type="button" class="btn btn-primary" id="acq-save">Save</button></p>`
     : `<p>Players are acquired by: <b>${esc(ACQ[acq])}</b>${acq === 'budget' ? ` · budget ${acqBudget} per team` : ''}.</p>`)
     + `<p class="muted"><b>No waivers:</b> a dropped player can be signed at once. <b>Waivers:</b> a dropped player is held for the waiver period, then goes to the first team in the waiver order that claimed him. <b>Full waivers:</b> every free player is always on waivers; claims are decided at the next processing day (or the weekly reset if none is set). <b>Acquisition budget:</b> like waivers, but each claim is a bid and the highest bid wins, ties going to the waiver order. The winner pays his bid, it is not refunded, and the budget starts over each season. In a paid league the budget is the league dues${acq === 'budget' ? ` (here ${acqBudget} per team)` : ''}.</p></div>`;
+  const LIM_PERIODS = ['day', 'week', 'game', 'series', 'season'];
+  const limOn = lg.acquisition_limit != null, limPeriod = lg.acquisition_limit_period || 'week';
+  html += `<div class="card"><h3>Acquisition Limit</h3>` + (isCommissioner
+    ? `<p><label><input type="checkbox" id="al-on"${limOn ? ' checked' : ''}> Limit how many players a team can acquire</label></p>
+       <p id="al-fields"${limOn ? '' : ' hidden'}>At most <input type="number" id="al-limit" min="1" max="1000" value="${limOn ? lg.acquisition_limit : 3}" style="width:5rem"> per
+         <select id="al-period">${LIM_PERIODS.map(p => `<option value="${p}"${limPeriod === p ? ' selected' : ''}>${p}</option>`).join('')}</select></p>
+       <p><button type="button" class="btn btn-primary" id="al-save">Save</button></p>`
+    : `<p>Acquisition limit: <b>${limOn ? `${lg.acquisition_limit} per ${esc(limPeriod)}` : 'off'}</b>.</p>`)
+    + `<p class="muted">Off by default. When on, a team can sign free agents and win waiver claims up to this many times in each period; a claim that would go over fails. Trades, the AI's roster fill and commissioner edits don't count. Days and weeks run on Pacific time (a week is Sunday to Saturday). Game and series follow a hockey team's fantasy schedule; in other sports both are the week.</p></div>`;
   html += `<div class="card"><h3>Post-Draft Waivers</h3>` + (isCommissioner
     ? `<p><label><input type="checkbox" id="pdw-on"${lg.post_draft_waivers ? ' checked' : ''}> Put every undrafted player on waivers for 24 hours after the draft ends</label>
          <button type="button" class="btn btn-primary" id="pdw-save">Save</button></p>`
@@ -2715,6 +2724,10 @@ async function renderLeagueSettings() {
     if (body.acquisition_type === 'budget' && lg.league_type !== 'PAID') body.acquisition_budget = Math.min(100000, Math.max(0, parseInt($('acq-budget').value, 10) || 0));
     return api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', body));
   }, 'Acquisition type saved.'));
+  if ($('al-on')) $('al-on').onchange = () => { $('al-fields').hidden = !$('al-on').checked; };
+  on('al-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', $('al-on').checked
+    ? {acquisition_limit: Math.min(1000, Math.max(1, parseInt($('al-limit').value, 10) || 1)), acquisition_limit_period: $('al-period').value}
+    : {acquisition_limit: null})), 'Acquisition limit saved.'));
   on('wp-save',() => call(() => {
     const days = [...document.querySelectorAll('.wp-day:checked')].map(i => +i.value);
     const hours = Math.min(168, Math.max(0, parseInt($('wp-hours').value, 10) || 0));

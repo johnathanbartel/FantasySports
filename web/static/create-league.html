@@ -203,6 +203,27 @@
       </div>
 
       <div class="field">
+        <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="acquisition-limit-on" style="width:auto"> Limit acquisitions</label>
+        <span class="hint">Off by default. When on, a team can sign or win at most this many players in each period. Trades, the AI's roster fill and commissioner edits don't count.</span>
+      </div>
+
+      <div class="field" id="acquisition-limit-field" hidden>
+        <label for="acquisition-limit">Most acquisitions per team</label>
+        <span style="display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)">
+          <input type="number" id="acquisition-limit" min="1" max="1000" value="3" style="width:6rem">
+          per
+          <select id="acquisition-limit-period">
+            <option value="day">day</option>
+            <option value="week" selected>week</option>
+            <option value="game">game</option>
+            <option value="series">series</option>
+            <option value="season">season</option>
+          </select>
+        </span>
+        <span class="hint">Days and weeks run on Pacific time (a week is Sunday to Saturday). Game and series follow a hockey team's fantasy schedule; in other sports both are the week.</span>
+      </div>
+
+      <div class="field">
         <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="post-draft-waivers" style="width:auto"> Post-draft waivers on undrafted players</label>
         <span class="hint">Off by default. When on, every player nobody drafted is on waivers for 24 hours after the draft ends: teams claim them in waiver order instead of signing them right away.</span>
       </div>
@@ -603,6 +624,11 @@ function leagueSettingsPayload() {
   if (out.acquisition_type === 'budget') {
     const ab = parseInt(document.getElementById('acquisition-budget').value, 10);
     out.acquisition_budget = Number.isNaN(ab) ? null : Math.min(100000, Math.max(0, ab));
+  }
+  if (document.getElementById('acquisition-limit-on').checked) {
+    const al = parseInt(document.getElementById('acquisition-limit').value, 10);
+    out.acquisition_limit = Number.isNaN(al) ? 1 : Math.min(1000, Math.max(1, al));
+    out.acquisition_limit_period = document.getElementById('acquisition-limit-period').value;
   }
   out.post_draft_waivers = document.getElementById('post-draft-waivers').checked;
   const wh = parseInt(document.getElementById('waiver-hours').value, 10);
@@ -1034,6 +1060,9 @@ function renderInvitesSummary(createdTeams) {
     }
   };
 }
+document.getElementById('acquisition-limit-on').addEventListener('change', e => {
+  document.getElementById('acquisition-limit-field').hidden = !e.target.checked;
+});
 document.getElementById('acquisition-type').addEventListener('change', e => {
   document.getElementById('acquisition-budget-field').hidden = e.target.value !== 'budget';
 });

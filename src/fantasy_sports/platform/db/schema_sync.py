@@ -43,6 +43,7 @@ def ensure_latest_schema(engine):
                               ("post_draft_waivers", "BOOLEAN DEFAULT 0 NOT NULL"),
                               ("waiver_hours", "INTEGER DEFAULT 24 NOT NULL"), ("waiver_processing_days", "JSON"),
                               ("acquisition_type", "VARCHAR(12) DEFAULT 'waivers' NOT NULL"), ("acquisition_budget", "INTEGER"),
+                              ("acquisition_limit", "INTEGER"), ("acquisition_limit_period", "VARCHAR(8) DEFAULT 'week' NOT NULL"),
                               ("is_mock_draft", "BOOLEAN DEFAULT 0 NOT NULL"), ("mock_pick_seconds", "INTEGER")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))

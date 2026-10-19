@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from fantasy_sports.api.auth import assert_can_manage_team, assert_commissioner, current_user, optional_user
 from fantasy_sports.api.helpers import draftable_asset_age, draftable_asset_display_name, draftable_asset_position
 from fantasy_sports.api.routers.recruiting import DraftStatus, _status
-from fantasy_sports.platform import calendar, commissioner, entitlements, free_agency, game_lock, pick_trading, rankings, season, waivers
+from fantasy_sports.platform import acquisition_limits, calendar, commissioner, entitlements, free_agency, game_lock, pick_trading, rankings, season, waivers
 from fantasy_sports.platform.auction.constants import STARTING_BUDGET_BY_PROGRAM_SIZE
 from fantasy_sports.platform.ai import ai_roster
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_limit
@@ -388,6 +388,9 @@ class WaiversOut(BaseModel):
     acquisition_type: str = "waivers"
     budget_total: int | None = None    # budget league: whole dollars each team can bid this season
     budget_left: int | None = None     # ... what the requested team has left
+    acquisition_limit: int | None = None          # most players a team can acquire per period (null = no limit)
+    acquisition_limit_period: str | None = None
+    acquisitions_used: int | None = None          # the requested team's count this period
     order: list[WaiverOrderRow]
     players: list[WaiverPlayerOut]
 
@@ -416,7 +419,10 @@ def league_waivers(league_id: int, team_id: int | None = None, db: Session = Dep
     league = db.get(League, league_id)
     budget = waivers.is_budget(league)
     team = db.get(Team, team_id) if team_id is not None else None
+    lim = acquisition_limits.summary(db, team if team is not None and team.league_id == league_id else None, league, now)
     return WaiversOut(
+        acquisition_limit=lim["limit"] if lim else None, acquisition_limit_period=lim["period"] if lim else None,
+        acquisitions_used=lim["used"] if lim else None,
         acquisition_type=waivers.acquisition_type(league), budget_total=waivers.budget_total(league) if budget else None,
         budget_left=waivers.budget_left(db, team) if budget and team is not None and team.league_id == league_id else None,
         basis=order.basis, basis_note=note, reset_at=order.reset_at, next_reset_at=waivers.next_reset(now),

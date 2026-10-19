@@ -50,6 +50,8 @@ WATCHED_SETTINGS: dict[str, str] = {
     "waiver_processing_days": "Waiver processing days",
     "acquisition_type": "How players are acquired (no waivers, waivers, full waivers or budget)",
     "acquisition_budget": "Acquisition budget",
+    "acquisition_limit": "Acquisition limit (most players a team can acquire per period; blank = no limit)",
+    "acquisition_limit_period": "Acquisition limit period (day, week, game, series or season)",
     "draft_order_mode": "Draft order (random or set by the commissioner)",
     "trade_review_hours": "Trade review window (hours)",
     "trade_review_mode": "Who can veto a trade",

@@ -33,6 +33,8 @@ Acquisition types (leagues.acquisition_type):
                    leagues.acquisition_budget (default 100), and starts over each season. Direct signings of free agents
                    cost nothing and the college asking-price system is off.
 
+An optional acquisition limit (platform/acquisition_limits.py) caps a team's signings and won claims per period.
+
 Goal differential exists for NHL leagues (series standings). Other leagues have no weekly goal differential here, so
 their order is the draft fallback all season - PROVISIONAL, until their standings are wired in.
 """
@@ -320,6 +322,10 @@ def place_claim(db: Session, team: Team, asset_id: int, bid: int = 0, now: datet
     if locked:
         raise ValueError(why)
     league = db.get(League, team.league_id)
+    from fantasy_sports.platform import acquisition_limits
+    over = acquisition_limits.problem(db, team, now)
+    if over:
+        raise ValueError(over)
     if is_budget(league):
         left = budget_left(db, team)
         if bid < 0:
@@ -371,7 +377,7 @@ def pending_claims(db: Session, team_id: int) -> set[int]:
 def process(db: Session, league_id: int, now: datetime.datetime | None = None) -> int:
     """Resolves every claim whose waiver period has ended, in the order the periods ended. Flushes, does not commit.
     Returns how many players were signed off waivers."""
-    from fantasy_sports.platform import free_agency, game_lock
+    from fantasy_sports.platform import acquisition_limits, free_agency, game_lock
 
     now = now or datetime.datetime.utcnow()
     due =db.query(WaiverClaim).filter(
@@ -398,6 +404,8 @@ def process(db: Session, league_id: int, now: datetime.datetime | None = None) -
             problem = "He was signed by another team" if asset_id in rostered else free_agency.signing_problem(db, league, team, asset_id)
             if budget and not problem and c.bid > budget_left(db, team):
                 problem = f"Bid of ${c.bid} is more than the budget left"
+            if not problem:
+                problem = acquisition_limits.problem(db, team, at)
             if winner is not None:
                 c.status = "lost"
             elif problem:
