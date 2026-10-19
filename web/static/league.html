@@ -299,9 +299,10 @@ function statCard(label, value, sub, href, goTab) {
 // ---- HOME ----------------------------------------------------------------------------------
 async function renderHome() {
   await refreshOverview();
-  const [log, standings, wv] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`),
+  const [log, standings, wv, power] = await Promise.all([api(`/leagues/${LEAGUE_ID}/transactions?limit=8`),
     isHockey() ? api(`/leagues/${LEAGUE_ID}/series-standings`).then(r => r.standings) : api(`/leagues/${LEAGUE_ID}/standings`),
-    api(`/leagues/${LEAGUE_ID}/waivers`).catch(() => null)]);
+    api(`/leagues/${LEAGUE_ID}/waivers`).catch(() => null),
+    isHockey() ? api(`/leagues/${LEAGUE_ID}/power-rankings`).catch(() => null) : null]);
   const played = standings.some(s => s.wins + s.losses + s.ties > 0);
   const mine = myTeam();
   const openSpots = ov.teams.reduce((n, t) => n + t.open_spots, 0);
@@ -367,12 +368,28 @@ async function renderHome() {
           ${played ? standings.slice(0, 5).map((s, i) => `<div class="row"><span class="muted" style="width:18px">${i + 1}</span><span style="flex:1">${tn(s.team_id, s.team_name)}</span><strong>${s.wins}-${s.losses}${s.ties ? '-' + s.ties : ''}</strong></div>`).join('')
             : '<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">No games played yet. Standings fill in once weekly matchups are scored.</p>'}
         </div>
+        ${powerRankingsCard(power, 5)}
       </div>
     </div>`;
   bindNav();
   if ($('all-txns')) $('all-txns').onclick = (e) => { e.preventDefault(); go('transactions'); };
   if ($('all-standings')) $('all-standings').onclick = (e) => { e.preventDefault(); go('standings'); };
+  if ($('all-power')) $('all-power').onclick = (e) => { e.preventDefault(); go('standings'); };
   if ($('run-fill')) $('run-fill').onclick = runAiFill;
+}
+
+// NHL power rankings: teams by the projected points of the best lineup their roster can field (platform/draft_grades.py).
+// Nothing about results enters them. Home shows the top few; the Standings tab shows every team and each lineup.
+function powerRankingsCard(pr, limit) {
+  if (!pr || !pr.available || !pr.teams.length) return '';
+  const rows = limit ? pr.teams.slice(0, limit) : pr.teams;
+  const lineup = (t) => t.starters.map(p => `${esc(p.name)} (${p.group}, ${p.projected_points})`).join(', ');
+  return `<div class="card elev-sm" style="padding:var(--space-4) var(--space-5)">
+    <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 style="margin:0">Power rankings</h3>${limit ? '<a href="#" id="all-power">All teams</a>' : ''}</div>
+    <p class="muted" style="margin:2px 0 var(--space-2);font-size:12px">By projected points of the best lineup each roster can field (age, recent seasons, games played). Not results.</p>
+    ${limit ? rows.map(t => `<div class="row"><span class="muted" style="width:18px">${t.rank}</span><span style="flex:1">${tn(t.team_id, t.team_name)}</span><strong>${t.projected_points}</strong></div>`).join('')
+      : `<div style="overflow-x:auto"><table class="table"><thead><tr><th>#</th><th>Team</th><th title="Best lineup plus the depth covering a starter's projected missed games">Proj. pts</th><th>Lineup (projected points)</th></tr></thead><tbody>${rows.map(t => `<tr><td>${t.rank}</td><td>${tn(t.team_id, t.team_name)}</td><td><strong>${t.projected_points}</strong></td><td style="font-size:12px">${lineup(t) || '-'}</td></tr>`).join('')}</tbody></table></div>`}
+  </div>`;
 }
 
 function bindNav() {
@@ -2619,8 +2636,9 @@ async function renderStandings() {
 
 // NHL standings: built from the simulated games the viewer may see (the same ones the scoreboard shows).
 async function renderHockeyStandings() {
-  const [sres, odds, counts] = await Promise.all([api(`/leagues/${LEAGUE_ID}/series-standings`),
-    api(`/leagues/${LEAGUE_ID}/playoff-odds`).catch(() => null), txnCounts()]);    // the estimate is a bonus; the table works without it
+  const [sres, odds, counts, power] = await Promise.all([api(`/leagues/${LEAGUE_ID}/series-standings`),
+    api(`/leagues/${LEAGUE_ID}/playoff-odds`).catch(() => null), txnCounts(),
+    api(`/leagues/${LEAGUE_ID}/power-rankings`).catch(() => null)]);    // the estimate is a bonus; the table works without it
   const oddsOf = Object.fromEntries((odds?.teams || []).map(o => [o.team_id, o]));
   const oddsPct = (o) => !o ? '<span class="muted">-</span>' : o.eliminated ? '<span class="pill">out</span>'
     : (o.playoff_probability >= 0.995 ? '>99' : o.playoff_probability < 0.005 ? '<1' : Math.round(o.playoff_probability * 100)) + '%';
@@ -2641,7 +2659,8 @@ async function renderHockeyStandings() {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
       return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th><th title="Free-agent and waiver signings plus completed trades">Txns</th></tr></thead><tbody>
         ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td><td>${oddsPct(oddsOf[r.team_id])}</td>${txnCell(counts, r.team_id)}</tr>`).join('')}
-        </tbody></table></div></div>`; }).join('') + '</div>';
+        </tbody></table></div></div>`; }).join('') + '</div>'
+    + `<div style="margin-top:var(--space-5)">${powerRankingsCard(power, 0)}</div>`;
 }
 
 // ---- STATS -------------------------------------------------------------------------------------------------

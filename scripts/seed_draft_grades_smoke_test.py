@@ -20,7 +20,7 @@ patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None).sta
 
 db_path = Path(os.environ.get("DRAFT_GRADES_SMOKE_DB", "draft_grades_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
-if db_path.exists():
+if db_path.exists() and not os.environ.get("DRAFT_GRADES_KEEP_DB"):      # DRAFT_GRADES_KEEP_DB=1 keeps the data to look at in a browser
     db_path.unlink()
 
 from fastapi.testclient import TestClient
@@ -267,6 +267,10 @@ db.commit()
 pr2 = client.get(f"/leagues/{lid}/power-rankings").json()
 check(pr2["teams"][0]["team_id"] != top["team_id"] or pr2["teams"][0]["projected_points"] != top["projected_points"], "a trade moves the power rankings")
 check(client.get(f"/leagues/{lid}/draft-grades").json()["teams"] == g["teams"], "but never the draft grade")
+
+if os.environ.get("DRAFT_GRADES_KEEP_DB"):
+    print(f"kept {db_path} (league {lid})")
+    sys.exit(0)
 
 # a pool with no history projects nobody and says why
 db.query(ShotCredit).delete()
