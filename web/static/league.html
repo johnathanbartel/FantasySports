@@ -145,7 +145,10 @@ const TIEBREAKERS = [
   ['coin_flip', 'Random draw', 'decides every tie, so it is always last'],
 ];
 const DEFAULT_TIEBREAKERS = ['goal_differential', 'head_to_head', 'goals_for', 'goals_against'];
-const tbLabel = (k) => (TIEBREAKERS.find(t => t[0] === k) || [k, k])[1];
+// Hockey keeps goals; every other sport (NBA) scores points.
+const scoreWords = (s) => isHockey() ? s : s
+  .replace(/\bGoals\b/g, 'Points').replace(/\bGoal\b/g, 'Point').replace(/\bgoals\b/g, 'points').replace(/\bgoal\b/g, 'point');
+const tbLabel = (k) => scoreWords((TIEBREAKERS.find(t => t[0] === k) || [k, k])[1]);
 function tbNormalize(order) {            // the random draw can only be last
   const o = order.filter(k => k !== 'coin_flip');
   return order.includes('coin_flip') ? o.concat('coin_flip') : o;
@@ -368,7 +371,7 @@ async function renderHome() {
         : statCard('Recruiting', ov.draft.status === 'closed' ? 'Complete' : ov.draft.status === 'open' ? `Week ${ov.draft.current_period}/${ov.draft.total_periods}` : 'Not started', draftLine(), draftBoardUrl())}
       ${statCard('Free agency', ov.free_agency_open ? 'Open' : 'Closed', ov.free_agency_open ? (ov.is_college ? 'Fill open roster spots' : 'Sign or drop any time') : (ov.draft_type === 'snake' ? 'Opens when the draft ends' : 'Opens when recruiting ends'), null, 'transactions')}
       ${wv ? statCard('Waivers', mine && wv.order.some(o => o.team_id === mine.id) ? `#${wv.order.findIndex(o => o.team_id === mine.id) + 1} of ${wv.order.length}` : 'Order',
-        `${wv.players.length} player${wv.players.length === 1 ? '' : 's'} on waivers · ${wv.basis === 'goal_diff' ? 'worst goal differential first' : 'reverse draft order'}`, null, 'transactions') : ''}
+        `${wv.players.length} player${wv.players.length === 1 ? '' : 's'} on waivers · ${wv.basis === 'goal_diff' ? scoreWords('worst goal differential first') : 'reverse draft order'}`, null, 'transactions') : ''}
       ${ov.is_college ? statCard('Season', `${ov.season_weeks} weeks`, `+ ${ov.playoff_weeks} playoff weeks (free agency locked)`, null, 'schedule') : statCard('Season', isHockey() ? 'Series' : `${ov.season_weeks} weeks`, 'Schedule is set for you', null, 'schedule')}
     </div>
     ${fillNeeded && ov.is_college && isCommissioner ? `<div class="note" style="margin-bottom:var(--space-5);display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);flex-wrap:wrap">
@@ -1684,7 +1687,7 @@ function waiversBox(wv, team) {
   const order = wv.order.map(o => `<div class="row tight" style="${o.team_id === team.id ? 'font-weight:700' : ''}">
       <span class="pts" style="min-width:28px;text-align:left">${o.position}</span><span class="pname"><strong>${tn(o.team_id, o.team_name)}</strong></span>
       ${o.moved_back ? '<span class="pill" title="Won a claim since the reset">Moved back</span>' : ''}
-      ${wv.basis === 'goal_diff' ? `<span class="pts" title="Goal differential">${o.goal_diff > 0 ? '+' : ''}${o.goal_diff}</span>` : ''}</div>`).join('');
+      ${wv.basis === 'goal_diff' ? `<span class="pts" title="${scoreWords('Goal differential')}">${o.goal_diff > 0 ? '+' : ''}${o.goal_diff}</span>` : ''}</div>`).join('');
   const players = wv.players.length ? wv.players.map(p => `<div class="row tight">${posTag(p.position)}
       <span class="pname" title="${esc(p.display_name)}"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
       <span class="muted" style="font-size:12px;white-space:nowrap" title="Clears ${utcLocal(p.until)}">${hoursLeft(p.until)} left</span>
@@ -2944,10 +2947,10 @@ async function renderHockeyStandings() {
   });
   const rec = (w, l, t) => `${w}-${l}${t ? '-' + t : ''}`;
   $('content').innerHTML = (played ? '' : '<div class="note" style="margin-bottom:var(--space-4)">No games have been played yet. Standings fill in as simulated games finish and you watch them (or skip to the score).</div>')
-    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in. <strong>Txns</strong>: the team's free-agent and waiver signings plus completed trades. <strong>Playoff %</strong> is an estimate, not a guarantee: the rest of the season is simulated ${odds ? odds.simulations.toLocaleString() : ''} times from each team's goals scored and against (its Pythagorean record), and only a proven "out" removes a team.</p>`
+    + `<p class="muted" style="margin:0 0 var(--space-3);font-size:13px">Sorted by <strong>${sortedBy}</strong>, then ${(sres.tiebreakers || []).map(tbLabel).join(', then ').toLowerCase() || 'team order'}. <strong>Seed</strong>: the ${sres.playoff_teams} playoff teams${sres.division_winners_qualify ? ' - division winners (*) are in' + (sres.division_winners_seeded_first ? ' and take the top seeds' : '') + ', the rest are wild cards by rank' : ', by rank'}${sres.playoff_byes ? `; the top ${sres.playoff_byes} get a bye (B)` : ''}. <strong>Out</strong>: no result of the games left can get the team in. <strong>Txns</strong>: the team's free-agent and waiver signings plus completed trades. <strong>Playoff %</strong> is an estimate, not a guarantee: the rest of the season is simulated ${odds ? odds.simulations.toLocaleString() : ''} times from each team's ${scoreWords('goals')} scored and against (its Pythagorean record), and only a proven "out" removes a team.</p>`
     + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,760px),1fr));gap:var(--space-5)">` + Object.entries(byConf).map(([name, list]) => {
       list.sort((a, b) => a.rank - b.rank || a.team_name.localeCompare(b.team_name));
-      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>GF</th><th>GA</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th><th title="Free-agent and waiver signings plus completed trades">Txns</th></tr></thead><tbody>
+      return `<div style="min-width:0"><h3 style="margin:0 0 var(--space-2)">${esc(name)}</h3><div style="overflow-x:auto"><table class="table" style="white-space:nowrap"><thead><tr><th>#</th><th>Team</th><th>GP</th><th>W</th><th>L</th><th>T</th><th>PTS</th><th>PCT</th><th>${isHockey() ? 'GF' : 'PF'}</th><th>${isHockey() ? 'GA' : 'PA'}</th><th>Home</th><th>Away</th><th>Seed</th><th title="Estimated chance of making the playoffs">Playoff %</th><th title="Free-agent and waiver signings plus completed trades">Txns</th></tr></thead><tbody>
         ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${tn(r.team_id, r.team_name)} ${r.t?.is_ai_owned ? '<span class="pill ai">AI</span>' : ''}</td><td>${r.games_played}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.ties}</td><td><strong>${r.points}</strong></td><td>${pct(r.win_pct)}</td><td>${r.goals_for}</td><td>${r.goals_against}</td><td>${rec(r.home_wins, r.home_losses, r.home_ties)}</td><td>${rec(r.away_wins, r.away_losses, r.away_ties)}</td><td>${r.seed ? '<span class="pill good">' + r.seed + (r.division_winner ? '*' : '') + (r.bye ? ' B' : '') + '</span>' : '<span class="muted">-</span>'}</td><td>${oddsPct(oddsOf[r.team_id])}</td>${txnCell(counts, r.team_id)}</tr>`).join('')}
         </tbody></table></div></div>`; }).join('') + '</div>'
     + `<div style="margin-top:var(--space-5)">${powerRankingsCard(power, 0)}</div>`;
