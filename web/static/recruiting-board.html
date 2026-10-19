@@ -142,9 +142,11 @@
 </div>
 
 <script src="/static/session.js"></script>
+<script src="/static/player-card.js?v=20261018"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
+PlayerCard.configure({leagueId: LEAGUE_ID});
 const api = FSC.api;
 const esc = (t) => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -224,7 +226,7 @@ function render() {
   const playerLine = (id, extra = '') => {
     const p = poolById[id] || {};
     return `<div><span class="tag tag-neutral" style="min-width:34px;justify-content:center">${POS_LABEL[p.position] || p.position || '-'}</span>
-      <span style="flex:1">${esc(p.display_name || id)} <span class="text-muted">${esc(p.real_team || '')}</span></span>
+      <span style="flex:1">${PlayerCard.link(id, p.display_name || id)} <span class="text-muted">${esc(p.real_team || '')}</span></span>
       <span class="pts text-muted">${p.last_season_points != null ? p.last_season_points.toFixed(1) : '-'}</span>${extra}</div>`;
   };
   const drawers = document.getElementById('teams-drawers');
@@ -291,7 +293,7 @@ function render() {
     row.innerHTML = `
       <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${p.position || '-'}</span>
       <span style="flex:1;line-height:1.25">
-        <span style="font-family:var(--font-heading);font-size:16px">${esc(p.display_name)}</span>
+        <span style="font-family:var(--font-heading);font-size:16px">${PlayerCard.link(id, p.display_name)}</span>
         ${bid ? `<span class="tag tag-accent" style="margin-left:8px">your bid $${bid}</span>` : ''}
         <span class="text-muted" style="display:block;font-size:12px">${esc(p.real_team || '')}</span></span>
       <span style="text-align:right;min-width:64px;line-height:1.1" title="${LAST} fantasy points, ESPN standard scoring">
@@ -416,7 +418,7 @@ function showResults(r) {
     return `<div class="rrow">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3)">
         <div><span class="tag tag-neutral" style="min-width:34px;justify-content:center;margin-right:8px">${POS_LABEL[p.position] || p.position || '-'}</span>
-          <strong style="font-family:var(--font-heading);font-size:16px">${esc(p.display_name || b.draftable_asset_id)}</strong>
+          <strong style="font-family:var(--font-heading);font-size:16px">${PlayerCard.link(b.draftable_asset_id, p.display_name || b.draftable_asset_id)}</strong>
           <span class="text-muted" style="font-size:12px;margin-left:6px">${esc(p.real_team || '')}</span></div>
         <span class="tag ${tag[b.outcome][0]}">${tag[b.outcome][1]}</span>
       </div>

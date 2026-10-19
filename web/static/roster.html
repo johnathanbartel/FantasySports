@@ -46,6 +46,8 @@
   </div>
 </div>
 
+<script src="/static/session.js"></script>
+<script src="/static/player-card.js?v=20261018"></script>
 <script src="/static/roster-lines.js"></script>
 <script>
 const params = new URLSearchParams(location.search);
@@ -99,7 +101,7 @@ function renderRoster(entries) {
     row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
     row.innerHTML = `
       <span class="tag tag-neutral" style="min-width:70px;justify-content:center">${e.asset_type === 'defense_group' ? 'DEF' : (e.position || '')}</span>
-      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${esc(e.display_name)} ${e.real_team ? `<span class="text-muted" style="font-size:13px;font-family:var(--font-body)">· ${esc(e.real_team)}</span>` : ''}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${PlayerCard.link(e.draftable_asset_id, e.display_name)} ${e.real_team ? `<span class="text-muted" style="font-size:13px;font-family:var(--font-body)">· ${esc(e.real_team)}</span>` : ''}</span>
     `;
     list.appendChild(row);
   });
@@ -108,6 +110,7 @@ function renderRoster(entries) {
 async function loadAll() {
   try {
     const team = await api(`/teams/${TEAM_ID}`);
+    PlayerCard.configure({leagueId: team.league_id});
     const [league, roster, lines] = await Promise.all([
       api(`/leagues/${team.league_id}`),
       api(`/teams/${TEAM_ID}/roster`),
