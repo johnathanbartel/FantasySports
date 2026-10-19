@@ -30,7 +30,7 @@ from fantasy_sports.platform import elimination, free_agency, game_lock, spoiler
 from fantasy_sports.platform.db.models.core import (
     Draft, DraftableAsset, DraftPick, FreeAgencyTransaction, Game, InjuryAlert, League, LeagueUniverse, RealTeam,
     RecruitingAward, RecruitingDraft, RosterEntry, SeriesDailyGame, SimulatorEvent, Team, Trade, TradeBlockEntry,
-    TradeItem, User, Week, WaiverClaim,
+    TradeItem, User, Week, WaiverClaim, WatchlistEntry,
 )
 from fantasy_sports.platform.db.session import get_db
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
@@ -125,6 +125,8 @@ class ActionsOut(BaseModel):
     can_cancel_claim: bool = False
     can_drop: bool = False
     can_trade: bool = False
+    can_watch: bool = False       # any player not on the viewer's own roster
+    watching: bool = False        # he is on the viewer's watchlist
     note: str | None = None       # why the main action is unavailable, when it is
 
 
@@ -369,6 +371,8 @@ def player_card(league_id: int, draftable_asset_id: int, db: Session = Depends(g
         mine = next((t for t in teams.values() if t.owner_user_id == user.id and not t.is_ai_owned), None)
     if mine is not None:
         actions.my_team_id = mine.id
+        actions.watching = db.query(WatchlistEntry).filter_by(team_id=mine.id, draftable_asset_id=asset.id).first() is not None
+        actions.can_watch = not (own.status == "rostered" and own.team_id == mine.id)
         fa_open = free_agency.is_open(db, league_id)
         locked, lock_why = elimination.free_agency_locked(league, mine)
         try:

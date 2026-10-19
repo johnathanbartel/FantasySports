@@ -1772,3 +1772,16 @@ class TeamDraftRanking(Base):
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
     draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
     rank: Mapped[int] = mapped_column(Integer)
+
+
+class WatchlistEntry(Base):
+    """A player a team is keeping an eye on (the Watch button on a player card). Private to the team's manager: it
+    commits nobody to anything and is never shown to other teams."""
+
+    __tablename__ = "watchlist_entries"
+    __table_args__ = (UniqueConstraint("team_id", "draftable_asset_id", name="uq_watchlist_team_asset"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime)

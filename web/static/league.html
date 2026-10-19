@@ -1548,12 +1548,13 @@ async function renderRoster() {
 async function renderTransactions() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
-  const [fa, log, sum, roster, wv] = await Promise.all([
+  const [fa, log, sum, roster, wv, watch] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/free-agents`), api(`/leagues/${LEAGUE_ID}/transactions`),
     api(`/teams/${t.id}/free-agency/summary`), api(`/teams/${t.id}/roster`),
     api(`/leagues/${LEAGUE_ID}/waivers?team_id=${t.id}`),
+    canManage(t) ? api(`/teams/${t.id}/watchlist`) : Promise.resolve(null),     // private: only the team's manager sees it
   ]);
-  cache.tx = {fa, log, sum, roster, wv, team: t};
+  cache.tx = {fa, log, sum, roster, wv, watch, team: t};
   $('content').innerHTML = `
     <div class="note" style="margin-bottom:var(--space-4)">
       ${ov.is_college ? `Teams may recruit fewer players than the roster size. <strong>Open roster spots are filled through free agency</strong>, which opens when recruiting ends.
@@ -1570,6 +1571,7 @@ async function renderTransactions() {
       </div>
     </div>
     ${waiversBox(wv, t)}
+    ${watchlistBox(watch, sum, t)}
     ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
@@ -1595,6 +1597,14 @@ async function renderTransactions() {
   if (wbox) wbox.ontoggle = () => { view.waiversOpen = wbox.open; };
   wbox?.querySelectorAll('[data-wclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.wclaim)));
   wbox?.querySelectorAll('[data-wcancel]').forEach(b => b.onclick = () => waiverAct('cancel', Number(b.dataset.wcancel)));
+  const wl = $('watchlist-box');
+  if (wl) {
+    wl.ontoggle = () => { view.watchOpen = wl.open; };
+    wl.querySelectorAll('[data-wadd]').forEach(b => b.onclick = () => faAct('add', Number(b.dataset.wadd)));
+    wl.querySelectorAll('[data-wwclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.wwclaim)));
+    wl.querySelectorAll('[data-wwcancel]').forEach(b => b.onclick = () => waiverAct('cancel', Number(b.dataset.wwcancel)));
+    wl.querySelectorAll('[data-unwatch]').forEach(b => b.onclick = () => unwatch(Number(b.dataset.unwatch)));
+  }
   $('log-kind').value = view.log.kind; $('log-team').value = view.log.team;
   $('log-kind').onchange = () => { view.log.kind = $('log-kind').value; drawLog(); };
   $('log-team').onchange = () => { view.log.team = $('log-team').value; drawLog(); };
@@ -1674,6 +1684,39 @@ function waiversBox(wv, team) {
     <p class="muted" style="font-size:13px;margin:var(--space-2) 0">${esc(wv.basis_note)} Next reset: <strong>${utcLocal(wv.next_reset_at)}</strong> (your time).</p>
     <div class="grid2" style="gap:var(--space-4)"><div><h4 style="margin:0 0 var(--space-1)">Waiver order</h4>${order}</div>
       <div><h4 style="margin:0 0 var(--space-1)">On waivers</h4>${players}</div></div></details>`;
+}
+
+// The team's watchlist (Watch button on a player card): private, one row per player with where he is now and the move that fits.
+function watchlistBox(watch, sum, team) {
+  if (!watch) return '';
+  const manage = canManage(team);
+  const claimed = new Set(cache.tx.wv.players.filter(x => x.claimed).map(x => x.draftable_asset_id));
+  const where = (p) => p.status === 'free_agent' ? 'Free agent' : p.status === 'waivers' ? `On waivers, ${hoursLeft(p.waiver_until)} left`
+    : p.status === 'mine' ? 'On your roster' : p.status === 'rostered' ? `On ${tn(p.team_id, p.team_name)}` : 'Not in the player pool';
+  const move = (p) => {
+    if (p.status === 'free_agent' && cache.tx.fa.open) return `<button class="btn btn-primary" data-wadd="${p.draftable_asset_id}" ${manage && sum.open_spots > 0 ? '' : 'disabled'} title="${sum.open_spots > 0 ? '' : 'Roster is full - drop a player first'}">Sign</button>`;
+    if (p.status === 'waivers' && cache.tx.fa.open) return claimed.has(p.draftable_asset_id)
+      ? `<button class="btn btn-secondary" data-wwcancel="${p.draftable_asset_id}" ${manage ? '' : 'disabled'}>Claimed</button>`
+      : `<button class="btn btn-primary" data-wwclaim="${p.draftable_asset_id}" ${manage ? '' : 'disabled'}>Claim</button>`;
+    return '';
+  };
+  const rows = watch.map(p => `<div class="row tight">${posTag(p.position)}
+      <span class="pname" title="${esc(p.display_name)}"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
+      <span class="muted" style="font-size:12px;width:150px;flex:none;line-height:1.3">${p.injury_status ? `<b>${esc(p.injury_status)}</b> · ` : ''}${where(p)}</span>
+      ${ageCell(p.age)}<span class="pts" title="This season's points so far (${p.this_season_games ?? 0} games)">${pts(p.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>
+      ${move(p) || '<span class="spc"></span>'}<button class="btn btn-ghost" data-unwatch="${p.draftable_asset_id}" title="Stop watching" aria-label="Stop watching ${esc(p.display_name)}">&times;</button></div>`).join('');
+  return `<details id="watchlist-box" class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)" ${view.watchOpen === false ? '' : 'open'}>
+    <summary style="cursor:pointer;font-weight:700">Watchlist <span class="muted" style="font-weight:400">· ${watch.length} player${watch.length === 1 ? '' : 's'}, visible only to you</span></summary>
+    ${watch.length ? `<div style="margin-top:var(--space-2)">${txHeader(false).replace('<span class="pname">Player</span>', '<span class="pname">Player</span><span style="width:150px;flex:none">Status</span>').replace('<span class="spc"></span>', '<span class="spc"></span><span class="spc"></span>')}${rows}</div>`
+      : '<p class="muted" style="margin:var(--space-2) 0">Nobody yet. Open any player card and press Watch to keep an eye on him here.</p>'}</details>`;
+}
+
+async function unwatch(assetId) {
+  showError(''); showResult('');
+  try {
+    await FSC.del(`/teams/${cache.tx.team.id}/watchlist/${assetId}`);
+    await go('transactions');
+  } catch (e) { showError(e.message); }
 }
 
 async function waiverAct(kind, assetId) {
