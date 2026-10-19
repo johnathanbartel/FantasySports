@@ -35,7 +35,9 @@ from fantasy_sports.platform.defense_modes import DEFENSE_MODES, roster_size
 from fantasy_sports.platform.league_features import draft_state, is_college, roster_spots
 from fantasy_sports.platform.league_lifecycle import delete_league as purge_league
 from fantasy_sports.platform.hockey_reference import seed_hockey_reference_data
+from fantasy_sports.platform.nba_reference import seed_nba_reference_data
 from fantasy_sports.platform.nfl_reference import seed_nfl_reference_data
+from fantasy_sports.platform.window_sports import WINDOW_SPORTS
 from fantasy_sports.platform.team_tiers import PROGRAM_SIZES
 from fantasy_sports.platform.db.session import get_db
 
@@ -48,14 +50,14 @@ def create_league(
 ):
     if payload.commissioner_user_id != user.id:
         raise HTTPException(403, "You can only create a league with yourself as commissioner")
-    has_nhl = "nhl" in payload.universe_codes
-    if has_nhl:
+    has_window_sport = bool(WINDOW_SPORTS & set(payload.universe_codes))
+    if has_window_sport:
         series_length_days = 7 if payload.series_length_days is None else payload.series_length_days
         if series_length_days not in (5, 7, 10):
-            raise HTTPException(400, "NHL series length must be 5, 7, or 10 days")
+            raise HTTPException(400, "Series length must be 5, 7, or 10 days")
     else:
         if payload.series_length_days is not None:
-            raise HTTPException(400, "series_length_days is only available for NHL leagues")
+            raise HTTPException(400, "series_length_days is only available for NHL and NBA leagues")
         series_length_days = None
     if "nfl" in payload.universe_codes:
         # NFL reference data (universe + roster slots) is additive and idempotent;
@@ -72,6 +74,12 @@ def create_league(
             seed_hockey_reference_data(db)
         except RuntimeError as e:
             raise HTTPException(400, f"NHL reference data conflict: {e}")
+    if "nba" in payload.universe_codes:
+        # Same on-demand, idempotent seeding as NHL: the universe and its 15-player roster slots.
+        try:
+            seed_nba_reference_data(db)
+        except RuntimeError as e:
+            raise HTTPException(400, f"NBA reference data conflict: {e}")
     universes = db.query(Universe).filter(Universe.code.in_(payload.universe_codes)).all()
     if len(universes) != len(payload.universe_codes):
         found = {u.code for u in universes}
@@ -116,8 +124,8 @@ def create_league(
                                or payload.tiebreakers is not None or payload.playoff_byes != 0
                                or not payload.division_winners_qualify or not payload.division_winners_seeded_first
                                or payload.playoff_consolation)
-    if hockey_settings_changed and not has_nhl:
-        raise HTTPException(400, "Standings and playoff settings are for hockey leagues")
+    if hockey_settings_changed and not has_window_sport:
+        raise HTTPException(400, "Standings and playoff settings are for hockey and basketball leagues")
     if payload.playoff_teams is not None and payload.playoff_teams > payload.size:
         raise HTTPException(400, f"A {payload.size}-team league can't have {payload.playoff_teams} playoff teams")
     if payload.tiebreakers is not None and (problem := tiebreaker_rules.validate(payload.tiebreakers)):
@@ -1254,11 +1262,11 @@ def are_conferences_editable(db: Session, league: League) -> tuple[bool, str]:
     Conferences and divisions can be edited before and after the season.
     They cannot be modified during the active season while games are in progress.
     """
-    has_nhl = db.query(LeagueUniverse).join(Universe, Universe.id == LeagueUniverse.universe_id).filter(
-        LeagueUniverse.league_id == league.id, Universe.code == "nhl"
+    has_window_sport = db.query(LeagueUniverse).join(Universe, Universe.id == LeagueUniverse.universe_id).filter(
+        LeagueUniverse.league_id == league.id, Universe.code.in_(WINDOW_SPORTS)
     ).count() > 0
 
-    if has_nhl:
+    if has_window_sport:
         from fantasy_sports.platform.db.models.core import SeriesDailyGame, LeagueSeries
         games = (
             db.query(SeriesDailyGame)

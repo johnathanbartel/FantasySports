@@ -116,6 +116,12 @@ def league_is_nhl(db: Session, league_id: int) -> bool:
         LeagueUniverse.league_id == league_id, Universe.code == "nhl").count() > 0
 
 
+def league_uses_windows(db: Session, league_id: int) -> bool:
+    """True for a league in any window sport (NHL, NBA): it plays the series schedule, not weekly matchups."""
+    from fantasy_sports.platform.window_sports import league_uses_windows as _uses
+    return _uses(db, league_id)
+
+
 def has_schedule(db: Session, league_id: int) -> bool:
     return db.query(LeagueSeries).filter_by(league_id=league_id).count() > 0
 
@@ -188,8 +194,8 @@ def generate_schedule(db: Session, league: League, start_date: datetime.date, cy
     """Create the series and game rows: one row per fantasy window (the default), or one per calendar day with
     window_rows=False (the legacy shape; off-day banking still works on those). Flushes but does not commit.
     Raises ValueError."""
-    if not league_is_nhl(db, league.id) or league.series_length_days is None:
-        raise ValueError("Series schedules are only available for NHL leagues")
+    if not league_uses_windows(db, league.id) or league.series_length_days is None:
+        raise ValueError("Series schedules are only available for NHL and NBA leagues")
     if getattr(league, "league_mode", "standard") == "weekly_redraft":
         raise ValueError("This league plays weekly redraft contests, not series")
     team_ids = [t.id for t in db.query(Team).filter_by(league_id=league.id)]

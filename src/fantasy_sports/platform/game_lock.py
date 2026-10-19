@@ -26,9 +26,10 @@ from sqlalchemy.orm import Session
 from fantasy_sports.platform.db.models.core import (
     DefenseGroup, DraftableAsset, Game, LeagueUniverse, LineupEntry, Player, Universe, Week,
 )
+from fantasy_sports.platform.window_sports import is_window_sport
 from fantasy_sports.sports.hockey import pipeline as hockey_pipeline
 
-HOCKEY = "nhl"
+# Window sports (NHL, NBA) are locked per fantasy window, the rest per week; see platform/window_sports.py.
 
 
 def _nth_sunday(year: int, month: int, n: int) -> datetime.date:
@@ -61,7 +62,7 @@ def kickoff_utc(game: Game, universe_code: str | None) -> datetime.datetime | No
     k = game.kickoff_at
     if k is None:
         return None
-    if universe_code == HOCKEY:
+    if is_window_sport(universe_code):
         return eastern_to_utc(k) if k.hour >= 5 else k
     if k.time() == datetime.time(0):
         return eastern_to_utc(k)
@@ -122,7 +123,7 @@ def locked_assets(db: Session, league_id: int, now: datetime.datetime | None = N
     for lu in db.query(LeagueUniverse).filter_by(league_id=league_id):
         universe = db.get(Universe, lu.universe_id)
         code = universe.code if universe else None
-        if code == HOCKEY:
+        if is_window_sport(code):
             teams = _started_teams(db, lu.universe_id, code, now, dates=_window_dates(today))
             out |= _assets_of_teams(db, lu.universe_id, teams)
             continue
@@ -144,7 +145,7 @@ def locked_assets_for_week(db: Session, week: Week, now: datetime.datetime | Non
     universe = db.get(Universe, week.universe_id)
     code = universe.code if universe else None
     today = utc_to_eastern(now).date()
-    if code == HOCKEY:
+    if is_window_sport(code):
         end = week_end(week)
         if week.start_date is None or end is None or not (week.start_date <= today <= end):
             return set()
@@ -163,7 +164,7 @@ def _name(db: Session, asset_id: int) -> str:
 def _period_word(db: Session, asset_id: int) -> str:
     asset = db.get(DraftableAsset, asset_id)
     universe = db.get(Universe, asset.universe_id) if asset else None
-    return "window" if universe is not None and universe.code == HOCKEY else "week"
+    return "window" if universe is not None and is_window_sport(universe.code) else "week"
 
 
 def lock_message(db: Session, asset_id: int) -> str:

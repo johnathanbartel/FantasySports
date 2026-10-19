@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 from fantasy_sports.platform import schedule, series_schedule
 from fantasy_sports.platform.db.models.core import League, WeeklyMatchup
 from fantasy_sports.platform.league_features import is_college
+from fantasy_sports.platform.window_sports import window_universe_code
 
 
 def has_schedule(db: Session, league: League) -> bool:
-    if series_schedule.league_is_nhl(db, league.id):
+    if series_schedule.league_uses_windows(db, league.id):
         return series_schedule.has_schedule(db, league.id)
     return db.query(WeeklyMatchup).filter_by(league_id=league.id).count() > 0
 
@@ -54,11 +55,11 @@ def next_window_start(d: datetime.date) -> datetime.date:
         return d + datetime.timedelta(days=days if days > 0 else 7)
 
 
-def first_nhl_puck_drop(db: Session, date: datetime.date) -> datetime.datetime:
-    """Returns the kickoff_at datetime of the earliest NHL game on `date`, or 7:00 PM ET if not in DB."""
+def first_nhl_puck_drop(db: Session, date: datetime.date, universe_code: str = "nhl") -> datetime.datetime:
+    """Returns the kickoff_at datetime of the earliest game of the window sport (NHL by default) on `date`, or 7:00 PM ET if not in DB."""
     try:
         from fantasy_sports.platform.db.models.core import Game, Universe
-        nhl = db.query(Universe).filter_by(code="nhl").first()
+        nhl = db.query(Universe).filter_by(code=universe_code).first()
         if nhl:
             start_dt = datetime.datetime.combine(date, datetime.time(0, 0))
             end_dt = datetime.datetime.combine(date + datetime.timedelta(days=1), datetime.time(0, 0))
@@ -76,7 +77,8 @@ def first_nhl_puck_drop(db: Session, date: datetime.date) -> datetime.datetime:
     return datetime.datetime.combine(date, datetime.time(19, 0))
 
 
-def calculate_nhl_series_start(db: Session, completed_at: datetime.datetime | None, today: datetime.date) -> datetime.date:
+def calculate_nhl_series_start(db: Session, completed_at: datetime.datetime | None, today: datetime.date,
+                               universe_code: str = "nhl") -> datetime.date:
     """Calculates the series start date based on user completion time and NHL game schedule:
     - Calculates when the draft ended based on North American user time (Eastern / local timezone).
     - If the draft completed before the first NHL game of the window, the window is NOT skipped.
@@ -87,7 +89,7 @@ def calculate_nhl_series_start(db: Session, completed_at: datetime.datetime | No
         completed_et = to_eastern_naive(completed_at)
         completed_d = completed_et.date()
         win_start = window_start_date_of(completed_d)
-        puck_drop = first_nhl_puck_drop(db, win_start)
+        puck_drop = first_nhl_puck_drop(db, win_start, universe_code)
 
         if completed_et < puck_drop:
             # Completed before first NHL game of this window: window is not skipped!
@@ -100,7 +102,7 @@ def calculate_nhl_series_start(db: Session, completed_at: datetime.datetime | No
         return max(target, today_win_start)
     else:
         today_win_start = window_start_date_of(today)
-        puck_drop = first_nhl_puck_drop(db, today_win_start)
+        puck_drop = first_nhl_puck_drop(db, today_win_start, universe_code)
         now_et = to_eastern_naive(datetime.datetime.now(datetime.timezone.utc))
         if now_et < puck_drop:
             return today_win_start
@@ -119,8 +121,8 @@ def next_full_window_start(d: datetime.date, allow_today_if_window_start: bool =
 
 def reschedule_nhl_league(db: Session, league: League, today: datetime.date | None = None, force: bool = False) -> str | None:
     """Reschedules an NHL league so its series start at the beginning of the next full window."""
-    if not series_schedule.league_is_nhl(db, league.id):
-        return "Not an NHL league"
+    if not series_schedule.league_uses_windows(db, league.id):
+        return "Not a window-sport (NHL or NBA) league"
     if today is None:
         try:
             from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
@@ -134,7 +136,7 @@ def reschedule_nhl_league(db: Session, league: League, today: datetime.date | No
         last_pick = db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.picked_at.isnot(None)).order_by(DraftPick.pick_number.desc()).first()
         if last_pick:
             completed_at = last_pick.picked_at
-    series_start = calculate_nhl_series_start(db, completed_at, today)
+    series_start = calculate_nhl_series_start(db, completed_at, today, window_universe_code(db, league.id) or "nhl")
     series_schedule.generate_schedule(db, league, series_start, 1, replace=True, force=force)
     try:
         db.commit()
@@ -161,10 +163,10 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
         last_pick = db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.picked_at.isnot(None)).order_by(DraftPick.pick_number.desc()).first()
         if last_pick:
             completed_at = last_pick.picked_at
-    target_start = calculate_nhl_series_start(db, completed_at, today)
+    target_start = calculate_nhl_series_start(db, completed_at, today, window_universe_code(db, league.id) or "nhl")
 
     if has_schedule(db, league):
-        if series_schedule.league_is_nhl(db, league.id):
+        if series_schedule.league_uses_windows(db, league.id):
             from fantasy_sports.platform.db.models.core import LeagueSeries
             first_s = db.query(LeagueSeries).filter_by(league_id=league.id).order_by(LeagueSeries.start_date).first()
             if first_s and first_s.start_date != target_start and not series_schedule._started(db, league.id):
@@ -178,7 +180,7 @@ def ensure_schedule(db: Session, league: League, today: datetime.date | None = N
         return None
     try:
         with db.begin_nested():            # a failed attempt leaves nothing behind
-            if series_schedule.league_is_nhl(db, league.id):
+            if series_schedule.league_uses_windows(db, league.id):
                 if getattr(league, "league_mode", "standard") == "weekly_redraft":
                     raise ValueError("This league plays weekly redraft contests, not series")
                 series_schedule.generate_schedule(db, league, target_start, 1)
