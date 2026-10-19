@@ -184,6 +184,9 @@ class League(Base):
     # Who picks first (platform/draft_order.py): 'random' = shuffled when the draft starts, 'manual' = the commissioner's
     # order, saved as teams.draft_position.
     draft_order_mode: Mapped[str] = mapped_column(String(10), default="random", server_default="random")
+    # Post-draft waivers (platform/waivers.py): when True, every undrafted player is on waivers for 24 hours after the
+    # draft ends (claims in waiver order) instead of being an immediate free agent. Off by default.
+    post_draft_waivers: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")

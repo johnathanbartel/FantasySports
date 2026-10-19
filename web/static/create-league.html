@@ -187,6 +187,11 @@
       </div>
 
       <div class="field">
+        <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="post-draft-waivers" style="width:auto"> Post-draft waivers on undrafted players</label>
+        <span class="hint">Off by default. When on, every player nobody drafted is on waivers for 24 hours after the draft ends: teams claim them in waiver order instead of signing them right away.</span>
+      </div>
+
+      <div class="field">
         <label for="draft-order-mode">Draft order</label>
         <select id="draft-order-mode" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
           <option value="random">Random (shuffled when the draft starts)</option>
@@ -564,6 +569,7 @@ function leagueSettingsPayload() {
   out.unfilled_slot_policy = document.getElementById('unfilled-slot-policy').value;
   out.draft_reset_policy = document.getElementById('draft-reset-policy').value;
   out.draft_order_mode = document.getElementById('draft-order-mode').value;
+  out.post_draft_waivers = document.getElementById('post-draft-waivers').checked;
   out.trade_vote_extra_votes = num('trade-vote-extra') || 1;
   out.commissioner_trade_vote_extra_votes = num('commissioner-vote-extra') || 2;
   if (format === 'keeper') {

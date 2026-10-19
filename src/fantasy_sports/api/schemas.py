@@ -88,6 +88,8 @@ class LeagueCreateRequest(BaseModel):
     draft_reset_policy: Literal["unanimous", "commissioner", "off"] = "unanimous"
     # Who picks first (platform/draft_order.py): "random" or "manual". A manual order is set slot by slot in the teams step.
     draft_order_mode: Literal["random", "manual"] = "random"
+    # Undrafted players go on waivers for 24 hours after the draft ends (platform/waivers.py).
+    post_draft_waivers: bool = False
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
 
@@ -121,6 +123,7 @@ class LeagueSettingsRequest(BaseModel):
     trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
     commissioner_trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
     draft_reset_policy: Literal["unanimous", "commissioner", "off"] | None = None
+    post_draft_waivers: bool | None = None
     platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
     trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
     trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
@@ -231,6 +234,7 @@ class LeagueOut(ORMModel):
     commissioner_trade_vote_extra_votes: int
     draft_reset_policy: str = "unanimous"
     draft_order_mode: str = "random"
+    post_draft_waivers: bool = False
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int

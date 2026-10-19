@@ -161,6 +161,37 @@ def main() -> None:
         order = waivers.waiver_order(db, league_id, D(2026, 10, 19, 15, 0))
         check(order.basis == waivers.BASIS_GOAL_DIFF and order.as_of == datetime.date(2026, 10, 10),
               "a week with an unfinished game is skipped for the last complete one")
+
+        # ---- post-draft waivers: off by default, then every undrafted player is held for 24h after the draft ends
+        league = db.get(League, league_id)
+        draft = db.query(Draft).filter_by(league_id=league_id).first()
+        ended = D(2026, 11, 1, 12, 0)
+        draft.completed_at = ended
+        db.commit()
+        rostered = free_agency.rostered_ids(db, league_id)
+        free = [x for x in a if x not in rostered]
+        check(league.post_draft_waivers is False, "post-draft waivers default to off")
+        check(waivers.waiver_until(db, league_id, ended + datetime.timedelta(hours=1)) == {}, "off: undrafted players are free agents")
+        league.post_draft_waivers = True
+        db.commit()
+        until = waivers.waiver_until(db, league_id, ended + datetime.timedelta(hours=1))
+        check(set(until) == set(free) and set(until.values()) == {ended + datetime.timedelta(hours=24)},
+              "on: every undrafted player is on waivers until draft end + 24h")
+        check(waivers.waiver_until(db, league_id, ended + datetime.timedelta(hours=24)) == {}, "post-draft waivers end after 24h")
+        try:
+            free_agency.add_player(db, team(1), free[0], free_agency.USER, ended + datetime.timedelta(hours=1))
+            check(False, "signing an undrafted player is refused during the window")
+        except ValueError as e:
+            check("waivers" in str(e), "signing an undrafted player is refused during the window")
+        waivers.place_claim(db, team(1), free[0], ended + datetime.timedelta(hours=2))
+        waivers.place_claim(db, team(3), free[0], ended + datetime.timedelta(hours=3))
+        db.commit()
+        check(waivers.process(db, league_id, ended + datetime.timedelta(hours=25)) == 1, "post-draft claim resolves after 24h")
+        db.commit()
+        wins = {c.team_id: c.status for c in db.query(WaiverClaim).filter_by(draftable_asset_id=free[0])}
+        check(wins.get(t[1]) == "won" and wins.get(t[3]) == "lost", "the team first in the waiver order (worst goal differential) wins the claim")
+        check(free_agency.add_player(db, team(0), free[1], free_agency.USER, ended + datetime.timedelta(hours=25)) is not None,
+              "unclaimed undrafted players are free agents once the window ends")
     print("\nAll waiver checks passed.")
 
 
