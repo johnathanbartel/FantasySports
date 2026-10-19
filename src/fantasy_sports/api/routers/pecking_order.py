@@ -93,6 +93,32 @@ def _schedule_week_start(db: Session, league_id: int, week: datetime.date | None
     return week_start(current.start_date)
 
 
+_SEED_RETRY_AFTER = datetime.timedelta(minutes=10)
+_seed_attempts: dict[datetime.date, datetime.datetime] = {}
+
+
+def _ensure_week_games(db: Session, league_id: int, week: datetime.date | None) -> None:
+    """Store the real NHL games of the requested week so a future series shows its schedule. The league sync only seeds the
+    current week, so every later series came back with no games. A week is tried at most once per retry interval."""
+    from fantasy_sports.platform.nhl_daily_sync import seed_week_schedule_if_needed
+
+    nhl = db.query(Universe).filter_by(code="nhl").first()
+    if nhl is None:
+        return
+    w_start = _schedule_week_start(db, league_id, week)
+    now = datetime.datetime.utcnow()
+    last = _seed_attempts.get(w_start)
+    if last is not None and now - last < _SEED_RETRY_AFTER:
+        return
+    try:
+        seed_week_schedule_if_needed(db, nhl, w_start)
+        db.commit()
+        _seed_attempts[w_start] = now
+    except Exception:
+        db.rollback()
+        _seed_attempts[w_start] = now
+
+
 def _read(db: Session, team: Team, week: datetime.date | None = None) -> PeckingOrderOut:
     from fantasy_sports.platform.db.models.core import Game
     from fantasy_sports.sports.hockey.pipeline import window_of
@@ -198,6 +224,7 @@ def get_pecking_order(team_id: int, week: datetime.date | None = None, db: Sessi
         db.commit()
     except Exception:
         db.rollback()
+    _ensure_week_games(db, team.league_id, week)
     return _read(db, team, week)
 
 
