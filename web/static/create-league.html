@@ -561,7 +561,10 @@ const TIEBREAKERS = [
   ['coin_flip', 'Random draw', 'decides every tie, so it is always last'],
 ];
 const DEFAULT_TIEBREAKERS = ['goal_differential', 'head_to_head', 'goals_for', 'goals_against'];
-const tbLabel = (k) => (TIEBREAKERS.find(t => t[0] === k) || [k, k])[1];
+// Hockey keeps goals; every other sport (NBA) scores points.
+const scoreWords = (s) => isNhl() ? s : s
+  .replace(/\bGoals\b/g, 'Points').replace(/\bGoal\b/g, 'Point').replace(/\bgoals\b/g, 'points').replace(/\bgoal\b/g, 'point');
+const tbLabel = (k) => scoreWords((TIEBREAKERS.find(t => t[0] === k) || [k, k])[1]);
 function tbNormalize(order) {            // the random draw can only be last
   const o = order.filter(k => k !== 'coin_flip');
   return order.includes('coin_flip') ? o.concat('coin_flip') : o;
@@ -602,6 +605,8 @@ function updateSettingsFields() {
   document.getElementById('hockey-settings-fields').style.display = isWindowSport() ? 'block' : 'none';
   // Points standings are hockey only; every other sport sorts by win percentage.
   document.getElementById('points-standings-fields').hidden = !isNhl();
+  const tbHost = document.getElementById('tiebreaker-editor');
+  if (tbHost && tbHost._order) tbEditor(tbHost, tbHost._order(), false);   // goals or points in the labels
   const size = Number(document.getElementById('league-size').value) || 0;
   const def = Math.max(1, Math.floor(size * 0.33 + 0.5));
   document.getElementById('playoff-teams').placeholder = String(def);
