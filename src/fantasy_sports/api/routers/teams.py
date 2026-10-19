@@ -12,7 +12,7 @@ from fantasy_sports.platform.draft_stats import current_season_stats, stats_by_a
 from fantasy_sports.platform.player_rates import rates_by_asset
 from fantasy_sports.platform.roster_fill import fill_slots
 from fantasy_sports.platform.db.models.core import (
-    DraftableAsset, League, LeagueUniverse, RealTeam, RosterEntry, Team, User,
+    DraftableAsset, Game, League, LeagueUniverse, RealTeam, RosterEntry, Team, User,
 )
 from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 from fantasy_sports.platform.db.session import get_db
@@ -136,6 +136,32 @@ def get_roster(team_id: int, db: Session = Depends(get_db)):
             this_season_points=current.get(a.id, {}).get("points"), this_season_games=current.get(a.id, {}).get("games"),
         ))
     return out
+
+
+class ByeCheckOut(BaseModel):
+    week_id: int
+    schedule_known: bool            # False = no games stored for the week, so nothing can be called a bye
+    no_game_asset_ids: list[int]    # rostered assets whose real team has no game that week
+
+
+@router.get("/{team_id}/bye-check", response_model=ByeCheckOut)
+def get_bye_check(team_id: int, week_id: int, db: Session = Depends(get_db)):
+    """Which of the team's players (or defense groups) have a bye that week: their real team plays no stored game.
+    The lineup screens outline them red, since nobody may fill that spot. Sport-agnostic: it reads the games table."""
+    if db.get(Team, team_id) is None:
+        raise HTTPException(404, "Team not found")
+    playing: set[int] = set()
+    for home, away in db.query(Game.home_team_id, Game.away_team_id).filter(Game.week_id == week_id):
+        playing.update((home, away))
+    if not playing:
+        return ByeCheckOut(week_id=week_id, schedule_known=False, no_game_asset_ids=[])
+    out = []
+    for e in db.query(RosterEntry).filter(RosterEntry.team_id == team_id):
+        a = e.draftable_asset
+        rt = a.player.real_team_id if a.player else (a.defense_group.real_team_id if a.defense_group else None)
+        if rt is not None and rt not in playing:
+            out.append(e.draftable_asset_id)
+    return ByeCheckOut(week_id=week_id, schedule_known=True, no_game_asset_ids=out)
 
 
 class LinePlayer(BaseModel):
