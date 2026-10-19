@@ -268,6 +268,56 @@ pr2 = client.get(f"/leagues/{lid}/power-rankings").json()
 check(pr2["teams"][0]["team_id"] != top["team_id"] or pr2["teams"][0]["projected_points"] != top["projected_points"], "a trade moves the power rankings")
 check(client.get(f"/leagues/{lid}/draft-grades").json()["teams"] == g["teams"], "but never the draft grade")
 
+# ---- pick suggestions: a second league with a draft in progress ------------------------------------------------------
+check(draft_grades.needed_groups({}) == ["C", "W", "D", "G"], "empty roster needs every group")
+check(draft_grades.needed_groups({"C": 1, "W": 2, "D": 2}) == ["G"], "starters first: only the goalie is missing")
+check(draft_grades.needed_groups({"C": 1, "W": 2, "D": 2, "G": 1}) == ["C", "W", "D", "G"], "starters full: depth is the need")
+check(draft_grades.needed_groups({"C": 4, "W": 8, "D": 8, "G": 4}) == ["C", "W", "D", "G"], "everything full: every group")
+check(draft_grades.needed_groups({"C": 0, "W": 8, "D": 8, "G": 4}) == ["C"], "short starters win over depth")
+check(draft_grades.needed_groups({"C": 4, "W": 8, "D": 2, "G": 1}) == ["D", "G"], "depth need lists every short group")
+
+resp = client.post("/leagues", json={"name": "Live", "commissioner_user_id": users["commish"].id, "universe_codes": ["nhl"], "size": 4}, headers=hdr)
+lid2 = resp.json()["id"]
+teams2 = [Team(league_id=lid2, name=n, owner_user_id=None, is_ai_owned=True) for n in ("W1", "W2", "W3", "W4")]
+db.add_all(teams2)
+db.flush()
+draft2 = Draft(league_id=lid2, status="in_progress", is_snake=True)
+db.add(draft2)
+db.flush()
+for n in range(1, 9):
+    db.add(DraftPick(draft_id=draft2.id, round=(n - 1) // 4 + 1, pick_number=n, team_id=teams2[(n - 1) % 4].id))
+db.commit()
+t0 = teams2[0].id
+rate = lambda i: 0.60 - 0.02 * i      # noqa: E731
+
+r = client.get(f"/drafts/{draft2.id}/suggestions").json()
+top3 = sorted(proj, key=lambda a: -proj[a].points)[:3]
+check(r["available"] and r["pick_number"] == 1 and r["team_id"] == t0 and len(r["suggestions"]) == 3, "suggestions for the pick on the clock")
+check([x["asset_id"] for x in r["suggestions"]] == top3, "an empty roster needs everything: the three best projected players")
+check([x["value"] for x in r["suggestions"]] == sorted((x["value"] for x in r["suggestions"]), reverse=True), "best value first")
+check(all(abs(x["value"] - (x["projected_points"] - x["expected_points"])) < 0.11 for x in r["suggestions"]), "value = projected - expected")
+check(all("name" in x and "position" in x for x in r["suggestions"]), "suggestions carry the player")
+
+db.add_all([RosterEntry(team_id=t0, draftable_asset_id=assets[0].id, acquired_via="draft"),        # C
+            RosterEntry(team_id=t0, draftable_asset_id=assets[5].id, acquired_via="draft")])       # G
+db.commit()
+r = client.get(f"/drafts/{draft2.id}/suggestions").json()
+check(r["needs"] == ["W", "D"], "a team with its C and G needs wingers and defensemen")
+check({x["group"] for x in r["suggestions"]} <= {"W", "D"}, "only players in a position of need")
+check(not {assets[0].id, assets[5].id} & {x["asset_id"] for x in r["suggestions"]}, "rostered players are never suggested")
+best_need = [assets[i].id for i in range(24) if POS[i % 6] in ("W", "D")][:3]
+check([x["asset_id"] for x in r["suggestions"]] == best_need, "the three best wingers/defensemen by projection")
+other = client.get(f"/drafts/{draft2.id}/suggestions?team_id={teams2[1].id}").json()
+check(other["needs"] == ["C", "W", "D", "G"] and other["team_id"] == teams2[1].id, "another team's needs on request")
+
+db.add_all([RosterEntry(team_id=t0, draftable_asset_id=assets[i].id, acquired_via="draft") for i in (1, 2, 3, 4)])    # W W D D
+db.commit()
+r = client.get(f"/drafts/{draft2.id}/suggestions").json()
+check(r["roster_counts"] == {"C": 1, "G": 1, "W": 2, "D": 2} and r["needs"] == ["C", "W", "D", "G"], "starters full: depth is the need")
+check(client.get("/drafts/99999/suggestions").status_code == 404, "unknown draft: 404")
+done = client.get(f"/drafts/{draft.id}/suggestions").json()
+check(done["available"] is False and "open pick" in done["reason"], "a finished draft has nothing to suggest")
+
 if os.environ.get("DRAFT_GRADES_KEEP_DB"):
     print(f"kept {db_path} (league {lid})")
     sys.exit(0)
