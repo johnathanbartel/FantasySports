@@ -324,3 +324,6 @@ html .rk { font-family: var(--font-pixel); font-size: 9px; }
 /* Player card links: a player's name that opens the card (web/static/player-card.js). */
 a.pc-link { color: inherit; text-decoration: none; cursor: pointer; }
 a.pc-link:hover, a.pc-link:focus-visible { text-decoration: underline; text-decoration-style: dotted; }
+
+/* A hidden element stays hidden even when a class sets display (e.g. .field is flex). */
+[hidden] { display: none !important; }

@@ -507,7 +507,7 @@ const isProSport = () => isNfl() || isNhl() || isNba();
 
 function getSportRosterSize() {
   const universe = document.getElementById('universe').value;
-  if (universe === 'nba') return 13; // placeholder until NBA roster slots are defined
+  if (universe === 'nba') return 15; // default NBA roster; slots to be defined with the NBA universe
   if (universe === 'nhl') return 18; // 3 lines of 6 (6 starters + 12 bench)
   if (universe === 'nfl') {
     const def = document.getElementById('defense-mode').value;
@@ -528,7 +528,7 @@ function updateRosterRounds() {
   const hint = document.getElementById('draft-rounds-hint');
   if (hint) {
     const u = document.getElementById('universe').value;
-    const desc = u === 'nba' ? 'NBA (placeholder)' : u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
+    const desc = u === 'nba' ? 'NBA (15-man roster)' : u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
     hint.textContent = `Locked: set automatically to ${rounds} rounds by ${desc} roster size.`;
   }
 }
