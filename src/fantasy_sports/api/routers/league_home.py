@@ -290,6 +290,10 @@ class FaActionRequest(BaseModel):
     draftable_asset_id: int
 
 
+class WaiverClaimRequest(FaActionRequest):
+    bid: int = 0                       # whole dollars; used only in a budget league
+
+
 class TransactionOut(BaseModel):
     at: datetime.datetime
     team_id: int
@@ -381,6 +385,9 @@ class WaiversOut(BaseModel):
     basis_note: str
     reset_at: datetime.datetime        # the last reset, naive UTC
     next_reset_at: datetime.datetime
+    acquisition_type: str = "waivers"
+    budget_total: int | None = None    # budget league: whole dollars each team can bid this season
+    budget_left: int | None = None     # ... what the requested team has left
     order: list[WaiverOrderRow]
     players: list[WaiverPlayerOut]
 
@@ -406,7 +413,12 @@ def league_waivers(league_id: int, team_id: int | None = None, db: Session = Dep
     schools = _school_names(db)
     assets = db.query(DraftableAsset).options(*_EAGER).filter(DraftableAsset.id.in_(list(until) or [0])).all()
     by = waivers.dropped_by(db, league_id, list(until))
+    league = db.get(League, league_id)
+    budget = waivers.is_budget(league)
+    team = db.get(Team, team_id) if team_id is not None else None
     return WaiversOut(
+        acquisition_type=waivers.acquisition_type(league), budget_total=waivers.budget_total(league) if budget else None,
+        budget_left=waivers.budget_left(db, team) if budget and team is not None and team.league_id == league_id else None,
         basis=order.basis, basis_note=note, reset_at=order.reset_at, next_reset_at=waivers.next_reset(now),
         order=[WaiverOrderRow(position=i, team_id=t, team_name=names.get(t, str(t)), goal_diff=order.goal_diff.get(t),
                               moved_back=t in order.moved_back) for i, t in enumerate(order.teams, start=1)],
@@ -417,17 +429,17 @@ def league_waivers(league_id: int, team_id: int | None = None, db: Session = Dep
 
 
 @router.post("/teams/{team_id}/waivers/claim")
-def waiver_claim(team_id: int, payload: FaActionRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def waiver_claim(team_id: int, payload: WaiverClaimRequest, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Claims a player on waivers. The claim is filled when his 24 hours end, if this team is first in the waiver order
     among the teams that claimed him and still has a roster spot (and money, in a college league)."""
     team = assert_can_manage_team(db, user, team_id)
     try:
         game_lock.assert_unlocked(db, team.league_id, [payload.draftable_asset_id])
-        claim = waivers.place_claim(db, team, payload.draftable_asset_id)
+        claim = waivers.place_claim(db, team, payload.draftable_asset_id, payload.bid)
     except ValueError as e:
         raise HTTPException(400, str(e))
     db.commit()
-    return {"draftable_asset_id": claim.draftable_asset_id, "available_at": claim.available_at}
+    return {"draftable_asset_id": claim.draftable_asset_id, "available_at": claim.available_at, "bid": claim.bid}
 
 
 @router.post("/teams/{team_id}/waivers/cancel")

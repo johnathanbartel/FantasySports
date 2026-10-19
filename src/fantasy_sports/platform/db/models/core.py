@@ -191,6 +191,11 @@ class League(Base):
     # processed on (0 = Monday ... 6 = Sunday, at midnight Pacific; NULL = the moment the hold ends). See platform/waivers.py.
     waiver_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
     waiver_processing_days: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # How players are acquired (platform/waivers.py): "no_waivers", "waivers" (default), "full_waivers" (every free player is
+    # always on waivers) or "budget" (claims are bids; the highest bid wins). The budget is the annual dues of a PAID league
+    # (whole dollars), else acquisition_budget (NULL = the default). It starts over each season.
+    acquisition_type: Mapped[str] = mapped_column(String(12), default="waivers", server_default="waivers")
+    acquisition_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
@@ -1108,6 +1113,7 @@ class WaiverClaim(Base):
     status: Mapped[str] = mapped_column(String(10), default="pending")   # pending / won / lost / failed / cancelled
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    bid: Mapped[int] = mapped_column(Integer, default=0, server_default="0")    # whole dollars; only a "budget" league uses it
 
     draftable_asset: Mapped["DraftableAsset"] = relationship()
 

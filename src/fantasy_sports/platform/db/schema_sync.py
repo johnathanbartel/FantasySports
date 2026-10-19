@@ -42,9 +42,15 @@ def ensure_latest_schema(engine):
                               ("draft_order_mode", "VARCHAR(10) DEFAULT 'random' NOT NULL"),
                               ("post_draft_waivers", "BOOLEAN DEFAULT 0 NOT NULL"),
                               ("waiver_hours", "INTEGER DEFAULT 24 NOT NULL"), ("waiver_processing_days", "JSON"),
+                              ("acquisition_type", "VARCHAR(12) DEFAULT 'waivers' NOT NULL"), ("acquisition_budget", "INTEGER"),
                               ("is_mock_draft", "BOOLEAN DEFAULT 0 NOT NULL"), ("mock_pick_seconds", "INTEGER")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
+
+        if "waiver_claims" in tables:
+            cols = {c["name"] for c in insp.get_columns("waiver_claims")}
+            if "bid" not in cols:
+                conn.execute(text("ALTER TABLE waiver_claims ADD COLUMN bid INTEGER DEFAULT 0 NOT NULL"))
 
         if "trades" in tables:
             cols = {c["name"] for c in insp.get_columns("trades")}
