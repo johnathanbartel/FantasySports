@@ -187,6 +187,22 @@
       </div>
 
       <div class="field">
+        <label for="acquisition-type">How players are acquired</label>
+        <select id="acquisition-type">
+          <option value="waivers" selected>Free agency with waivers (a dropped player is held for the waiver period)</option>
+          <option value="no_waivers">Free agency, no waivers (a dropped player can be signed at once)</option>
+          <option value="full_waivers">Full waivers (free players are always on waivers)</option>
+          <option value="budget">Acquisition budget (claims are bids; the highest bid wins)</option>
+        </select>
+        <span class="hint">With a budget, a claim carries a bid and, when the waiver period ends, the highest bid wins (the waiver order breaks ties). Bids are not refunded and the budget starts over each season. In a paid league the budget is the league dues.</span>
+      </div>
+
+      <div class="field" id="acquisition-budget-field" hidden>
+        <label for="acquisition-budget">Acquisition budget ($ per team, free leagues)</label>
+        <input type="number" id="acquisition-budget" min="0" max="100000" value="100" style="width:6rem">
+      </div>
+
+      <div class="field">
         <label style="display:flex;align-items:center;gap:var(--space-2);font-weight:600"><input type="checkbox" id="post-draft-waivers" style="width:auto"> Post-draft waivers on undrafted players</label>
         <span class="hint">Off by default. When on, every player nobody drafted is on waivers for 24 hours after the draft ends: teams claim them in waiver order instead of signing them right away.</span>
       </div>
@@ -583,6 +599,11 @@ function leagueSettingsPayload() {
   out.unfilled_slot_policy = document.getElementById('unfilled-slot-policy').value;
   out.draft_reset_policy = document.getElementById('draft-reset-policy').value;
   out.draft_order_mode = document.getElementById('draft-order-mode').value;
+  out.acquisition_type = document.getElementById('acquisition-type').value;
+  if (out.acquisition_type === 'budget') {
+    const ab = parseInt(document.getElementById('acquisition-budget').value, 10);
+    out.acquisition_budget = Number.isNaN(ab) ? null : Math.min(100000, Math.max(0, ab));
+  }
   out.post_draft_waivers = document.getElementById('post-draft-waivers').checked;
   const wh = parseInt(document.getElementById('waiver-hours').value, 10);
   out.waiver_hours = Number.isNaN(wh) ? 24 : Math.min(168, Math.max(0, wh));
@@ -1013,6 +1034,9 @@ function renderInvitesSummary(createdTeams) {
     }
   };
 }
+document.getElementById('acquisition-type').addEventListener('change', e => {
+  document.getElementById('acquisition-budget-field').hidden = e.target.value !== 'budget';
+});
 </script>
 </body>
 </html>
