@@ -79,6 +79,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_acquisition_types_smoke_test.py` | Acquisition types: no waivers, waivers, full waivers (blanket hold, AI fill ignores it, processing day) and budget (highest bid wins, ties by waiver order, dues as budget in paid leagues, season reset) | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_trade_hub_smoke_test.py` | Trade Hub and Trade Block: deadline, manager plans, AI teams Win Now until mathematically eliminated, block add/remove | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_trade_eligibility_smoke_test.py` | CFG-06 paid/free league trade eligibility: dues, eliminated teams, majority + commissioner approval, deadline, execution rechecks, franchise continuity | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/seed_pickups_smoke_test.py` | Trending and recommended pickups: trend percentage (leagues counted once, mock drafts / AI fill / old adds / own league left out), recommended free agents ranked by projected points above the team's weakest starter on the draft-suggestion engine, open-slot flag, closed free agency | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_player_card_smoke_test.py` | Player card endpoint: bio, injury, simulation stats and game log from a published sim game (G/A/SOG/SV/SO), spoiler rule, schedule, acquisition, transactions, % owned (mock drafts excluded), trade block, the add/claim/cancel/drop/trade/watch buttons per situation, and the private per-team watchlist (add, unwatch, status per row, access rules) | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_smoke_test.py` | Smoke test round-tripping schema and API endpoints via TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/serve_demo.py` | Runs FastAPI server via Uvicorn against local demo dataset | `.venv-api` | No (unverified in docstring) | Yes (copies demo DB) |
@@ -107,6 +108,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_trade_hub_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_player_card_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_draft_grades_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_pickups_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_elimination_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_elimination_engine.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_playoff_odds.py`

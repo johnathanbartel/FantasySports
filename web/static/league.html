@@ -1548,11 +1548,13 @@ async function renderRoster() {
 async function renderTransactions() {
   await refreshOverview(); ensureActiveTeam();
   const t = activeTeam();
-  const [fa, log, sum, roster, wv, watch] = await Promise.all([
+  const [fa, log, sum, roster, wv, watch, trend, rec] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/free-agents`), api(`/leagues/${LEAGUE_ID}/transactions`),
     api(`/teams/${t.id}/free-agency/summary`), api(`/teams/${t.id}/roster`),
     api(`/leagues/${LEAGUE_ID}/waivers?team_id=${t.id}`),
     canManage(t) ? api(`/teams/${t.id}/watchlist`) : Promise.resolve(null),     // private: only the team's manager sees it
+    api(`/leagues/${LEAGUE_ID}/trending-pickups`).catch(() => null),
+    isHockey() ? api(`/teams/${t.id}/recommended-pickups`).catch(() => null) : Promise.resolve(null),     // NHL only
   ]);
   cache.tx = {fa, log, sum, roster, wv, watch, team: t};
   $('content').innerHTML = `
@@ -1572,6 +1574,7 @@ async function renderTransactions() {
     </div>
     ${waiversBox(wv, t)}
     ${watchlistBox(watch, sum, t)}
+    ${fa.open ? pickupsBox(trend, rec, sum, t) : ''}
     ${fa.open ? `<div class="grid2" style="margin-bottom:var(--space-6)">
       <div>
         <h3 style="margin:0 0 var(--space-2)">Free agents</h3>
@@ -1604,6 +1607,12 @@ async function renderTransactions() {
     wl.querySelectorAll('[data-wwclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.wwclaim)));
     wl.querySelectorAll('[data-wwcancel]').forEach(b => b.onclick = () => waiverAct('cancel', Number(b.dataset.wwcancel)));
     wl.querySelectorAll('[data-unwatch]').forEach(b => b.onclick = () => unwatch(Number(b.dataset.unwatch)));
+  }
+  const pk = $('pickups-box');
+  if (pk) {
+    pk.ontoggle = () => { view.pickupsOpen = pk.open; };
+    pk.querySelectorAll('[data-padd]').forEach(b => b.onclick = () => faAct('add', Number(b.dataset.padd)));
+    pk.querySelectorAll('[data-pclaim]').forEach(b => b.onclick = () => waiverAct('claim', Number(b.dataset.pclaim)));
   }
   $('log-kind').value = view.log.kind; $('log-team').value = view.log.team;
   $('log-kind').onchange = () => { view.log.kind = $('log-kind').value; drawLog(); };
@@ -1711,6 +1720,35 @@ function watchlistBox(watch, sum, team) {
     <summary style="cursor:pointer;font-weight:700">Watchlist <span class="muted" style="font-weight:400">· ${watch.length} player${watch.length === 1 ? '' : 's'}, visible only to you</span></summary>
     ${watch.length ? `<div style="margin-top:var(--space-2)">${txHeader(false).replace('<span class="pname">Player</span>', '<span class="pname">Player</span><span style="width:150px;flex:none">Status</span>').replace('<span class="spc"></span>', '<span class="spc"></span><span class="spc"></span>')}${rows}</div>`
       : '<p class="muted" style="margin:var(--space-2) 0">Nobody yet. Open any player card and press Watch to keep an eye on him here.</p>'}</details>`;
+}
+
+// Trending (the share of other leagues adding a player this week, every sport) and recommended pickups (NHL: free agents who
+// would raise this team's projected lineup, the engine behind draft pick suggestions - platform/pickups.py).
+function pickupsBox(trend, rec, sum, team) {
+  if (!trend && !rec) return '';
+  const manage = canManage(team);
+  const claimed = new Set(cache.tx.wv.players.filter(x => x.claimed).map(x => x.draftable_asset_id));
+  const move = (id, onWaivers) => onWaivers
+    ? (claimed.has(id) ? `<button class="btn btn-secondary" disabled>Claimed</button>`
+      : `<button class="btn btn-primary" data-pclaim="${id}" ${manage ? '' : 'disabled'}>Claim</button>`)
+    : `<button class="btn btn-primary" data-padd="${id}" ${manage && sum.open_spots > 0 ? '' : 'disabled'} title="${sum.open_spots > 0 ? '' : 'Roster is full - drop a player first'}">Sign</button>`;
+  const recRows = rec && rec.available ? rec.recommendations.map(r => `<div class="row tight">${posTag(r.position)}
+      <span class="pname" title="${esc(r.name)}"><strong>${pl(r.asset_id, r.name)}</strong><span class="muted">${r.fills_open_slot ? 'fills an open starting spot' : `over your ${r.group} starter (${r.baseline_points})`}</span></span>
+      <span class="pts" title="Projected points gained over the player he would start in place of">+${r.value}</span><span class="pts muted" title="Projected points">${r.projected_points}</span>${move(r.asset_id, !!r.waiver_until)}</div>`).join('') : '';
+  const trendRows = trend && trend.available ? trend.players.map(p => `<div class="row tight">${posTag(p.position)}
+      <span class="pname" title="${esc(p.name)}"><strong>${pl(p.asset_id, p.name)}</strong><span class="muted">added in ${p.leagues_adding} of ${p.leagues_total} other leagues</span></span>
+      <span class="pts" title="Share of other leagues that added him in the last ${trend.days} days">${p.percent}%</span>${move(p.asset_id, !!p.waiver_until)}</div>`).join('') : '';
+  const none = (d, why) => `<p class="muted" style="margin:var(--space-2) 0">${esc((d && d.reason) || why)}</p>`;
+  return `<details id="pickups-box" class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)" ${view.pickupsOpen === false ? '' : 'open'}>
+    <summary style="cursor:pointer;font-weight:700">Recommended &amp; trending pickups</summary>
+    <div class="grid2" style="margin-top:var(--space-2)">
+      ${rec ? `<div><h4 style="margin:0">Recommended for ${esc(tn(team.id))}</h4>
+        <p class="muted" style="margin:2px 0;font-size:12px">Projected points added over your weakest starter at the position (the engine behind draft pick suggestions).</p>
+        ${recRows || none(rec, 'Nothing to recommend.')}</div>` : ''}
+      <div><h4 style="margin:0">Trending</h4>
+        <p class="muted" style="margin:2px 0;font-size:12px">Free agents that other leagues on the site added in the last 7 days.</p>
+        ${trendRows || none(trend, 'No trend data.')}</div>
+    </div></details>`;
 }
 
 async function unwatch(assetId) {
