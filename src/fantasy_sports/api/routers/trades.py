@@ -39,6 +39,15 @@ class TradeProposeRequest(BaseModel):
     receive_picks: list[PickRefIn] = []
 
 
+class TradeCounterRequest(BaseModel):
+    """A counter offer, from the side of the team that received the offer."""
+    team_id: int
+    send_asset_ids: list[int] = []
+    receive_asset_ids: list[int] = []
+    send_picks: list[PickRefIn] = []
+    receive_picks: list[PickRefIn] = []
+
+
 class TradePickOut(BaseModel):
     season: int
     round: int
@@ -138,6 +147,8 @@ class TradeOut(BaseModel):
     league_veto_count: int = 0
     league_veto_needed: int | None = None       # None: no team may veto (or the league has no league veto)
     commissioner_vetoed: bool = False
+    counter_of_trade_id: int | None = None      # this trade is a counter to that offer
+    countered_by_trade_id: int | None = None    # status 'countered': the counter that replaced this offer
 
 
 class TradeVetoRequest(BaseModel):
@@ -171,6 +182,8 @@ def _asset_outs(db: Session, ids: list[int]) -> dict[int, TradeAssetOut]:
 
 
 def _format_trade(db: Session, trade: Trade, active_user: User | None = None) -> TradeOut:
+    countered_by = (db.query(Trade.id).filter(Trade.counter_of_trade_id == trade.id).scalar()
+                    if trade.status == "countered" else None)
     p_team = trade.proposer_team
     c_team = trade.counterparty_team
     p_items = [it.draftable_asset_id for it in trade.items if it.sender_team_id == p_team.id and it.draftable_asset_id is not None]
@@ -247,6 +260,8 @@ def _format_trade(db: Session, trade: Trade, active_user: User | None = None) ->
         league_veto_count=trade_review.league_veto_count(db, trade),
         league_veto_needed=trade_review.veto_majority(db, trade) if league.trade_review_mode in ("league", "both") else None,
         commissioner_vetoed=trade_review.commissioner_veto(db, trade.id) is not None,
+        counter_of_trade_id=trade.counter_of_trade_id,
+        countered_by_trade_id=countered_by,
     )
 
 
@@ -361,6 +376,34 @@ def respond_to_trade(
         raise HTTPException(400, str(e))
 
     return _format_trade(db, trade, user)
+
+
+@router.post("/trades/{trade_id}/counter", response_model=TradeOut)
+def counter_trade_offer(
+    trade_id: int,
+    payload: TradeCounterRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """The team an offer was sent to ('proposed' status) answers with a counter offer. Returns the new counter trade; the
+    original is closed as 'countered'."""
+    trade = db.get(Trade, trade_id)
+    if not trade:
+        raise HTTPException(404, "Trade not found")
+    team = assert_can_manage_team(db, user, payload.team_id)
+
+    try:
+        counter = trades.counter_trade(
+            db, trade, team, payload.send_asset_ids, payload.receive_asset_ids, user_id=user.id,
+            send_picks=[(p.season, p.round, p.original_team_id) for p in payload.send_picks],
+            receive_picks=[(p.season, p.round, p.original_team_id) for p in payload.receive_picks],
+        )
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+
+    return _format_trade(db, counter, user)
 
 
 @router.post("/trades/{trade_id}/vote", response_model=TradeOut)

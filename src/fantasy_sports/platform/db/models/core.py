@@ -1152,6 +1152,8 @@ class Trade(Base):
       'in_review': accepted by both managers and waiting out the league's review window (platform/trade_review.py);
         it executes once review_ends_at passes unless it is vetoed or cancelled first.
       'vetoed': the commissioner or the league vetoed it during the review window.
+      'countered': the counterparty answered a 'proposed' offer with a counter offer instead (platform/trades.py counter_trade);
+        the counter is the Trade whose counter_of_trade_id points here.
     """
 
     __tablename__ = "trades"
@@ -1167,6 +1169,8 @@ class Trade(Base):
     failure_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # When an 'in_review' trade becomes executable (naive UTC).
     review_ends_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # The offer this trade is a counter to (set on the counter, whose sides are the original's turned around).
+    counter_of_trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
 
     league: Mapped["League"] = relationship(foreign_keys=[league_id])
     proposer_team: Mapped["Team"] = relationship(foreign_keys=[proposer_team_id])

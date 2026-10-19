@@ -148,6 +148,7 @@ def propose_trade(
     now: datetime.datetime | None = None,
     send_picks: list[PickRef] | None = None,
     receive_picks: list[PickRef] | None = None,
+    counter_of_trade_id: int | None = None,
 ) -> Trade:
     """Proposes a trade between proposer_team and counterparty_team.
 
@@ -214,6 +215,7 @@ def propose_trade(
         counterparty_team_id=counterparty_team.id,
         status=status,
         created_at=now,
+        counter_of_trade_id=counter_of_trade_id,
     )
     db.add(trade)
     db.flush()
@@ -268,6 +270,44 @@ def respond_trade(
             return trade
     execute_trade(db, trade, now)
     return trade
+
+
+def counter_trade(
+    db: Session,
+    trade: Trade,
+    team: Team,
+    send_asset_ids: list[int],
+    receive_asset_ids: list[int],
+    user_id: int | None = None,
+    now: datetime.datetime | None = None,
+    send_picks: list[PickRef] | None = None,
+    receive_picks: list[PickRef] | None = None,
+) -> Trade:
+    """The counterparty answers a direct offer ('proposed') with a counter offer instead of accepting or declining.
+
+    The counter is a new proposal from the counterparty back to the original proposer (send/receive are from the
+    counterparty's side), so it is checked exactly like any proposal. If it is refused nothing changes and the original offer
+    stays open. Once it is made the original is closed as 'countered'."""
+    now = now or datetime.datetime.utcnow()
+    if trade.status != "proposed":
+        raise ValueError(f"Only an offer waiting for an answer can be countered (current status: {trade.status})")
+    if team.id != trade.counterparty_team_id:
+        raise ValueError("Only the team the offer was sent to can counter it")
+    send_picks, receive_picks = list(send_picks or []), list(receive_picks or [])
+    same = (set(send_asset_ids) == set(_players(trade, trade.counterparty_team_id))
+            and set(receive_asset_ids) == set(_players(trade, trade.proposer_team_id))
+            and set(send_picks) == set(_picks(trade, trade.counterparty_team_id))
+            and set(receive_picks) == set(_picks(trade, trade.proposer_team_id)))
+    if same:
+        raise ValueError("That is the same as the offer you received. Accept it, or change what is in the counter.")
+    counter = propose_trade(db, trade.counterparty_team, trade.proposer_team, send_asset_ids, receive_asset_ids,
+                            user_id=user_id, now=now, send_picks=send_picks, receive_picks=receive_picks,
+                            counter_of_trade_id=trade.id)
+    trade.status = "countered"
+    trade.resolved_at = now
+    db.flush()
+    log.info("trade %s countered by trade %s", trade.id, counter.id)
+    return counter
 
 
 def vote_trade(

@@ -59,6 +59,8 @@ def ensure_latest_schema(engine):
                 conn.execute(text("ALTER TABLE trades ADD COLUMN failure_reason VARCHAR(500)"))
             if "review_ends_at" not in cols:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN review_ends_at DATETIME"))
+            if "counter_of_trade_id" not in cols:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN counter_of_trade_id INTEGER REFERENCES trades(id)"))
 
         if "league_seasons" in tables:
             cols = {c["name"] for c in insp.get_columns("league_seasons")}

@@ -1791,6 +1791,7 @@ async function faAct(kind, assetId) {
 
 // ---- TRADES: Direct human trades and AI trades with league majority approval ------------------------
 let tradeSelectedOppId = null;
+let tradeCounterOf = null;     // the incoming offer being countered: the Propose form is pre-filled with it turned around
 let tradeWantAsset = null;     // a player to tick on the "You receive" list when the Trades tab opens (set from his player card)
 
 async function renderTrades() {
@@ -1798,6 +1799,8 @@ async function renderTrades() {
   const t = activeTeam();
   const can = canManage(t);
   const otherTeams = ov.teams.filter(x => x.id !== t.id);
+  if (tradeCounterOf && tradeCounterOf.counterparty_team_id !== t.id) tradeCounterOf = null;   // switched team: the counter was for another
+  if (tradeCounterOf) tradeSelectedOppId = tradeCounterOf.proposer_team_id;
   if (!tradeSelectedOppId || tradeSelectedOppId === t.id || !otherTeams.some(x => x.id === tradeSelectedOppId)) {
     tradeSelectedOppId = otherTeams[0]?.id || null;
   }
@@ -1816,7 +1819,9 @@ async function renderTrades() {
   const votingTrades = tradeList.filter(x => x.status === 'voting');
   const incomingDirect = tradeList.filter(x => x.status === 'proposed' && x.counterparty_team_id === t.id);
   const outgoingDirect = tradeList.filter(x => x.status === 'proposed' && x.proposer_team_id === t.id);
-  const pastTrades = tradeList.filter(x => ['accepted', 'declined', 'rejected', 'cancelled'].includes(x.status));
+  const pastTrades = tradeList.filter(x => ['accepted', 'declined', 'rejected', 'cancelled', 'countered'].includes(x.status));
+  if (tradeCounterOf && !incomingDirect.some(x => x.id === tradeCounterOf.id)) tradeCounterOf = null;   // answered or withdrawn meanwhile
+  const countering = tradeCounterOf;
 
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
   const sortRoster = (r) => r.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
@@ -1986,10 +1991,11 @@ async function renderTrades() {
         ${incomingDirect.map(tr => `
           <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-3);border-left:4px solid var(--color-primary)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
-              <div><strong>Offer from ${esc(tr.proposer_team_name)}</strong></div>
+              <div><strong>${tr.counter_of_trade_id ? 'Counter offer' : 'Offer'} from ${esc(tr.proposer_team_name)}</strong></div>
               ${can ? `
                 <div style="display:flex;gap:var(--space-2)">
                   <button type="button" class="btn btn-primary btn-sm" data-trade-respond="${tr.id}" data-accept="true">Accept Trade</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-trade-counter="${tr.id}">Counter</button>
                   <button type="button" class="btn btn-secondary btn-sm" data-trade-respond="${tr.id}" data-accept="false">Decline</button>
                 </div>
               ` : ''}
@@ -2010,7 +2016,7 @@ async function renderTrades() {
         ${outgoingDirect.map(tr => `
           <div class="card elev-sm" style="padding:var(--space-4);margin-bottom:var(--space-3)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-3)">
-              <div><strong>Offer sent to ${esc(tr.counterparty_team_name)}</strong> <span class="muted" style="font-size:12px">(Pending response)</span></div>
+              <div><strong>${tr.counter_of_trade_id ? 'Counter offer' : 'Offer'} sent to ${esc(tr.counterparty_team_name)}</strong> <span class="muted" style="font-size:12px">(Pending response)</span></div>
               ${can ? `<button type="button" class="btn btn-ghost btn-sm" data-trade-cancel="${tr.id}" style="color:var(--color-danger)">Cancel</button>` : ''}
             </div>
             <div class="grid2" style="gap:var(--space-3)">
@@ -2030,14 +2036,19 @@ async function renderTrades() {
 
     <!-- Propose Trade Form -->
     <div class="card elev-sm" style="padding:var(--space-5);margin-bottom:var(--space-6)">
-      <h3 style="margin:0 0 var(--space-2)">Propose a Trade</h3>
+      <h3 style="margin:0 0 var(--space-2)">${countering ? 'Counter Offer' : 'Propose a Trade'}</h3>
+      ${countering ? `
+        <div class="note" style="margin-bottom:var(--space-3);display:flex;justify-content:space-between;align-items:center;gap:var(--space-2);flex-wrap:wrap">
+          <span>Countering the offer from <strong>${esc(countering.proposer_team_name)}</strong>. The boxes below start as their offer turned around; change what you want, then send it back. Their original offer is closed once you do.</span>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-cancel-counter">Stop countering</button>
+        </div>` : ''}
       <p class="muted" style="margin:0 0 var(--space-4);font-size:13px">
         Trade players${picksTrade ? ' and draft picks' : ''} with any team in the league. Select the opponent team, choose what to send from your side and what to receive from theirs.${picksTrade ? ' AI teams value a pick by where it would land if the season ended today, and need to get back at least that much.' : ''}
       </p>
 
       <div style="margin-bottom:var(--space-4);max-width:360px">
         <label for="trade-opp" style="font-size:13px;font-weight:600;display:block;margin-bottom:4px">Select trading partner:</label>
-        <select id="trade-opp" class="inp" style="width:100%">
+        <select id="trade-opp" class="inp" style="width:100%" ${countering ? 'disabled' : ''}>
           ${otherTeams.map(o => `<option value="${o.id}" ${o.id === tradeSelectedOppId ? 'selected' : ''}>${esc(o.name)}${o.is_ai_owned ? ' (AI Team)' : ''}</option>`).join('')}
         </select>
       </div>
@@ -2082,7 +2093,7 @@ async function renderTrades() {
 
       <div style="display:flex;justify-content:flex-end;gap:var(--space-2)">
         <button type="button" class="btn btn-secondary" id="btn-check-trade" ${can ? '' : 'disabled'}>Check Eligibility</button>
-        <button type="button" class="btn btn-primary" id="btn-submit-trade" ${can ? '' : 'disabled'}>Submit Trade Proposal</button>
+        <button type="button" class="btn btn-primary" id="btn-submit-trade" ${can ? '' : 'disabled'}>${countering ? 'Send Counter Offer' : 'Submit Trade Proposal'}</button>
       </div>
       <div id="trade-eligibility" class="note" style="display:none;font-size:13px;margin-top:var(--space-2)"></div>
     </div>
@@ -2098,6 +2109,7 @@ async function renderTrades() {
               <strong>${esc(tr.proposer_team_name)}</strong> gave ${tradeText(tr.send_assets, tr.send_picks)}
               <span class="muted">to</span>
               <strong>${esc(tr.counterparty_team_name)}</strong> for ${tradeText(tr.receive_assets, tr.receive_picks)}
+              ${tr.status === 'countered' ? '<span class="muted">- answered with a counter offer</span>' : ''}${tr.counter_of_trade_id ? '<span class="muted"> (a counter offer)</span>' : ''}
             </div>
             ${tr.failure_reason ? `<div class="muted" style="flex-basis:100%;font-size:12px">${esc(tr.failure_reason)}</div>` : ''}
             <span class="muted" style="font-size:12px">${tr.resolved_at ? new Date(tr.resolved_at).toLocaleDateString() : ''}</span>
@@ -2149,6 +2161,23 @@ async function renderTrades() {
     tradeSelectedOppId = Number($('trade-opp').value);
     renderTrades();
   };
+  if (countering) {
+    // Their offer turned around: what they would send us is what we receive, and what they asked of us is what we send.
+    const tick = (name, values) => values.forEach(v => { const b = document.querySelector(`input[name="${name}"][value="${v}"]`); if (b) b.checked = true; });
+    const pickVal = (k) => `${k.season}|${k.round}|${k.original_team_id}`;
+    tick('trade-send-chk', countering.receive_assets.map(a => a.draftable_asset_id));
+    tick('trade-recv-chk', countering.send_assets.map(a => a.draftable_asset_id));
+    tick('trade-send-pick', countering.receive_picks.map(pickVal));
+    tick('trade-recv-pick', countering.send_picks.map(pickVal));
+  }
+  if ($('btn-cancel-counter')) $('btn-cancel-counter').onclick = () => { tradeCounterOf = null; renderTrades(); };
+  document.querySelectorAll('[data-trade-counter]').forEach(btn => {
+    btn.onclick = async () => {
+      tradeCounterOf = incomingDirect.find(x => x.id === Number(btn.dataset.tradeCounter)) || null;
+      await renderTrades();
+      $('btn-submit-trade')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    };
+  });
   if (tradeWantAsset != null) {
     const box = document.querySelector(`input[name="trade-recv-chk"][value="${tradeWantAsset}"]`);
     tradeWantAsset = null;
@@ -2203,6 +2232,18 @@ async function renderTrades() {
 
     if (!(sendIds.length || sendPicks.length) || !(recvIds.length || recvPicks.length)) {
       showError(`Please select at least one player${picksTrade ? ' or draft pick' : ''} to send and one to receive.`);
+      return;
+    }
+
+    if (countering) {
+      try {
+        const res = await FSC.post(`/trades/${countering.id}/counter`, {
+          team_id: t.id, send_asset_ids: sendIds, receive_asset_ids: recvIds, send_picks: sendPicks, receive_picks: recvPicks,
+        });
+        tradeCounterOf = null;
+        showResult(`Counter offer sent to ${esc(res.counterparty_team_name)}.`);
+        await renderTrades();
+      } catch (e) { showError(e.message); }
       return;
     }
 
