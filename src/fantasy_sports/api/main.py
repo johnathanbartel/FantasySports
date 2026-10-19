@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.routers import (
-    auction, banking, chat, commissioner, draft, draft_broadcast, draft_reset, entitlements, league_home, league_leaders, leagues, media, mock_drafts, offline_draft, offline_phone, pecking_order, player_card, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
+    auction, banking, chat, commissioner, draft, draft_broadcast, draft_grades, draft_reset, entitlements, league_home, league_leaders, leagues, media, mock_drafts, offline_draft, offline_phone, pecking_order, player_card, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, weekly_redraft,
 )
 from fantasy_sports.platform.db.models.core import League
 from fantasy_sports.platform.db.session import get_db
@@ -45,6 +45,7 @@ app.include_router(leagues.router)
 app.include_router(teams.router)
 app.include_router(draft.router)
 app.include_router(draft_broadcast.router)
+app.include_router(draft_grades.router)
 app.include_router(draft_reset.router)
 app.include_router(media.router)
 app.include_router(weekly_redraft.router)
