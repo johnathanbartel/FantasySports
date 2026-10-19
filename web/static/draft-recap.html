@@ -51,12 +51,13 @@ let grades, leagueName = '', teamId = null;
 
 function summary(t) {
   const n = grades.teams.length;
-  return `${t.team_name} earned a ${t.grade} in the ${leagueName || 'league'} draft (${ORD(t.rank)} of ${n}).`;
+  return `${t.team_name} earned ${/^[AF]/.test(t.grade) ? 'an' : 'a'} ${t.grade} in the ${leagueName || 'league'} draft (${ORD(t.rank)} of ${n}).`;
 }
 
 function render() {
   const t = grades.teams.find(x => x.team_id === teamId) || grades.teams[0];
   teamId = t.team_id;
+  setUrl();       // share links read the address bar, so it must name this team first
   const mine = grades.picks.filter(p => p.team_id === t.team_id).sort((a, b) => a.pick_number - b.pick_number);
   document.title = `${t.team_name} draft recap - ${t.grade}`;
   document.getElementById('recap').innerHTML = `
@@ -64,6 +65,11 @@ function render() {
       <select id="team-pick" aria-label="Team">${grades.teams.map(x => `<option value="${x.team_id}"${x.team_id === teamId ? ' selected' : ''}>${esc(x.team_name)} (${esc(x.grade)})</option>`).join('')}</select>
       <div class="actions">
         <button class="btn btn-primary" id="share">Share</button>
+        <a class="btn btn-secondary" id="sh-sms" target="_blank" rel="noopener">Text</a>
+        <a class="btn btn-secondary" id="sh-fb" target="_blank" rel="noopener">Facebook</a>
+        <a class="btn btn-secondary" id="sh-x" target="_blank" rel="noopener">X</a>
+        <a class="btn btn-secondary" id="sh-reddit" target="_blank" rel="noopener">Reddit</a>
+        <button class="btn btn-secondary" id="sh-ig" title="Instagram has no web share link: copies the link to paste into a story or message">Instagram</button>
         <button class="btn btn-secondary" id="copy">Copy link</button>
         <button class="btn btn-secondary" id="print">Print / PDF</button>
       </div>
@@ -93,6 +99,13 @@ function render() {
     catch (e) { prompt('Copy this link', url()); }
     setTimeout(() => { copy.textContent = 'Copy link'; }, 1800);
   };
+  const text = encodeURIComponent(summary(t)), link = encodeURIComponent(url());
+  document.getElementById('sh-sms').href = `sms:?&body=${text}%20${link}`;
+  document.getElementById('sh-fb').href = `https://www.facebook.com/sharer/sharer.php?u=${link}`;
+  document.getElementById('sh-x').href = `https://twitter.com/intent/tweet?text=${text}&url=${link}`;
+  document.getElementById('sh-reddit').href = `https://www.reddit.com/submit?url=${link}&title=${text}`;
+  const ig = document.getElementById('sh-ig');
+  ig.onclick = () => { copy.click(); ig.textContent = 'Link copied - paste in Instagram'; setTimeout(() => { ig.textContent = 'Instagram'; }, 2500); };
   const share = document.getElementById('share');
   if (!navigator.share) share.style.display = 'none';
   share.onclick = () => navigator.share({title: document.title, text: summary(t), url: url()}).catch(() => {});
