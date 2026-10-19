@@ -32,7 +32,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from fantasy_sports.api.helpers import draftable_asset_position
-from fantasy_sports.platform import commissioner, elimination, pecking_order, season, waivers
+from fantasy_sports.platform import acquisition_limits, commissioner, elimination, pecking_order, season, waivers
 from fantasy_sports.platform.league_features import is_college, roster_limit
 from fantasy_sports.platform.defense_modes import in_pool, league_modes
 from fantasy_sports.platform.ai.auction_ai import POSITION_CAP, STARTER_MIN
@@ -174,6 +174,9 @@ def add_player(
     locked, why = elimination.free_agency_locked(league, team)
     if locked:
         raise ValueError(why)
+    over = acquisition_limits.problem(db, team, now)
+    if over:
+        raise ValueError(over)
     until = waivers.waiver_until(db, league.id, now).get(asset_id)
     if until is not None:
         raise ValueError(f"He is on waivers until {until:%Y-%m-%d %H:%M} UTC - place a claim instead")

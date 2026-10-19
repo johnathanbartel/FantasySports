@@ -106,6 +106,9 @@ class LeagueCreateRequest(BaseModel):
     # How players are acquired (platform/waivers.py); the budget of a free "budget" league, in whole dollars (null = 100).
     acquisition_type: Literal["no_waivers", "waivers", "full_waivers", "budget"] = "waivers"
     acquisition_budget: int | None = Field(default=None, ge=0, le=100000)
+    # Most players a team may acquire per period (null = no limit, the default); platform/acquisition_limits.py.
+    acquisition_limit: int | None = Field(default=None, ge=1, le=1000)
+    acquisition_limit_period: Literal["day", "week", "game", "series", "season"] = "week"
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
     _waiver_days = field_validator("waiver_processing_days")(_processing_days)
@@ -145,6 +148,8 @@ class LeagueSettingsRequest(BaseModel):
     waiver_processing_days: list[int] | None = None                          # send null for "when the hold ends"
     acquisition_type: Literal["no_waivers", "waivers", "full_waivers", "budget"] | None = None
     acquisition_budget: int | None = Field(default=None, ge=0, le=100000)    # send null for the default
+    acquisition_limit: int | None = Field(default=None, ge=1, le=1000)       # send null to turn the limit off
+    acquisition_limit_period: Literal["day", "week", "game", "series", "season"] | None = None
     platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
     trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
     trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
@@ -261,6 +266,8 @@ class LeagueOut(ORMModel):
     waiver_processing_days: list[int] | None = None
     acquisition_type: str = "waivers"
     acquisition_budget: int | None = None
+    acquisition_limit: int | None = None
+    acquisition_limit_period: str = "week"
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int
