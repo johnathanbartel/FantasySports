@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pre-Draft Hub - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
+<style>
+  body { margin: 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-5); align-items: start; }
+  .wide { grid-column: 1 / -1; }
+  .panel { padding: var(--space-5); }
+  .panel h2 { margin: 0 0 var(--space-3); font-size: 20px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; flex-direction: column; align-items: center; min-width: 54px; padding: 4px 8px; border: 2px solid var(--color-divider); background: var(--color-bg); font-size: 12px; }
+  .chip b { font-size: 16px; }
+  .chip.made { opacity: .5; }
+  .radio { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-3); border: 2px solid var(--color-divider); margin-bottom: var(--space-2); cursor: pointer; }
+  .radio.on { border-color: var(--color-accent); }
+  .radio input { margin-top: 4px; }
+  .rank-cols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+  .list { max-height: 460px; overflow: auto; border: 1px solid var(--color-divider); }
+  .line { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid var(--color-divider); font-size: 13px; }
+  .line .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .line .n { width: 28px; color: var(--color-accent); font-weight: 700; }
+  .line .sub { font-size: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .tools { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); flex-wrap: wrap; }
+  .tools input, .tools select { padding: 6px 8px; border: 1px solid var(--color-divider); background: var(--color-bg); color: var(--color-text); font-size: 13px; font-family: var(--font-body); }
+  .tools input { flex: 1; min-width: 120px; }
+  .big { font-family: var(--font-heading); font-size: 26px; font-weight: 800; }
+  @media (max-width: 760px) { .rank-cols { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">FantasyMotion</a>
+      <a href="/static/dashboard.html">My leagues</a>
+      <a id="back-link" href="/static/dashboard.html">League home</a>
+    </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
+  </div>
+
+  <div style="max-width:1180px;margin:0 auto;padding:var(--space-6) var(--space-5)">
+    <div style="margin-bottom:var(--space-5)">
+      <div class="card-kicker">Pre-Draft Hub</div>
+      <h1 id="title" style="margin:2px 0 var(--space-1)">Loading...</h1>
+      <div id="specs" class="text-muted"></div>
+    </div>
+    <div id="error-banner" role="alert" style="display:none;margin-bottom:var(--space-4)"></div>
+    <div id="notice" class="note" style="display:none;margin-bottom:var(--space-4)"></div>
+
+    <div class="grid" id="hub"></div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = Number(params.get('league_id'));
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const SPORT = {ncaaf: 'College Football', nfl: 'Football (NFL)', nhl: 'Hockey (NHL)'};
+const $ = id => document.getElementById(id);
+const ordinal = n => { const s = ['th', 'st', 'nd', 'rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+
+let H = null;            // the hub payload
+let ranking = [];        // [{id, name, position, team, points}] in the caller's order
+let pool = {total: 0, players: []};
+const poolView = {q: '', position: '', loaded: false};
+let saveTimer = null, saveState = 'saved';
+
+function showError(msg) { const el = $('error-banner'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+function showNotice(msg) { const el = $('notice'); el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+const localTime = iso => new Date(iso + 'Z');
+const fmtWhen = iso => localTime(iso).toLocaleString([], {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});
+
+function countdown(iso) {
+  const ms = localTime(iso) - Date.now();
+  if (ms <= 0) return 'Starting now';
+  const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5), m = Math.floor(ms % 36e5 / 6e4);
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m ${Math.floor(ms % 6e4 / 1e3)}s`;
+}
+
+// ---- sections ---------------------------------------------------------------------------------------------
+function whenCard() {
+  const live = H.draft_state === 'in_progress', done = H.draft_state === 'complete';
+  const when = H.draft_scheduled_at
+    ? `<div class="big">${esc(fmtWhen(H.draft_scheduled_at))}</div><div class="text-muted" id="cd" style="margin-top:4px">${live || done ? '' : 'Starts in ' + countdown(H.draft_scheduled_at)}</div>`
+    : `<div class="big">Date and time not set</div><div class="text-muted">The commissioner hasn't scheduled the draft yet.</div>`;
+  const enter = done ? `<span class="tag tag-neutral">The draft is complete</span>`
+    : `<a class="btn btn-primary" href="${esc(H.room_url)}" style="font-size:15px;padding:10px 22px;font-weight:700">${live ? 'Enter the live draft room' : 'Enter draft room'} &rarr;</a>`;
+  return `<div class="card elev-sm panel wide">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);flex-wrap:wrap">
+      <div><div class="card-kicker">${live ? 'Draft is live' : done ? 'Draft' : 'Draft day'}</div>${when}</div>
+      <div>${enter}</div></div></div>`;
+}
+
+function picksCard() {
+  const p = H.picks;
+  if (!H.is_member) return `<div class="card elev-sm panel"><h2>Your picks</h2><p class="text-muted" style="margin:0">Sign in as a manager of this league to see your picks.</p></div>`;
+  const chips = p.picks.map(k => `<span class="chip${k.made ? ' made' : ''}" title="Round ${k.round}${k.made ? ' - made' : ''}">
+      <b>${k.pick_number ?? '?'}</b><span>Rd ${k.round}</span></span>`).join('');
+  return `<div class="card elev-sm panel"><h2>Your picks</h2>
+    <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">${esc(p.team_name)} &middot; ${p.picks.length} picks of ${p.total_picks} &middot; ${esc(p.order_note)}</p>
+    <div class="chips">${chips}</div>
+    ${H.draft_order_mode === 'manual' ? `<div style="margin-top:var(--space-3);font-size:12px" class="text-muted">Draft order: ${H.teams.map(t => `${t.draft_position}. ${esc(t.name)}`).join(' &middot; ')}</div>` : ''}
+  </div>`;
+}
+
+function autoCard() {
+  const a = H.auto_draft;
+  if (!a) return '';
+  const row = (v, title, text) => `<label class="radio${a.mode === v ? ' on' : ''}"><input type="radio" name="auto" value="${v}" ${a.mode === v ? 'checked' : ''}>
+    <span><strong>${title}</strong><br><span class="text-muted" style="font-size:13px">${text}</span></span></label>`;
+  return `<div class="card elev-sm panel"><h2>Auto draft</h2>
+    <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">Used whenever a pick is made for you, like when your pick clock runs out.</p>
+    ${row('fantasymotion', 'FantasyMotion suggestions', 'We pick the best player for your lineup: value over replacement, needs first.')}
+    ${row('my_rankings', 'My rankings', `The first player left in your own ranking (${a.ranked_count} ranked). If your list runs out, FantasyMotion fills in.`)}
+    <div class="text-muted" style="font-size:12px;margin-top:var(--space-2)" id="auto-msg"></div></div>`;
+}
+
+function mockCard() {
+  const m = H.mock_draft;
+  const specs = `${m.size} teams &middot; ${m.rounds} rounds &middot; ${m.universe_codes.map(c => SPORT[c] || c).join(' + ')} &middot; snake${m.your_position ? ` &middot; you pick ${ordinal(m.your_position)}` : ''}`;
+  return `<div class="card elev-sm panel"><h2>Mock draft</h2>
+    <p style="margin:0 0 var(--space-2);font-size:14px">A practice draft built exactly like yours: ${specs}. You draft against AI teams, and your rankings and auto draft choice come along.</p>
+    ${m.available ? `<div class="tools"><label style="font-size:13px;align-self:center">Pick clock
+        <select id="mock-secs"><option value="30">30s</option><option value="60" selected>60s</option><option value="90">90s</option><option value="120">120s</option></select></label>
+      <button class="btn btn-primary" id="mock-go">Start mock draft</button></div>`
+      : `<p class="text-muted" style="margin:0;font-size:13px">${esc(m.reason || 'Not available.')}</p>`}
+  </div>`;
+}
+
+function tradeCard() {
+  const t = H.trading;
+  const body = !t.available ? `<p class="text-muted" style="margin:0;font-size:13px">${esc(t.reason)}</p>`
+    : `${t.picks.length ? `<div class="list" style="max-height:220px">${t.picks.map(k => `<div class="line"><span class="nm"><strong>Round ${k.round}</strong>
+          <span class="sub">season ${k.season} draft &middot; ${esc(k.original_team_name)}${k.projected_overall ? ` &middot; would be about #${k.projected_overall}` : ''}</span></span></div>`).join('')}</div>`
+      : `<p class="text-muted" style="margin:0;font-size:13px">You have no tradeable picks right now.</p>`}
+      <div style="margin-top:var(--space-3)"><a class="btn btn-secondary" href="${esc(t.trades_url)}">Trade picks</a></div>`;
+  return `<div class="card elev-sm panel"><h2>Trade draft picks</h2>${body}</div>`;
+}
+
+function rumorsCard() {
+  return `<div class="card elev-sm panel"><h2>Rumors <span class="tag tag-neutral" style="vertical-align:middle">Coming soon</span></h2>
+    <p class="text-muted" style="margin:0;font-size:13px">${esc(H.rumors.message)}</p></div>`;
+}
+
+function rankingCard() {
+  if (!H.is_member) return '';
+  return `<div class="card elev-sm panel wide"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);flex-wrap:wrap">
+      <h2>Rank players</h2><span class="text-muted" id="save-state" style="font-size:12px"></span></div>
+    <p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">Add players in the order you want them. Your ranking is private. It only changes your picks when Auto draft is set to "My rankings".</p>
+    <div class="rank-cols">
+      <div><div class="tools"><input id="q" type="search" placeholder="Search players" value="${esc(poolView.q)}">
+          <select id="pos"><option value="">All positions</option></select></div>
+        <div class="list" id="pool"></div>
+        <div class="tools" style="margin-top:var(--space-2)"><button class="btn btn-ghost" id="more" style="display:none">Show more</button></div></div>
+      <div><div class="tools" style="justify-content:space-between"><strong>My ranking (<span id="rank-n">0</span>)</strong>
+          <span><button class="btn btn-ghost" id="top25" title="Add the best 25 players you haven't ranked, by last season's points">+ Top 25</button>
+          <button class="btn btn-ghost" id="clear">Clear</button></span></div>
+        <div class="list" id="mine"></div></div>
+    </div></div>`;
+}
+
+// ---- ranking -----------------------------------------------------------------------------------------------
+function renderRanking() {
+  if (!$('mine')) return;
+  const inRank = new Set(ranking.map(r => r.id));
+  $('rank-n').textContent = ranking.length;
+  $('mine').innerHTML = ranking.length ? ranking.map((r, i) => `<div class="line"><span class="n">${i + 1}</span>
+      <span class="nm"><strong>${esc(r.name)}</strong> <span class="sub">${esc(r.position || '')}${r.team ? ' &middot; ' + esc(r.team) : ''}</span></span>
+      <button class="btn btn-ghost" data-up="${i}" ${i === 0 ? 'disabled' : ''} title="Move up">&#9650;</button>
+      <button class="btn btn-ghost" data-down="${i}" ${i === ranking.length - 1 ? 'disabled' : ''} title="Move down">&#9660;</button>
+      <button class="btn btn-ghost" data-rm="${i}" title="Remove">&#10005;</button></div>`).join('')
+    : `<div class="line text-muted">Nobody ranked yet. Add players from the list.</div>`;
+  $('pool').innerHTML = pool.players.length ? pool.players.map(p => `<div class="line"><span class="nm"><strong>${esc(p.display_name)}</strong>
+      <span class="sub">${esc(p.position || '')}${p.team ? ' &middot; ' + esc(p.team) : ''}${p.points != null ? ' &middot; ' + p.points + ' pts' : ''}</span></span>
+      ${inRank.has(p.draftable_asset_id) ? '<span class="tag tag-neutral">Ranked</span>' : `<button class="btn btn-secondary" data-add="${p.draftable_asset_id}">Add</button>`}</div>`).join('')
+    : `<div class="line text-muted">No players match.</div>`;
+  $('more').style.display = pool.players.length < pool.total ? '' : 'none';
+  $('save-state').textContent = {saved: 'All changes saved', saving: 'Saving...', error: 'Could not save - try again'}[saveState];
+  if (H.auto_draft) {
+    H.auto_draft.ranked_count = ranking.length;
+    const radio = document.querySelector('input[name=auto][value=my_rankings]');
+    if (radio) radio.closest('.radio').querySelector('.text-muted').innerHTML = `The first player left in your own ranking (${ranking.length} ranked). If your list runs out, FantasyMotion fills in.`;
+  }
+  $('mine').querySelectorAll('[data-up]').forEach(b => b.onclick = () => move(Number(b.dataset.up), -1));
+  $('mine').querySelectorAll('[data-down]').forEach(b => b.onclick = () => move(Number(b.dataset.down), 1));
+  $('mine').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { ranking.splice(Number(b.dataset.rm), 1); changed(); });
+  $('pool').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+    const p = pool.players.find(x => x.draftable_asset_id === Number(b.dataset.add));
+    if (p) { ranking.push(toRank(p)); changed(); }
+  });
+}
+const toRank = p => ({id: p.draftable_asset_id, name: p.display_name, position: p.position, team: p.team, points: p.points});
+function move(i, d) { const j = i + d; if (j < 0 || j >= ranking.length) return; [ranking[i], ranking[j]] = [ranking[j], ranking[i]]; changed(); }
+function changed() { renderRanking(); saveState = 'saving'; $('save-state').textContent = 'Saving...'; clearTimeout(saveTimer); saveTimer = setTimeout(saveRanking, 500); }
+async function saveRanking() {
+  try {
+    await FSC.put(`/teams/${H.picks.team_id}/draft-rankings`, {draftable_asset_ids: ranking.map(r => r.id)});
+    saveState = 'saved';
+  } catch (e) { saveState = 'error'; showError(e.message); }
+  renderRanking();
+}
+
+async function loadPool(append) {
+  const qs = new URLSearchParams({limit: 100, offset: append ? pool.players.length : 0});
+  if (poolView.q) qs.set('q', poolView.q);
+  if (poolView.position) qs.set('position', poolView.position);
+  const r = await FSC.api(`/leagues/${LEAGUE_ID}/predraft-hub/players?${qs}`);
+  pool = append ? {total: r.total, players: pool.players.concat(r.players)} : r;
+  renderRanking();
+}
+
+async function loadRanking() {
+  const ids = (await FSC.api(`/teams/${H.picks.team_id}/draft-rankings`)).draftable_asset_ids;
+  if (!ids.length) { ranking = []; return; }
+  // Names for the saved ranking: the pool pages hold them, so page through until all are found.
+  const found = {};
+  for (let off = 0; Object.keys(found).length < ids.length && off < 5000; off += 500) {
+    const r = await FSC.api(`/leagues/${LEAGUE_ID}/predraft-hub/players?limit=500&offset=${off}`);
+    r.players.forEach(p => { if (p.rank) found[p.draftable_asset_id] = toRank(p); });
+    if (off + 500 >= r.total) break;
+  }
+  ranking = ids.map(id => found[id]).filter(Boolean);
+}
+
+// ---- wiring ------------------------------------------------------------------------------------------------
+function bind() {
+  document.querySelectorAll('input[name=auto]').forEach(r => r.onchange = async () => {
+    try {
+      const out = await FSC.put(`/teams/${H.picks.team_id}/autodraft`, {mode: r.value});
+      H.auto_draft = out; $('auto-msg').textContent = out.mode === 'my_rankings' ? 'Saved. Picks made for you follow your ranking.' : 'Saved. Picks made for you follow FantasyMotion.';
+      document.querySelectorAll('.radio').forEach(x => x.classList.toggle('on', x.querySelector('input').checked));
+    } catch (e) { showError(e.message); }
+  });
+  const go = $('mock-go');
+  if (go) go.onclick = async () => {
+    go.disabled = true; go.textContent = 'Building your mock draft...';
+    try {
+      const m = await FSC.post(`/leagues/${LEAGUE_ID}/predraft-hub/mock-draft`, {pick_seconds: Number($('mock-secs').value)});
+      location.href = m.room_url;
+    } catch (e) { showError(e.message); go.disabled = false; go.textContent = 'Start mock draft'; }
+  };
+  if (!$('q')) return;
+  let t;
+  $('q').oninput = () => { clearTimeout(t); t = setTimeout(() => { poolView.q = $('q').value; loadPool(false); }, 250); };
+  $('pos').onchange = () => { poolView.position = $('pos').value; loadPool(false); };
+  $('more').onclick = () => loadPool(true);
+  $('clear').onclick = () => { if (ranking.length && confirm('Clear your whole ranking?')) { ranking = []; changed(); } };
+  $('top25').onclick = async () => {
+    const have = new Set(ranking.map(r => r.id));
+    const r = await FSC.api(`/leagues/${LEAGUE_ID}/predraft-hub/players?limit=60`);
+    r.players.filter(p => !have.has(p.draftable_asset_id)).slice(0, 25).forEach(p => ranking.push(toRank(p)));
+    changed();
+  };
+}
+
+function render() {
+  document.title = `Pre-Draft Hub - ${H.league_name}`;
+  $('title').textContent = H.league_name;
+  $('specs').textContent = `${H.size} teams · ${H.rounds} rounds · ${H.universe_codes.map(c => SPORT[c] || c).join(' + ')} · snake draft`;
+  $('hub').innerHTML = whenCard() + picksCard() + autoCard() + rankingCard() + tradeCard() + mockCard() + rumorsCard();
+  bind();
+  if ($('pos')) {
+    const positions = [...new Set(pool.players.map(p => p.position).filter(Boolean))].sort();
+    $('pos').innerHTML = '<option value="">All positions</option>' + positions.map(p => `<option ${p === poolView.position ? 'selected' : ''}>${esc(p)}</option>`).join('');
+  }
+  renderRanking();
+}
+
+async function start() {
+  if (!LEAGUE_ID) { showError('No league given.'); return; }
+  $('back-link').href = `/static/league.html?league_id=${LEAGUE_ID}`;
+  H = await FSC.api(`/leagues/${LEAGUE_ID}/predraft-hub`);
+  if (H.is_member) {
+    await loadPool(false);
+    await loadRanking();
+  }
+  render();
+  if (H.draft_state === 'in_progress') showNotice('The draft is live. Head to the draft room to pick.');
+  setInterval(() => { const el = $('cd'); if (el && H.draft_scheduled_at && H.draft_state === 'not_started') el.textContent = 'Starts in ' + countdown(H.draft_scheduled_at); }, 1000);
+}
+FSC.renderNav();
+start().catch(e => { showError(e.message); $('title').textContent = 'Pre-Draft Hub'; });
+</script>
+</body>
+</html>

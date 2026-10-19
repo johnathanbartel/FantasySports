@@ -1746,3 +1746,29 @@ class EmailOutbox(Base):
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime)
     sent_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TeamDraftPrefs(Base):
+    """How a team's picks are made for it when it doesn't pick itself (platform/predraft_hub.py): 'fantasymotion' = the
+    platform's own suggestion (platform/ai/snake_ai.py), 'my_rankings' = the first player still available in the team's
+    own ranking (team_draft_rankings). A team with no row uses 'fantasymotion'."""
+
+    __tablename__ = "team_draft_prefs"
+    __table_args__ = (CheckConstraint("autodraft_mode IN ('fantasymotion', 'my_rankings')", name="ck_team_draft_prefs_mode"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), unique=True)
+    autodraft_mode: Mapped[str] = mapped_column(String(14), default="fantasymotion", server_default="fantasymotion")
+    updated_at: Mapped[datetime.datetime] = mapped_column(DateTime)
+
+
+class TeamDraftRanking(Base):
+    """One player in a team's own draft ranking; rank 1 is the first the team wants. Private to the team's manager."""
+
+    __tablename__ = "team_draft_rankings"
+    __table_args__ = (UniqueConstraint("team_id", "draftable_asset_id"), UniqueConstraint("team_id", "rank"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), index=True)
+    draftable_asset_id: Mapped[int] = mapped_column(ForeignKey("draftable_assets.id"))
+    rank: Mapped[int] = mapped_column(Integer)
