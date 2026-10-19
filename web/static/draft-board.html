@@ -70,6 +70,7 @@
       <button class="btn btn-secondary" id="view-grid" role="tab" aria-selected="false">Draft board</button>
       <button class="btn btn-secondary" id="view-room" role="tab" aria-selected="false">Draft room</button>
       <button class="btn btn-secondary" id="view-grades" role="tab" aria-selected="false" style="display:none">Draft grades</button>
+      <a class="btn btn-secondary" id="share-recap" style="display:none;text-decoration:none">Share recap</a>
     </div>
 
     <div id="setup-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)"></div>
@@ -1087,6 +1088,10 @@ async function loadGrades() {
     return;
   }
   document.getElementById('view-grades').style.display = '';
+  const mineTeam = Object.values(teamsById).find(isMyTeam);       // the recap opens on the viewer's team, else the top-graded one
+  const recap = document.getElementById('share-recap');
+  recap.href = `/static/draft-recap.html?league_id=${LEAGUE_ID}&team_id=${mineTeam ? mineTeam.id : g.teams[0].team_id}`;
+  recap.style.display = '';
   const pk = Object.fromEntries(g.picks.map(p => [p.pick_number, p]));
   const pickList = (nums) => nums.map(n => pk[n] ? `#${n} ${esc(pk[n].name)} (${pk[n].value > 0 ? '+' : ''}${pk[n].value})` : '').filter(Boolean).join(', ') || '-';
   box.innerHTML = `<p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">Half <strong>haul</strong>: the projected points of the best lineup (1 C, 2 W, 2 D, 1 G) each team drafted. Half <strong>value</strong>: how many projected points each pick returned above what that pick number normally returns. Projections come from each player's last three seasons, adjusted for age and games played, so a grade is relative to this league and is not a result.</p>
