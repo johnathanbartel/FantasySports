@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="hockey">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draft Recap - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<style>
+body{margin:0;background:var(--color-bg);color:var(--color-text)}
+.recap{max-width:720px;margin:0 auto;padding:var(--space-4) 16px var(--space-6)}
+.toolbar{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;justify-content:space-between;margin-bottom:var(--space-4)}
+.toolbar select{font:inherit;padding:6px 8px;max-width:100%}
+.toolbar .actions{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.hero{text-align:center;padding:var(--space-5) var(--space-4);background:var(--color-surface);border:1px solid var(--color-divider);border-radius:var(--radius-md)}
+.hero .league{font-size:13px;letter-spacing:.06em;text-transform:uppercase;opacity:.75}
+.hero .team{font-size:24px;font-weight:700;margin:var(--space-1) 0 var(--space-3)}
+.grade{font-size:112px;line-height:1;font-weight:800;color:var(--color-accent);margin:0}
+.hero .sub{font-size:14px;margin-top:var(--space-2)}
+.stats{display:flex;justify-content:center;flex-wrap:wrap;gap:var(--space-5);margin-top:var(--space-4)}
+.stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;opacity:.75}
+h2{font-size:16px;margin:var(--space-5) 0 var(--space-2)}
+.picks{list-style:none;margin:0;padding:0;border:1px solid var(--color-divider);border-radius:var(--radius-md);background:var(--color-surface);overflow:hidden}
+.picks li{display:grid;grid-template-columns:52px 1fr auto;gap:var(--space-2);align-items:center;padding:8px 12px;border-top:1px solid color-mix(in srgb,var(--color-divider) 40%,transparent)}
+.picks li:first-child{border-top:0}
+.picks .no{font-variant-numeric:tabular-nums;font-weight:700}
+.picks .no small{display:block;font-weight:400;font-size:11px;opacity:.7}
+.picks .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.picks .meta{font-size:12px;opacity:.75}
+.picks .val{font-variant-numeric:tabular-nums;font-weight:700;text-align:right}
+.picks .val.up{color:#1a7f37}.picks .val.down{color:#b3261e}
+.picks .val small{display:block;font-weight:400;font-size:11px;opacity:.7;color:var(--color-text)}
+.note{font-size:12px;opacity:.75;margin-top:var(--space-4)}
+.msg{text-align:center;padding:var(--space-6) 0}
+@media (max-width:480px){.grade{font-size:88px}.hero .team{font-size:20px}}
+@media print{.toolbar{display:none}.hero,.picks{break-inside:avoid}body{background:#fff}}
+</style>
+</head>
+<body>
+<main class="recap" id="recap"><p class="msg text-muted">Loading draft recap...</p></main>
+<script>
+const params = new URLSearchParams(location.search);
+const LEAGUE_ID = params.get('league_id') || 1;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const signed = n => (n > 0 ? '+' : '') + n;
+// Public reads only, so a link opens for anyone without signing in.
+const get = async path => { const r = await fetch(path); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); };
+const ORD = n => { const s = ['th','st','nd','rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
+
+let grades, leagueName = '', teamId = null;
+
+function summary(t) {
+  const n = grades.teams.length;
+  return `${t.team_name} earned a ${t.grade} in the ${leagueName || 'league'} draft (${ORD(t.rank)} of ${n}).`;
+}
+
+function render() {
+  const t = grades.teams.find(x => x.team_id === teamId) || grades.teams[0];
+  teamId = t.team_id;
+  const mine = grades.picks.filter(p => p.team_id === t.team_id).sort((a, b) => a.pick_number - b.pick_number);
+  document.title = `${t.team_name} draft recap - ${t.grade}`;
+  document.getElementById('recap').innerHTML = `
+    <div class="toolbar">
+      <select id="team-pick" aria-label="Team">${grades.teams.map(x => `<option value="${x.team_id}"${x.team_id === teamId ? ' selected' : ''}>${esc(x.team_name)} (${esc(x.grade)})</option>`).join('')}</select>
+      <div class="actions">
+        <button class="btn btn-primary" id="share">Share</button>
+        <button class="btn btn-secondary" id="copy">Copy link</button>
+        <button class="btn btn-secondary" id="print">Print / PDF</button>
+      </div>
+    </div>
+    <section class="hero" aria-label="Draft grade">
+      <div class="league">${esc(leagueName)} · Draft recap</div>
+      <div class="team">${esc(t.team_name)}</div>
+      <p class="grade" aria-label="Grade ${esc(t.grade)}">${esc(t.grade)}</p>
+      <div class="sub">${ORD(t.rank)} of ${grades.teams.length} teams</div>
+      <div class="stats">
+        <div class="stat"><b>${t.haul_points}</b><span>Haul (proj. pts of best lineup)</span></div>
+        <div class="stat"><b>${signed(t.value_points)}</b><span>Value vs. the board</span></div>
+        <div class="stat"><b>${t.picks}</b><span>Picks</span></div>
+      </div>
+    </section>
+    <h2>Draft picks</h2>
+    <ol class="picks">${mine.map(p => `<li>
+      <div class="no">#${p.pick_number}<small>Round ${p.round}</small></div>
+      <div><div class="nm">${esc(p.name)}</div><div class="meta">${esc(p.position || '')} · ${p.projected_points} proj pts</div></div>
+      <div class="val ${p.value > 0 ? 'up' : p.value < 0 ? 'down' : ''}">${signed(p.value)}<small>vs pick</small></div></li>`).join('')}</ol>
+    <p class="note">Grade = half the projected points of the best lineup drafted, half the projected points each pick returned above what that pick number normally returns. Projections use each player's last three seasons, adjusted for age and games played. It is relative to this league and is not a result.</p>`;
+  document.getElementById('team-pick').onchange = e => { teamId = Number(e.target.value); setUrl(); render(); };
+  const url = () => location.href;
+  const copy = document.getElementById('copy');
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(url()); copy.textContent = 'Copied!'; }
+    catch (e) { prompt('Copy this link', url()); }
+    setTimeout(() => { copy.textContent = 'Copy link'; }, 1800);
+  };
+  const share = document.getElementById('share');
+  if (!navigator.share) share.style.display = 'none';
+  share.onclick = () => navigator.share({title: document.title, text: summary(t), url: url()}).catch(() => {});
+  document.getElementById('print').onclick = () => window.print();
+}
+
+function setUrl() {
+  const u = new URL(location.href);
+  u.searchParams.set('league_id', LEAGUE_ID);
+  u.searchParams.set('team_id', teamId);
+  history.replaceState(null, '', u);
+}
+
+(async () => {
+  const box = document.getElementById('recap');
+  try {
+    grades = await get(`/leagues/${LEAGUE_ID}/draft-grades`);
+    if (!grades.available) { box.innerHTML = `<p class="msg text-muted">${esc(grades.reason || 'No draft recap yet.')}</p>`; return; }
+    try { leagueName = (await get(`/leagues/${LEAGUE_ID}`)).name || ''; } catch (e) { /* the recap works without the league name */ }
+    teamId = Number(params.get('team_id')) || null;
+    render();
+    setUrl();
+  } catch (e) {
+    box.innerHTML = `<p class="msg text-muted">Draft recap unavailable: ${esc(e.message)}</p>`;
+  }
+})();
+</script>
+</body>
+</html>
