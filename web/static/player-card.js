@@ -1,6 +1,6 @@
 // Shared player card: click any element carrying data-pc="<draftable_asset_id>" (see PlayerCard.link) and a card opens with
 // bio, news and injury status, fantasy game log, schedule, simulation stats, league transactions, how he was acquired,
-// % owned across leagues, the trade-block flag, and add / claim / drop / trade buttons.
+// % owned across leagues, the trade-block flag, add / claim / drop / trade buttons, and a Watch star (the team's watchlist).
 // All data comes from GET /leagues/{id}/players/{asset}/card; the buttons call the same endpoints as the Transactions tab.
 // Pages set PlayerCard.configure({leagueId, onChange, onTrade}) once; onChange runs after a successful add/claim/drop so the
 // page can refresh itself, onTrade({teamId, assetId}) starts a proposal (without it the card links to the league's Trades tab).
@@ -80,8 +80,12 @@ const PlayerCard = (() => {
     if (a.can_cancel_claim) b.push(['cancel', 'Cancel claim', 'btn-secondary']);
     if (a.can_drop) b.push(['drop', 'Drop', 'btn-secondary']);
     if (a.can_trade) b.push(['trade', 'Trade', 'btn-primary']);
-    return b.map(([k, label, cls]) => `<button type="button" class="btn ${cls}" data-pc-act="${k}" ${busy ? 'disabled' : ''}>${label}</button>`).join('')
+    const main = b.map(([k, label, cls]) => `<button type="button" class="btn ${cls}" data-pc-act="${k}" ${busy ? 'disabled' : ''}>${label}</button>`).join('')
       + (!b.length && a.note ? `<span class="muted" style="font-size:12px">${esc(a.note)}</span>` : '');
+    // Watch sits apart from the roster moves: it only keeps the player on the team's watchlist (Transactions tab).
+    const watch = a.can_watch || a.watching
+      ? `<button type="button" class="btn btn-ghost" data-pc-act="${a.watching ? 'unwatch' : 'watch'}" ${busy ? 'disabled' : ''} title="${a.watching ? 'Remove from your watchlist' : 'Add to your watchlist, on the Transactions tab'}">${a.watching ? '&#9733; Watching' : '&#9734; Watch'}</button>` : '';
+    return main + watch;
   }
 
   function overviewTab(d) {
@@ -175,12 +179,14 @@ const PlayerCard = (() => {
       return;
     }
     if (kind === 'drop' && !confirm(`Drop ${d.bio.display_name}? He goes on waivers for 24 hours, then to the free-agent pool.`)) return;
-    const route = {add: [`/teams/${team}/free-agency/add`, 'Signed.'], drop: [`/teams/${team}/free-agency/drop`, 'Dropped. He is on waivers for 24 hours.'],
-                   claim: [`/teams/${team}/waivers/claim`, 'Claim placed. It is filled when his waiver period ends.'], cancel: [`/teams/${team}/waivers/cancel`, 'Claim cancelled.']}[kind];
+    const route = {watch: [`/teams/${team}/watchlist`, 'Added to your watchlist. Find it on the Transactions tab.'], add: [`/teams/${team}/free-agency/add`, 'Signed.'], drop: [`/teams/${team}/free-agency/drop`, 'Dropped. He is on waivers for 24 hours.'],
+                   claim: [`/teams/${team}/waivers/claim`, 'Claim placed. It is filled when his waiver period ends.'], cancel: [`/teams/${team}/waivers/cancel`, 'Claim cancelled.'],
+                   unwatch: [null, 'Removed from your watchlist.']}[kind];
     busy = true;
     el.querySelectorAll('[data-pc-act]').forEach(b => b.disabled = true);
     try {
-      await FSC.post(route[0], {draftable_asset_id: id});
+      if (kind === 'unwatch') await FSC.del(`/teams/${team}/watchlist/${id}`);
+      else await FSC.post(route[0], {draftable_asset_id: id});
       busy = false;
       if (cfg.onChange) { try { await cfg.onChange(kind, id); } catch (e) {} }
       const fresh = await FSC.api(`/leagues/${d.league_id}/players/${id}/card`);
