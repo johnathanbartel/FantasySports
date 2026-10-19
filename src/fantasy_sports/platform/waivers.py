@@ -13,6 +13,8 @@ Waivers: a dropped player is on waivers for 24 hours, and teams claim him in wai
     the standings through the latest week whose games are ALL final. Ties go to the team that is lower in the
     standings, then to the team drafted later. If no week is fully complete yet the order is the reverse of the first
     round of the draft (the team that picked last claims first).
+  * With the league's post_draft_waivers setting on (default off), the same 24 hours apply to every undrafted player
+    once the draft ends: nobody can sign them outright, teams claim them in waiver order, and unclaimed players clear.
   * Winning a claim sends that team to the back of the order until the next reset.
   * A commissioner can set the order by hand (platform/commissioner.py); it holds until the next reset, and a team that wins
     a claim after it was set still drops to the back.
@@ -36,6 +38,7 @@ from fantasy_sports.platform.db.models.core import (
     FreeAgencyTransaction,
     League,
     LeagueSeries,
+    RecruitingDraft,
     RosterEntry,
     SeriesDailyGame,
     Team,
@@ -82,19 +85,53 @@ def next_reset(now: datetime.datetime) -> datetime.datetime:
 # ---- who is on waivers --------------------------------------------------------------------------------------------
 def waiver_until(db: Session, league_id: int, now: datetime.datetime) -> dict[int, datetime.datetime]:
     """asset id -> the moment his waiver period ends, for every player dropped in the last 24 hours and not signed since."""
+    post_draft = _post_draft_until(db, league_id, now)
     drops = db.query(FreeAgencyTransaction).filter(
         FreeAgencyTransaction.league_id == league_id, FreeAgencyTransaction.kind == "drop",
         FreeAgencyTransaction.reason != commissioner.EDIT,         # a commissioner's correction skips waivers
         FreeAgencyTransaction.created_at > now - datetime.timedelta(hours=WAIVER_HOURS),
     ).order_by(FreeAgencyTransaction.id).all()
     latest = {t.draftable_asset_id: t for t in drops}
-    if not latest:
+    if not latest and not post_draft:
         return {}
     team_ids = [t.id for t in db.query(Team.id).filter_by(league_id=league_id)]
     rostered = {r.draftable_asset_id for r in db.query(RosterEntry).filter(
         RosterEntry.team_id.in_(team_ids or [0]), RosterEntry.draftable_asset_id.in_(list(latest)))}
     until = {a: t.created_at + datetime.timedelta(hours=WAIVER_HOURS) for a, t in latest.items() if a not in rostered}
-    return {a: u for a, u in until.items() if u > now}
+    out = {a: u for a, u in until.items() if u > now}
+    if post_draft is not None:          # a later drop has its own window; everyone else undrafted clears with the draft's
+        end, undrafted = post_draft
+        for a in undrafted:
+            if a not in latest:
+                out[a] = end
+    return out
+
+
+def _draft_ended_at(db: Session, league_id: int) -> datetime.datetime | None:
+    """When the league's most recent draft finished (snake/auction, or the recruiting draft closing)."""
+    ends = [d.completed_at for d in db.query(Draft).filter_by(league_id=league_id, status="complete") if d.completed_at]
+    rec = db.query(RecruitingDraft).filter_by(league_id=league_id, status="closed").first()
+    if rec is not None and rec.ended_at is not None:
+        ends.append(rec.ended_at)
+    return max(ends) if ends else None
+
+
+def _post_draft_until(db: Session, league_id: int, now: datetime.datetime) -> tuple[datetime.datetime, list[int]] | None:
+    """(end of the window, undrafted asset ids) while the league's post-draft waivers run, else None. With the league's
+    post_draft_waivers setting on, every player nobody drafted is on waivers for 24 hours after the draft ends."""
+    from fantasy_sports.platform import free_agency
+
+    league = db.get(League, league_id)
+    if league is None or not league.post_draft_waivers:
+        return None
+    ended = _draft_ended_at(db, league_id)
+    if ended is None:
+        return None
+    end = ended + datetime.timedelta(hours=WAIVER_HOURS)
+    if end <= now:
+        return None
+    rostered = free_agency.rostered_ids(db, league_id)
+    return end, [a for a in free_agency.pool_ids(db, league_id) if a not in rostered]
 
 
 def dropped_by(db: Session, league_id: int, asset_ids: list[int]) -> dict[int, int]:

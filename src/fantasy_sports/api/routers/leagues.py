@@ -155,6 +155,7 @@ def create_league(
         commissioner_trade_vote_extra_votes=payload.commissioner_trade_vote_extra_votes,
         draft_reset_policy=payload.draft_reset_policy,
         draft_order_mode=payload.draft_order_mode,
+        post_draft_waivers=payload.post_draft_waivers,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -623,6 +624,8 @@ def update_league_settings(
         league.commissioner_trade_vote_extra_votes = payload.commissioner_trade_vote_extra_votes
     if payload.draft_reset_policy is not None:
         league.draft_reset_policy = payload.draft_reset_policy
+    if payload.post_draft_waivers is not None:
+        league.post_draft_waivers = payload.post_draft_waivers
     if league.league_type == "PAID" and not league.annual_dues_cents:
         raise HTTPException(400, "A paid league needs an annual dues amount")
     if payload.platform_plan is not None and payload.platform_plan != league.platform_plan:

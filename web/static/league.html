@@ -2581,6 +2581,11 @@ async function renderLeagueSettings() {
     : `<p>After a draft is complete, a reset needs: <b>${({unanimous: 'every manager to approve', commissioner: 'the commissioner', off: 'nothing - it is not allowed'})[dr.policy]}</b>.</p>`)
     + drOpen + (dr.drafts.length ? dr.drafts.map(drState).join('') : `<p class="muted">No draft has been started in this league.</p>`) + drHist
     + `<p class="muted">While a draft is running the commissioner can reset it alone, to the start or to a chosen point. A completed draft can only be reset until games are scored or players are traded or signed. Pick order and who owns each pick never change.</p></div>`;
+  html += `<div class="card"><h3>Post-Draft Waivers</h3>` + (isCommissioner
+    ? `<p><label><input type="checkbox" id="pdw-on"${lg.post_draft_waivers ? ' checked' : ''}> Put every undrafted player on waivers for 24 hours after the draft ends</label>
+         <button type="button" class="btn btn-primary" id="pdw-save">Save</button></p>`
+    : `<p>Post-draft waivers on undrafted players: <b>${lg.post_draft_waivers ? 'on' : 'off'}</b>.</p>`)
+    + `<p class="muted">When on, teams claim undrafted players in waiver order instead of signing them the moment the draft ends. Claims not made clear to free agency after 24 hours. Applies to the draft that ends next, or one that ended in the last 24 hours.</p></div>`;
   const pending = (await api(`/leagues/${LEAGUE_ID}/setting-changes`)).filter(c => c.status === 'voting');
   const SETTING_NAMES = {league_type: 'League type', league_format: 'League format'};
   const valueName = (f, v) => f === 'league_format' ? fmtName(v) : (v === 'PAID' ? 'Paid' : 'Free');
@@ -2673,6 +2678,7 @@ async function renderLeagueSettings() {
     on('do-save', () => call(() => api(`/leagues/${LEAGUE_ID}/draft-order`, jsonOpts('PUT', {
       mode: $('do-mode').value, team_order: $('do-mode').value === 'manual' ? doOrder : null})), 'Draft order saved.'));
   }
+  on('pdw-save',() => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {post_draft_waivers: $('pdw-on').checked})), 'Post-draft waivers setting saved.'));
   on('dr-policy-save',() => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {draft_reset_policy: $('dr-policy').value})), 'Draft reset rule saved.'));
   document.querySelectorAll('.dr-reset').forEach(b => b.onclick = () => {
     const keep = parseInt(b.parentElement.querySelector('.dr-keep').value, 10) || 0;
