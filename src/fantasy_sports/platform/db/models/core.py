@@ -216,6 +216,10 @@ class League(Base):
     unfilled_slot_policy: Mapped[str] = mapped_column(String(7), default="fill_ai", server_default="fill_ai")
     # Custom URL (/l/<slug>, stored lowercase, unique) and logo. The image bytes live on the row but are deferred so
     # ordinary league reads never pull them; logo_updated_at doubles as "has a logo" and the cache-busting version.
+    # Mock drafts (platform/mock_drafts.py): a league that exists only to run one practice draft. It is hidden from the league
+    # lists, has no season, and starts itself when draft_scheduled_at passes. mock_pick_seconds is the pick clock it starts with.
+    is_mock_draft: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    mock_pick_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     slug: Mapped[str | None] = mapped_column(String(40), nullable=True, unique=True)
     logo_data: Mapped[bytes | None] = deferred(mapped_column(LargeBinary, nullable=True))
     logo_content_type: Mapped[str | None] = mapped_column(String(20), nullable=True)

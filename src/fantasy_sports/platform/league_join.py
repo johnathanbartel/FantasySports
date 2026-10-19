@@ -25,8 +25,11 @@ MIN_LEAGUE_SIZE = 2
 
 
 def slot_cutoff(league: League) -> datetime.datetime | None:
-    """When open slots stop being claimable and the policy applies; None if no draft time is set."""
-    return league.draft_scheduled_at - SLOT_CUTOFF if league.draft_scheduled_at else None
+    """When open slots stop being claimable and the policy applies; None if no draft time is set. A mock draft keeps its slots
+    open until the draft time itself."""
+    if not league.draft_scheduled_at:
+        return None
+    return league.draft_scheduled_at if league.is_mock_draft else league.draft_scheduled_at - SLOT_CUTOFF
 
 
 def apply_slot_cutoff(db: Session, league: League, now: datetime.datetime | None = None, force: bool = False) -> int:
@@ -60,7 +63,10 @@ def join_blocker(db: Session, league: League, user_id: int | None) -> str | None
 
     if user_id is not None and db.query(Team.id).filter_by(league_id=league.id, owner_user_id=user_id).first():
         return "You already manage a team in this league."
-    if draft_state(db, league.id) == "in_progress":
+    state = draft_state(db, league.id)
+    if league.is_mock_draft and state != "not_started":
+        return "This mock draft has already started."
+    if state == "in_progress":
         return "The draft is in progress; teams can't be joined until it finishes."
     return None
 
@@ -78,10 +84,14 @@ def joinable_teams(db: Session, league: League, user_id: int | None = None) -> t
     for t in teams:
         if t.open_human_slot:
             out.append((t, "open_slot"))
+        elif league.is_mock_draft:
+            continue                # a mock draft's AI teams are the creator's choice; only the open human slots are for people
         elif league.visibility == "public" and (state == "not_started" or league.allow_ai_takeover_in_season):
             out.append((t, "ai_takeover"))
     if out:
         return out, None
+    if league.is_mock_draft:
+        return [], "Every human slot in this mock draft is taken."
     if league.visibility != "public":
         return [], "This league has no open slots. Ask the commissioner for an invite."
     if state != "not_started" and not league.allow_ai_takeover_in_season:

@@ -36,7 +36,7 @@ def draft_state(db: Session, league_id: int) -> str:
                     if not d.completed_at:
                         d.completed_at = datetime.datetime.utcnow()
                     draft_clock.clear(d)
-                    if league:
+                    if league and not league.is_mock_draft:      # a mock draft has no season to roll over or schedule
                         from fantasy_sports.platform import season_rollover
                         season_rollover.after_draft_complete(db, league)
                         auto_schedule.ensure_schedule(db, league)
