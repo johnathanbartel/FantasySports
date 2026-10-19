@@ -15,6 +15,9 @@ Waivers: a dropped player is on waivers for 24 hours, and teams claim him in wai
     round of the draft (the team that picked last claims first).
   * With the league's post_draft_waivers setting on (default off), the same 24 hours apply to every undrafted player
     once the draft ends: nobody can sign them outright, teams claim them in waiver order, and unclaimed players clear.
+  * The hold is the league's waiver_hours (default 24; 0 = a drop is a free agent at once). With waiver_processing_days
+    set (0 = Monday ... 6 = Sunday), a hold that has run its hours lasts on to the next midnight Pacific that begins one of
+    those days, and claims are resolved then. With none set, claims resolve the moment the hours end.
   * Winning a claim sends that team to the back of the order until the next reset.
   * A commissioner can set the order by hand (platform/commissioner.py); it holds until the next reset, and a team that wins
     a claim after it was set still drops to the back.
@@ -83,13 +86,40 @@ def next_reset(now: datetime.datetime) -> datetime.datetime:
 
 
 # ---- who is on waivers --------------------------------------------------------------------------------------------
+def waiver_hours(league: League) -> int:
+    return WAIVER_HOURS if league.waiver_hours is None else league.waiver_hours
+
+
+def window_end(league: League, start: datetime.datetime) -> datetime.datetime:
+    """When a hold that began at `start` (naive UTC) is over under the league's settings: the waiver period later, then, if
+    the league has processing days, the next midnight Pacific that begins one of them (the hold ending exactly at such a
+    midnight is over then). With no hold (0 hours) there is no window at all."""
+    hours = waiver_hours(league)
+    if hours <= 0:
+        return start
+    end = start + datetime.timedelta(hours=hours)
+    days = set(league.waiver_processing_days or [])
+    if not days:
+        return end
+    local = _to_local(end)
+    day = local.date() if local.time() == datetime.time() else local.date() + datetime.timedelta(days=1)
+    while day.weekday() not in days:
+        day += datetime.timedelta(days=1)
+    return _to_utc(datetime.datetime.combine(day, datetime.time()))
+
+
 def waiver_until(db: Session, league_id: int, now: datetime.datetime) -> dict[int, datetime.datetime]:
-    """asset id -> the moment his waiver period ends, for every player dropped in the last 24 hours and not signed since."""
+    """asset id -> the moment his waiver period ends, for every player dropped recently enough still to be held and not signed since."""
+    league = db.get(League, league_id)
     post_draft = _post_draft_until(db, league_id, now)
+    if league is None:
+        return {}
+    # Looking back the longest a hold can last: the period plus a full week to the next processing day.
+    reach = datetime.timedelta(hours=waiver_hours(league)) + datetime.timedelta(days=8)
     drops = db.query(FreeAgencyTransaction).filter(
         FreeAgencyTransaction.league_id == league_id, FreeAgencyTransaction.kind == "drop",
         FreeAgencyTransaction.reason != commissioner.EDIT,         # a commissioner's correction skips waivers
-        FreeAgencyTransaction.created_at > now - datetime.timedelta(hours=WAIVER_HOURS),
+        FreeAgencyTransaction.created_at > now - reach,
     ).order_by(FreeAgencyTransaction.id).all()
     latest = {t.draftable_asset_id: t for t in drops}
     if not latest and not post_draft:
@@ -97,7 +127,7 @@ def waiver_until(db: Session, league_id: int, now: datetime.datetime) -> dict[in
     team_ids = [t.id for t in db.query(Team.id).filter_by(league_id=league_id)]
     rostered = {r.draftable_asset_id for r in db.query(RosterEntry).filter(
         RosterEntry.team_id.in_(team_ids or [0]), RosterEntry.draftable_asset_id.in_(list(latest)))}
-    until = {a: t.created_at + datetime.timedelta(hours=WAIVER_HOURS) for a, t in latest.items() if a not in rostered}
+    until = {a: window_end(league, t.created_at) for a, t in latest.items() if a not in rostered}
     out = {a: u for a, u in until.items() if u > now}
     if post_draft is not None:          # a later drop has its own window; everyone else undrafted clears with the draft's
         end, undrafted = post_draft
@@ -127,7 +157,7 @@ def _post_draft_until(db: Session, league_id: int, now: datetime.datetime) -> tu
     ended = _draft_ended_at(db, league_id)
     if ended is None:
         return None
-    end = ended + datetime.timedelta(hours=WAIVER_HOURS)
+    end = window_end(league, ended)
     if end <= now:
         return None
     rostered = free_agency.rostered_ids(db, league_id)
@@ -249,6 +279,19 @@ def cancel_claim(db: Session, team: Team, asset_id: int, now: datetime.datetime 
     if claim is None:
         raise ValueError("You have no pending claim on that player")
     claim.status, claim.resolved_at = "cancelled", now
+    db.flush()
+
+
+def retime_pending(db: Session, league_id: int, now: datetime.datetime | None = None) -> None:
+    """After the league's waiver period or processing days change: each pending claim follows its player's new end of hold
+    (a player no longer held has his claims resolved at the next `process`). Flushes, does not commit."""
+    now = now or datetime.datetime.utcnow()
+    claims = db.query(WaiverClaim).filter_by(league_id=league_id, status="pending").all()
+    if not claims:
+        return
+    until = waiver_until(db, league_id, now)
+    for c in claims:
+        c.available_at = until.get(c.draftable_asset_id, min(c.available_at, now))
     db.flush()
 
 

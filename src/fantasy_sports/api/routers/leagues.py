@@ -24,6 +24,7 @@ from fantasy_sports.api.schemas import (
 from fantasy_sports.platform import commissioner, draft_order, league_branding, league_join, notifications, setting_changes
 from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
+from fantasy_sports.platform import waivers
 from fantasy_sports.platform.conferences import service as conferences
 from fantasy_sports.platform.db.models.core import (
     AuctionDraft, Conference, Division, Draft, DraftableAsset, KeeperCandidate, LeagueSettingChange, KeeperSubmission, League, LeagueSeason, LeagueUniverse, LineupEntry,
@@ -156,6 +157,8 @@ def create_league(
         draft_reset_policy=payload.draft_reset_policy,
         draft_order_mode=payload.draft_order_mode,
         post_draft_waivers=payload.post_draft_waivers,
+        waiver_hours=payload.waiver_hours,
+        waiver_processing_days=payload.waiver_processing_days,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -626,6 +629,13 @@ def update_league_settings(
         league.draft_reset_policy = payload.draft_reset_policy
     if payload.post_draft_waivers is not None:
         league.post_draft_waivers = payload.post_draft_waivers
+    if payload.waiver_hours is not None or "waiver_processing_days" in sent:
+        if payload.waiver_hours is not None:
+            league.waiver_hours = payload.waiver_hours
+        if "waiver_processing_days" in sent:
+            league.waiver_processing_days = payload.waiver_processing_days
+        db.flush()
+        waivers.retime_pending(db, league.id)       # claims already placed follow the new rules
     if league.league_type == "PAID" and not league.annual_dues_cents:
         raise HTTPException(400, "A paid league needs an annual dues amount")
     if payload.platform_plan is not None and payload.platform_plan != league.platform_plan:

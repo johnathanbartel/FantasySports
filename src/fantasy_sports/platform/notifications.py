@@ -46,6 +46,8 @@ WATCHED_SETTINGS: dict[str, str] = {
     "commissioner_trade_vote_extra_votes": "Extra votes when the commissioner's team trades",
     "draft_reset_policy": "Who can reset a completed draft",
     "post_draft_waivers": "Post-draft waivers on undrafted players",
+    "waiver_hours": "Waiver period (hours)",
+    "waiver_processing_days": "Waiver processing days",
     "draft_order_mode": "Draft order (random or set by the commissioner)",
     "trade_review_hours": "Trade review window (hours)",
     "trade_review_mode": "Who can veto a trade",

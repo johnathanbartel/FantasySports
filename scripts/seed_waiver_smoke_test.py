@@ -192,6 +192,35 @@ def main() -> None:
         check(wins.get(t[1]) == "won" and wins.get(t[3]) == "lost", "the team first in the waiver order (worst goal differential) wins the claim")
         check(free_agency.add_player(db, team(0), free[1], free_agency.USER, ended + datetime.timedelta(hours=25)) is not None,
               "unclaimed undrafted players are free agents once the window ends")
+        # ---- configurable waiver period and processing days
+        check(league.waiver_hours == 24 and league.waiver_processing_days is None, "waiver settings default to 24 hours, no processing days")
+        league.waiver_hours, league.waiver_processing_days = 48, None
+        check(waivers.window_end(league, ended) == ended + datetime.timedelta(hours=48), "waiver_hours sets the length of the hold")
+        league.waiver_hours, league.waiver_processing_days = 24, [2]            # Wednesday
+        wed = D(2026, 11, 4, 8, 0)                                              # Wednesday 00:00 PST
+        check(waivers.window_end(league, ended) == wed, "with processing days the hold runs on to the next midnight Pacific of a checked day")
+        check(waivers.window_end(league, wed - datetime.timedelta(hours=24)) == wed, "a hold ending exactly at a processing midnight is over then")
+        league.waiver_processing_days = [2, 6]
+        check(waivers.window_end(league, D(2026, 11, 5, 12, 0)) == D(2026, 11, 8, 8, 0), "the next checked day after Wednesday is Sunday")
+        league.waiver_processing_days = [2]
+        db.commit()
+        until = waivers.waiver_until(db, league_id, ended + datetime.timedelta(hours=30))
+        check(until.get(free[2]) == wed, "post-draft players stay on waivers past the 24 hours until the processing day")
+        waivers.place_claim(db, team(3), free[2], ended + datetime.timedelta(hours=30))
+        db.commit()
+        check(waivers.process(db, league_id, wed - datetime.timedelta(minutes=1)) == 0, "the claim waits for the processing day")
+        league.waiver_processing_days = [3]
+        db.flush()
+        waivers.retime_pending(db, league_id, ended + datetime.timedelta(hours=31))
+        db.commit()
+        claim = db.query(WaiverClaim).filter_by(draftable_asset_id=free[2], status="pending").one()
+        check(claim.available_at == D(2026, 11, 5, 8, 0), "changing the processing days re-times claims already placed")
+        check(waivers.process(db, league_id, wed + datetime.timedelta(hours=1)) == 0, "the old processing day no longer resolves it")
+        check(waivers.process(db, league_id, D(2026, 11, 5, 8, 1)) == 1, "the claim resolves on the new processing day")
+        db.commit()
+        league.waiver_hours, league.waiver_processing_days = 0, None
+        db.commit()
+        check(waivers.waiver_until(db, league_id, ended + datetime.timedelta(hours=1)) == {}, "0 hours: no one is held on waivers")
     print("\nAll waiver checks passed.")
 
 
