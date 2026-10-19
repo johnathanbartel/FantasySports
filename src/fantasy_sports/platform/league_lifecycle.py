@@ -43,6 +43,8 @@ from fantasy_sports.platform.db.models.core import (
     Team,
     TeamPeckingOrder,
     Trade,
+    TeamDraftPrefs,
+    TeamDraftRanking,
     TradedPick,
     TradeItem,
     TradeVote,
@@ -182,6 +184,8 @@ def delete_league(db: Session, league_id: int) -> None:
     db.query(KeeperSubmission).filter(KeeperSubmission.league_id == league_id).delete(synchronize_session=False)
     db.query(LeagueSeason).filter(LeagueSeason.league_id == league_id).delete(synchronize_session=False)
     if team_ids:
+        db.query(TeamDraftRanking).filter(TeamDraftRanking.team_id.in_(team_ids)).delete(synchronize_session=False)
+        db.query(TeamDraftPrefs).filter(TeamDraftPrefs.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(TeamPeckingOrder).filter(TeamPeckingOrder.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(LineupEntry).filter(LineupEntry.team_id.in_(team_ids)).delete(synchronize_session=False)
         db.query(RosterEntry).filter(RosterEntry.team_id.in_(team_ids)).delete(synchronize_session=False)

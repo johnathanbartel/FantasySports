@@ -282,6 +282,21 @@ function draftTimeNote() {
   return 'Draft starting soon';
 }
 
+// The pre-draft hub (web/static/predraft-hub.html): mock draft, player rankings, auto draft, pick trading and the draft time. It
+// stays open until the draft is complete; recruiting leagues have their own board.
+function predraftHubUrl() { return `/static/predraft-hub.html?league_id=${LEAGUE_ID}`; }
+function predraftHubCard() {
+  if (!ov || ov.draft_type !== 'snake' || ov.draft_state === 'complete') return '';
+  const when = ov.draft_scheduled_at
+    ? new Date(String(ov.draft_scheduled_at).endsWith('Z') ? ov.draft_scheduled_at : ov.draft_scheduled_at + 'Z').toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'})
+    : 'Draft date not set yet';
+  return `<div class="card elev-sm" style="margin-bottom:var(--space-5);padding:var(--space-4) var(--space-5);display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-wrap:wrap">
+    <div><div class="card-kicker">Pre-Draft Hub</div>
+      <div style="font-size:18px;font-weight:800;margin-top:2px;font-family:var(--font-heading)">${esc(when)}</div>
+      <div class="muted" style="font-size:13px;margin-top:2px">Mock draft, rank players for auto draft, your pick numbers, pick trading and the way into the draft room.</div></div>
+    <a href="${predraftHubUrl()}" class="btn btn-primary" style="font-weight:700">Open Pre-Draft Hub &rarr;</a></div>`;
+}
+
 function draftLine() {
   const d = ov.draft;
   if (d.status === 'closed') return 'Recruiting complete';
@@ -333,6 +348,7 @@ async function renderHome() {
     </div>` : '';
   $('content').innerHTML = `
     ${draftHero}
+    ${predraftHubCard()}
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--space-3);margin-bottom:var(--space-5)">
       ${statCard('Teams', ov.teams.length, `${ov.teams.filter(t => t.is_ai_owned).length} AI-owned`, null, 'teams')}
       ${statCard('Roster size', ov.roster_size, `${openSpots} open spot${openSpots === 1 ? '' : 's'} across the league`, null, 'roster')}

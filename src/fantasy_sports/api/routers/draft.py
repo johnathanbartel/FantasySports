@@ -17,7 +17,7 @@ from fantasy_sports.api.schemas import (
     DraftStartRequest,
     MakePickRequest,
 )
-from fantasy_sports.platform import auto_schedule, draft_clock, draft_order, pecking_order, pick_trading, season_rollover
+from fantasy_sports.platform import auto_schedule, draft_clock, draft_order, pecking_order, pick_trading, predraft_hub, season_rollover
 from fantasy_sports.platform.ai import snake_ai
 from fantasy_sports.platform.draft_stats import stats_by_asset
 from fantasy_sports.platform.league_features import is_college, roster_spots
@@ -339,7 +339,10 @@ def _fill_with_best_available(db: Session, draft: Draft, pick: DraftPick, picked
     board = get_draft_board(draft.id, db)
     if not board:
         raise HTTPException(400, "No draftable assets left")
-    pick.draftable_asset_id = snake_ai.choose_pick(db, draft, pick.team_id, board).draftable_asset_id
+    # A person-managed team on "My rankings" (pre-draft hub) gets the first player left in its own ranking; otherwise, or when
+    # that ranking has nobody left, the FantasyMotion suggestion.
+    ranked = predraft_hub.ranked_choice(db, db.get(Team, pick.team_id), {a.draftable_asset_id for a in board})
+    pick.draftable_asset_id = ranked if ranked is not None else snake_ai.choose_pick(db, draft, pick.team_id, board).draftable_asset_id
     pick.picked_at = picked_at
     pick.is_autopick = True
     db.add(RosterEntry(team_id=pick.team_id, draftable_asset_id=pick.draftable_asset_id, acquired_via="draft"))
