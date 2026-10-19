@@ -8,6 +8,7 @@
 <script src="/static/retro.js"></script>
 <script src="/static/session.js"></script>
 <script src="/static/player-card.js?v=20261018"></script>
+<script src="/static/chat.js?v=20261022"></script>
 <script src="/static/draft-clock-logic.js"></script>
 <script src="/static/roster-lines.js"></script>
 <script src="/static/draft-broadcast-logic.js"></script>
@@ -110,6 +111,7 @@
           <button class="btn btn-primary" id="tab-roster" role="tab" aria-selected="true">Roster</button>
           <button class="btn btn-secondary" id="tab-queue" role="tab" aria-selected="false">Queue (<span id="queue-count">0</span>)</button>
           <button class="btn btn-secondary" id="tab-picks" role="tab" aria-selected="false">Pick history</button>
+          <button class="btn btn-secondary" id="tab-chat" role="tab" aria-selected="false" style="display:none">Chat</button>
         </div>
         <div id="pane-roster" role="tabpanel">
           <label style="display:block;margin-bottom:var(--space-2)">Team <select id="roster-team"></select></label>
@@ -119,6 +121,7 @@
         <div id="pane-queue" role="tabpanel" hidden>
           <div id="queue-container" class="card elev-sm" style="padding:var(--space-4)"></div>
         </div>
+        <div id="pane-chat" role="tabpanel" hidden></div>
         <div id="pane-picks" role="tabpanel" hidden>
         <div style="max-height:640px;overflow:auto">
           <table class="table">
@@ -186,6 +189,9 @@ async function loadAll() {
       statusEl.innerHTML = `Viewing as guest · <a href="/static/login.html?redirect=${curLoc}">Sign in to draft</a>`;
     }
   }
+
+  // chat is for the people in the league: a manager (or the commissioner), not a spectator
+  if (me && (Object.values(teamsById).some(t => t.owner_user_id === me.user_id) || isCommissioner())) document.getElementById('tab-chat').style.display = '';
 
   if (!DRAFT_ID) {
     try { DRAFT_ID = (await api(`/drafts/league/${LEAGUE_ID}`)).id; } catch (e) { DRAFT_ID = null; }
@@ -1055,7 +1061,8 @@ function setSideTab(which) {
   document.getElementById('pane-roster').hidden = which !== 'roster';
   document.getElementById('pane-queue').hidden = which !== 'queue';
   document.getElementById('pane-picks').hidden = which !== 'picks';
-  for (const [id, key] of [['tab-roster', 'roster'], ['tab-queue', 'queue'], ['tab-picks', 'picks']]) {
+  document.getElementById('pane-chat').hidden = which !== 'chat';
+  for (const [id, key] of [['tab-roster', 'roster'], ['tab-queue', 'queue'], ['tab-picks', 'picks'], ['tab-chat', 'chat']]) {
     const b = document.getElementById(id);
     if (b) {
       b.className = `btn ${which === key ? 'btn-primary' : 'btn-secondary'}`;
@@ -1065,11 +1072,17 @@ function setSideTab(which) {
   if (which === 'queue') {
     renderQueue();
   }
+  if (which === 'chat' && !draftChat && DRAFT_ID) {      // the draft room's chat, shared with the league page's Chat tab
+    draftChat = Chat.mount(document.getElementById('pane-chat'), {leagueId: LEAGUE_ID, thread: 'draft:' + DRAFT_ID, meId: me.user_id,
+      canModerate: isCommissioner(), maxHeight: '520px'});
+  }
 }
+let draftChat = null;
 document.getElementById('tab-roster').onclick = () => setSideTab('roster');
 const tabQueueEl = document.getElementById('tab-queue');
 if (tabQueueEl) tabQueueEl.onclick = () => setSideTab('queue');
 document.getElementById('tab-picks').onclick = () => setSideTab('picks');
+document.getElementById('tab-chat').onclick = () => setSideTab('chat');
 
 async function renderRosterTab() {
   const teams = Object.values(teamsById);

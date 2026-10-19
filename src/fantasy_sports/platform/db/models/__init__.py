@@ -46,6 +46,7 @@ from fantasy_sports.platform.db.models.core import (  # noqa: F401
     WeeklyContestEntry,
     WeeklyContestSlot,
 )
+from fantasy_sports.platform.db.models.chat import ChatMessage, ChatReadMarker  # noqa: F401
 from fantasy_sports.platform.db.models.offline_draft import (  # noqa: F401
     OfflineDraftSession,
     OfflineTeamClaim,
