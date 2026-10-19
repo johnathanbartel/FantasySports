@@ -770,6 +770,18 @@ function paintHockeyRoster() {
   const target = (g) => gridSel && gridSel.group === g;
   const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '';
 
+  // Bye / empty-slot warning: a player with no game in the shown window gets a red outline; if nobody in his
+  // position group has a game, the tooltip says the whole spot may go unfilled.
+  const groupHasGame = {};
+  gridGroups.forEach(g => {
+    groupHasGame[g.position_group] = [...g.ranked, ...g.unranked].some(q => resolvePlayerInWindow(q, activeHockeyWindow, t.id).effectiveGames.length > 0);
+  });
+  const idleWarn = (group, isIdle) => !isIdle ? '' :
+    `outline:2px solid #dc2626;outline-offset:-1px;`;
+  const idleTip = (group, isIdle) => !isIdle ? '' : groupHasGame[group]
+    ? 'No game this window - a backup steps in'
+    : `No ${group} has a game this window - this spot may go empty`;
+
   const cellBtn = (c) => {
     const p = c.player, sel = isSel(c.group, c.rank, null);
     const border = sel ? '2px solid var(--color-accent)' : target(c.group) ? '2px dashed var(--color-accent)' : '1px solid var(--color-divider)';
@@ -833,8 +845,8 @@ function paintHockeyRoster() {
 
     const teamDisplay = p.real_team_code || p.real_team || '';
     const cardOpacity = isIdle ? 'opacity:0.62;background:rgba(0,0,0,0.02);' : 'background:var(--color-surface, transparent);';
-    return `<div class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can ? '' : 'data-disabled="1"'} aria-pressed="${sel}"
-      style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);${cardOpacity}color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
+    return `<div class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can ? '' : 'data-disabled="1"'} aria-pressed="${sel}" title="${esc(idleTip(c.group, isIdle))}"
+      style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);${cardOpacity}${idleWarn(c.group, isIdle)}color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
       <div style="font-weight:600">${pl(p.draftable_asset_id, p.display_name)} <span class="muted" style="font-size:11px;font-weight:normal">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''}</span>${injBadge(p)}</div>
       <div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>
       ${scheduleStatusHtml}
@@ -848,8 +860,8 @@ function paintHockeyRoster() {
     const isIdle = winInfo.effectiveGames.length === 0;
     const teamDisplay = p.real_team_code || p.real_team || '';
     const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Matchups' : '· Active';
-    return `<span style="display:inline-flex;align-items:center;gap:4px"><button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
-      style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
+    return `<span style="display:inline-flex;align-items:center;gap:4px"><button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}" title="${esc(idleTip(g, isIdle))}"
+      style="${idleWarn(g, isIdle)}padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
       ${pl(p.draftable_asset_id, p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>${injBadge(p)}
     </button>${can && canPlaceOnIL(p) ? `<button type="button" class="btn btn-secondary btn-il" data-il="${p.draftable_asset_id}" style="font-size:11px;padding:2px 8px">To IL</button>` : ''}</span>`;
   };

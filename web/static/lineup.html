@@ -16,6 +16,7 @@
   .slot select{width:100%}
   .slot .pts{text-align:right;font-variant-numeric:tabular-nums;font-size:13px}
   .slot.empty select{border-style:dashed}
+  .bye{outline:2px solid #dc2626;outline-offset:-1px;border-radius:var(--radius-sm)}
   .rrow{display:grid;grid-template-columns:34px minmax(0,1fr) 54px 64px;gap:var(--space-2);align-items:baseline;padding:5px 0;border-top:1px solid var(--color-divider);font-size:13px}
   .rrow:first-child{border-top:0}
   .rrow .pts{text-align:right;font-variant-numeric:tabular-nums}
@@ -113,6 +114,7 @@ let teamId = null, weekId = null;
 let roster = [], rosterById = {};
 let slotInstances = [];     // [{code, label, eligible, assetId|null}]
 let dirty = false;
+let byeIds = new Set();     // rostered assets whose real team has no game this week (GET /teams/{id}/bye-check)
 
 function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
 function showResult(msg) { const el = document.getElementById('result-banner'); el.textContent = msg; el.style.display = msg ? 'block' : 'none'; }
@@ -135,6 +137,7 @@ async function loadTeamWeek() {
   roster = await api(`/teams/${teamId}/roster`);
   rosterById = Object.fromEntries(roster.map(r => [r.draftable_asset_id, r]));
   const entries = await api(`/teams/${teamId}/lineup?week_id=${weekId}`);
+  try { byeIds = new Set((await api(`/teams/${teamId}/bye-check?week_id=${weekId}`)).no_game_asset_ids); } catch (e) { byeIds = new Set(); }
   buildInstances();
   const used = {};
   entries.filter(e => e.slot_code !== 'BENCH').forEach(e => {
@@ -169,10 +172,11 @@ function render() {
       .filter(r => inst.eligible.includes(r.position) && !taken.has(r.draftable_asset_id))
       .sort((a, b) => (b.last_season_points ?? -1) - (a.last_season_points ?? -1) || a.display_name.localeCompare(b.display_name));
     const row = document.createElement('div');
-    row.className = 'slot' + (inst.assetId === null ? ' empty' : '');
+    row.className = 'slot' + (inst.assetId === null ? ' empty' : '') + (byeIds.has(inst.assetId) ? ' bye' : '');
+    if (byeIds.has(inst.assetId)) row.title = 'Bye week - this player has no game, so the spot may score nothing';
     row.innerHTML = `<div class="lab">${esc(inst.label)}<small>${esc(inst.sub || '')}</small></div>
       <select class="inp"><option value="">${options.length ? '- empty -' : '- nobody eligible -'}</option>${options.map(r =>
-        `<option value="${r.draftable_asset_id}"${r.draftable_asset_id === inst.assetId ? ' selected' : ''}>${esc(r.display_name)} · ${esc(r.real_team || '')} · ${pts(r.last_season_points)}</option>`).join('')}</select>
+        `<option value="${r.draftable_asset_id}"${r.draftable_asset_id === inst.assetId ? ' selected' : ''}>${esc(r.display_name)} · ${esc(r.real_team || '')}${byeIds.has(r.draftable_asset_id) ? ' · BYE' : ''} · ${pts(r.last_season_points)}</option>`).join('')}</select>
       <div class="pts">${inst.assetId !== null ? pts(rosterById[inst.assetId]?.last_season_points) : ''}</div>`;
     row.querySelector('select').onchange = (e) => { inst.assetId = e.target.value ? Number(e.target.value) : null; dirty = true; render(); };
     box.appendChild(row);
@@ -185,7 +189,7 @@ function render() {
   const posRank = {QB: 0, RB: 1, WR: 2, TE: 3, PK: 4, DL: 5, LB: 6, DB: 7};
   document.getElementById('roster').innerHTML = roster.length
     ? roster.slice().sort((a, b) => (posRank[a.position] ?? 9) - (posRank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1)).map(r =>
-      `<div class="rrow"><span class="tag tag-neutral" style="justify-content:center">${POS_LABEL[r.position] || r.position}</span>
+      `<div class="rrow${byeIds.has(r.draftable_asset_id) && starterIds.has(r.draftable_asset_id) ? ' bye' : ''}"${byeIds.has(r.draftable_asset_id) ? ' title="Bye week - no game this week"' : ''}><span class="tag tag-neutral" style="justify-content:center">${POS_LABEL[r.position] || r.position}</span>
         <span>${esc(r.display_name)} <span class="text-muted">${esc(r.real_team || '')}</span></span>
         <span class="badge ${starterIds.has(r.draftable_asset_id) ? 'st' : 'bn'}">${starterIds.has(r.draftable_asset_id) ? 'starter' : 'bench'}</span>
         <span class="pts text-muted">${pts(r.last_season_points)}</span></div>`).join('')
