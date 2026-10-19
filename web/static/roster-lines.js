@@ -4,6 +4,9 @@
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
   const pts = v => v == null ? '-' : Number(v).toFixed(1);
 
+  // A name that opens the player card when the page has loaded player-card.js.
+  const nameOf = p => (typeof PlayerCard !== 'undefined' && p.draftable_asset_id != null) ? PlayerCard.link(p.draftable_asset_id, p.display_name) : esc(p.display_name);
+
   function row(code, player) {
     const chip = `<span class="tag tag-neutral" style="min-width:44px;justify-content:center">${esc(code)}</span>`;
     if (!player) {
@@ -11,7 +14,7 @@
         ${chip}<span class="text-muted" style="flex:1;font-style:italic">Open</span><span class="text-muted">-</span></div>`;
     }
     return `<div class="row" style="display:flex;gap:var(--space-3);align-items:center;padding:6px 0;border-bottom:1px solid var(--color-divider)">
-      ${chip}<span style="flex:1"><strong>${esc(player.display_name)}</strong>
+      ${chip}<span style="flex:1"><strong>${nameOf(player)}</strong>
       <span class="text-muted" style="font-size:12px">${esc(player.position || '')}${player.real_team ? ' · ' + esc(player.real_team) : ''}</span></span>
       <span style="font-variant-numeric:tabular-nums" title="Last season's points">${pts(player.points)}</span></div>`;
   }

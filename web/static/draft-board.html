@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/styles.css">
 <script src="/static/retro.js"></script>
 <script src="/static/session.js"></script>
+<script src="/static/player-card.js?v=20261018"></script>
 <script src="/static/draft-clock-logic.js"></script>
 <script src="/static/roster-lines.js"></script>
 <script src="/static/draft-broadcast-logic.js"></script>
@@ -138,6 +139,7 @@
 // in docs/data_contract.md. No mocked/simulated draft state.
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id') || 1;
+PlayerCard.configure({leagueId: LEAGUE_ID});
 let DRAFT_ID = params.get('draft_id');
 const MAX_ROWS = 150; // the NFL pool is thousands of assets; search narrows it
 
@@ -765,7 +767,7 @@ function renderQueue() {
       <div style="display:flex;align-items:center;gap:8px;overflow:hidden">
         <span style="font-weight:700;color:var(--color-accent);font-size:12px;min-width:20px">#${idx + 1}</span>
         <div style="overflow:hidden">
-          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(a.display_name)}</div>
+          <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${PlayerCard.link(a.draftable_asset_id, a.display_name)}</div>
           <div class="text-muted" style="font-size:11px">${esc(a.position || '')} · ${esc(a.team || '—')}${a.points != null ? ` · ${a.points} pts` : ''}</div>
         </div>
       </div>
@@ -909,7 +911,7 @@ function renderBoard() {
   const rows = filtered.slice(0, MAX_ROWS).map(a => {
     const inQ = draftQueue.includes(a.draftable_asset_id);
     return `<tr>
-      <th scope="row" style="text-align:left;font-weight:600">${esc(a.display_name)}</th>
+      <th scope="row" style="text-align:left;font-weight:600">${PlayerCard.link(a.draftable_asset_id, a.display_name)}</th>
       <td>${esc(a.position || '-')}</td><td>${esc(a.team || '—')}</td>
       <td class="num">${cell(a.points)}</td><td class="num">${cell(a.projected)}</td><td class="num">${cell(a.goals)}</td>
       <td class="num">${cell(a.assists)}</td><td class="num">${cell(a.shots)}</td><td class="num">${cell(a.blocks)}</td>
@@ -955,7 +957,7 @@ function renderPicks() {
       <td>${p.round}</td>
       <td>${p.pick_number}</td>
       <td style="font-size:13px">${esc(team ? team.name : p.team_id)}</td>
-      <td>${esc(p.display_name)}${p.is_autopick ? ' <span class="tag tag-accent-2" style="margin-left:6px;font-size:10px">AUTO</span>' : ''}</td>
+      <td>${PlayerCard.link(p.draftable_asset_id, p.display_name)}${p.is_autopick ? ' <span class="tag tag-accent-2" style="margin-left:6px;font-size:10px">AUTO</span>' : ''}</td>
     `;
     body.appendChild(tr);
   });
@@ -1007,7 +1009,7 @@ function renderGrid() {
       } else {
         used.add(p.position);
         const meta = [p.position, p.team].filter(Boolean).join(' - ');
-        html += `<div class="dg-cell${mine}" style="background:${posColor(p.position)}" title="${esc(p.display_name)} (pick ${p.pick_number}${p.is_autopick ? ', auto' : ''})"><span class="k">${label}</span><div class="n">${esc(shortName(p))}</div><div class="m">${esc(meta)}${p.is_autopick ? ' · auto' : ''}</div></div>`;
+        html += `<div class="dg-cell${mine}" style="background:${posColor(p.position)}" title="${esc(p.display_name)} (pick ${p.pick_number}${p.is_autopick ? ', auto' : ''})"><span class="k">${label}</span><div class="n">${PlayerCard.link(p.draftable_asset_id, shortName(p))}</div><div class="m">${esc(meta)}${p.is_autopick ? ' · auto' : ''}</div></div>`;
       }
     }
   }

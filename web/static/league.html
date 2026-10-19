@@ -112,6 +112,7 @@
 <script src="/static/assign-team-modal.js?v=20261013"></script>
 <script src="/static/conference-modal.js?v=20261013"></script>
 <script src="/static/scoring-modal.js?v=20261013"></script>
+<script src="/static/player-card.js?v=20261018"></script>
 <script src="/static/commissioner-tab.js?v=20261018"></script>
 <script>
 const params = new URLSearchParams(location.search);
@@ -160,6 +161,7 @@ function tbEditor(host, order, disabled) {
   draw();
 }
 const esc2 = (s) => esc(String(s));
+const pl = (id, name) => PlayerCard.link(id, name);   // a player's name that opens his card
 const tbPayload = (host) => { const o = host._order(); return JSON.stringify(o) === JSON.stringify(DEFAULT_TIEBREAKERS) ? null : o; };
 
 const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
@@ -390,7 +392,7 @@ const utcLocal = (iso) => new Date(iso + 'Z').toLocaleString([], {weekday: 'shor
 const hoursLeft = (iso) => { const m = Math.max(0, Math.round((new Date(iso + 'Z') - Date.now()) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 function txnText(x) {
   const t = teamsById[x.team_id]?.name || 'Team ' + x.team_id;
-  const who = `<strong>${esc(x.display_name)}</strong> <span class="muted">${POS_LABEL[x.position] || x.position || ''} · ${esc(x.real_team || '')}</span>`;
+  const who = `<strong>${pl(x.draftable_asset_id, x.display_name)}</strong> <span class="muted">${POS_LABEL[x.position] || x.position || ''} · ${esc(x.real_team || '')}</span>`;
   if (x.kind === 'recruited') return `<strong>${esc(t)}</strong> recruited ${who} <span class="muted">(week ${x.week})</span>`;
   if (x.kind === 'added' && x.reason === 'waiver') return `<strong>${esc(t)}</strong> claimed ${who} <span class="muted">off waivers${ov.is_college ? ' for ' + money(x.price) : ''}</span>`;
   if (x.kind === 'added') return `<strong>${esc(t)}</strong> signed free agent ${who} <span class="muted">for ${money(x.price)}</span>`;
@@ -581,8 +583,8 @@ function injBadge(p) {
 const canPlaceOnIL = (p) => p && IL_ELIGIBLE.includes(p.injury_status) && ilPlayers.length < ilCapacity;
 function injuryAlertText(a) {
   const note = a.note ? ` (${esc(a.note)})` : '';
-  if (!a.new_status) return `<strong>${esc(a.player_name)}</strong> is healthy again.`;
-  return `<strong>${esc(a.player_name)}</strong> is now <strong>${esc(INJ_TITLE[a.new_status] || a.new_status)}</strong>${note}.`;
+  if (!a.new_status) return `<strong>${pl(a.draftable_asset_id, a.player_name)}</strong> is healthy again.`;
+  return `<strong>${pl(a.draftable_asset_id, a.player_name)}</strong> is now <strong>${esc(INJ_TITLE[a.new_status] || a.new_status)}</strong>${note}.`;
 }
 function injuryAlertsHtml() {
   if (!injuryAlerts.length) return '';
@@ -742,7 +744,7 @@ function paintHockeyRoster() {
     const cardOpacity = isIdle ? 'opacity:0.62;background:rgba(0,0,0,0.02);' : 'background:var(--color-surface, transparent);';
     return `<div class="gcell" data-g="${c.group}" data-rank="${c.rank}" ${can ? '' : 'data-disabled="1"'} aria-pressed="${sel}"
       style="width:100%;text-align:left;padding:8px 10px;border:${border};border-radius:var(--radius-md);${cardOpacity}color:inherit;cursor:${can ? 'pointer' : 'default'};min-height:56px">
-      <div style="font-weight:600">${esc(p.display_name)} <span class="muted" style="font-size:11px;font-weight:normal">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''}</span>${injBadge(p)}</div>
+      <div style="font-weight:600">${pl(p.draftable_asset_id, p.display_name)} <span class="muted" style="font-size:11px;font-weight:normal">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''}</span>${injBadge(p)}</div>
       <div class="muted" style="font-size:11px" title="Points per game">${ppg(p.points_per_game)} PPG</div>
       ${scheduleStatusHtml}
       ${can && canPlaceOnIL(p) ? `<button type="button" class="btn btn-secondary btn-il" data-il="${p.draftable_asset_id}" style="margin-top:4px;font-size:11px;padding:2px 8px">Move to injured list</button>` : ''}
@@ -757,7 +759,7 @@ function paintHockeyRoster() {
     const statusNote = isIdle ? '· Idle' : winInfo.has2Games ? '· ✦ 2 Matchups' : '· Active';
     return `<span style="display:inline-flex;align-items:center;gap:4px"><button type="button" class="gres" data-g="${g}" data-pid="${p.player_id}" ${can ? '' : 'disabled'} aria-pressed="${sel}"
       style="padding:6px 10px;border:${sel ? '2px solid var(--color-accent)' : '1px solid var(--color-divider)'};border-radius:var(--radius-md);background:transparent;color:inherit;cursor:pointer;${isIdle ? 'opacity:0.6;' : ''}">
-      ${esc(p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>${injBadge(p)}
+      ${pl(p.draftable_asset_id, p.display_name)} <span class="muted" style="font-size:11px">${esc(p.position)}${teamDisplay ? ' · ' + esc(teamDisplay) : ''} · ${ppg(p.points_per_game)} PPG ${statusNote}</span>${injBadge(p)}
     </button>${can && canPlaceOnIL(p) ? `<button type="button" class="btn btn-secondary btn-il" data-il="${p.draftable_asset_id}" style="font-size:11px;padding:2px 8px">To IL</button>` : ''}</span>`;
   };
   const reserveGroups = ['C', 'W', 'D', 'G'].filter(g => grid.reserves[g].length);
@@ -833,7 +835,7 @@ function paintHockeyRoster() {
       </div>
       ${ilPlayers.length ? ilPlayers.map(p => `<div style="display:flex;align-items:center;gap:var(--space-3);padding:6px 0;border-top:1px solid var(--color-divider)">
           <span class="tag tag-neutral" style="min-width:36px;justify-content:center">${esc(p.position || '')}</span>
-          <span style="flex:1"><strong>${esc(p.display_name)}</strong> <span class="muted" style="font-size:11px">${esc(p.real_team_code || p.real_team || '')}</span>${p.injury_status ? injBadge(p) : '<span class="pill" style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;margin-left:4px">Healthy</span>'}</span>
+          <span style="flex:1"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong> <span class="muted" style="font-size:11px">${esc(p.real_team_code || p.real_team || '')}</span>${p.injury_status ? injBadge(p) : '<span class="pill" style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;margin-left:4px">Healthy</span>'}</span>
           ${can ? `<button type="button" class="btn btn-secondary btn-il-off" data-il-off="${p.draftable_asset_id}" style="font-size:12px;padding:3px 10px">Activate</button>` : ''}
         </div>`).join('') : '<p class="muted" style="margin:0;font-size:13px">No one on the injured list. Injured players (OUT, IR or LTIR) can be moved here from the lines.</p>'}
     </div>
@@ -1402,7 +1404,7 @@ async function renderRoster() {
         : 'Teams may recruit fewer players than the roster size. Free agency opens when recruiting ends, and open spots are filled there.'}</div>` : ''}
     <div class="card elev-sm" style="padding:var(--space-3) var(--space-5)">
       ${roster.length ? `<div class="row muted" style="font-size:12px"><span style="width:44px"></span><span style="flex:1">Player</span>${isHockey() ? '<span class="pts">Age</span>' : ''}<span class="pts">Points</span><span class="pts">PPG</span>${canDrop(t) ? '<span style="width:64px"></span>' : ''}</div>`
-        + roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${esc(r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
+        + roster.map(r => `<div class="row">${posTag(r.position)}<span style="flex:1"><strong>${pl(r.draftable_asset_id, r.display_name)}</strong> <span class="muted">${esc(r.real_team || '')}</span></span>
         <span class="pill">${r.acquired_via === 'free_agency' ? 'Free agency' : r.acquired_via === 'recruiting' ? 'Recruited' : esc(r.acquired_via || '')}</span>
         ${isHockey() ? `<span class="pts" title="Age">${r.age ?? '-'}</span>` : ''}<span class="pts" title="${LAST} fantasy points, ESPN standard">${pts(r.last_season_points)}</span><span class="pts" title="Points per game">${ppg(r.points_per_game)}</span>
         ${canDrop(t) ? `<button class="btn btn-ghost" data-drop="${r.draftable_asset_id}">Drop</button>` : ''}</div>`).join('')
@@ -1495,7 +1497,7 @@ function drawFa() {
   const can = canManage(team) && sum.open_spots > 0;
   const claimed = new Set(cache.tx.wv.players.filter(x => x.claimed).map(x => x.draftable_asset_id));
   $('fa-list').innerHTML = (rows.length ? txHeader(ov.is_college) : '') + rows.slice(0, 50).map(p => `<div class="row tight">${posTag(p.position)}
-      <span class="pname" title="${esc(p.display_name)}"><strong>${esc(p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
+      <span class="pname" title="${esc(p.display_name)}"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
       ${ageCell(p.age)}<span class="pts" title="This season's points so far (${p.this_season_games ?? 0} games)">${pts(p.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(p.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(p.points_per_game)}</span>${ov.is_college ? `<span class="pts" title="Asking price (provisional)">${money(p.asking_price)}</span>` : ''}
       ${p.waiver_until
         ? (claimed.has(p.draftable_asset_id)
@@ -1514,7 +1516,7 @@ function drawTxRoster() {
   const rank = Object.fromEntries(POSITIONS.map((p, i) => [p, i]));
   const sorted = roster.slice().sort((a, b) => (rank[a.position] ?? 9) - (rank[b.position] ?? 9) || (b.last_season_points ?? -1) - (a.last_season_points ?? -1));
   $('tx-roster').innerHTML = sorted.length ? txHeader(false) + sorted.map(r => `<div class="row tight">${posTag(r.position)}
-    <span class="pname" title="${esc(r.display_name)}"><strong>${esc(r.display_name)}</strong><span class="muted">${esc(r.real_team || '')}</span></span>
+    <span class="pname" title="${esc(r.display_name)}"><strong>${pl(r.draftable_asset_id, r.display_name)}</strong><span class="muted">${esc(r.real_team || '')}</span></span>
     ${ageCell(r.age)}<span class="pts" title="This season's points so far (${r.this_season_games ?? 0} games)">${pts(r.this_season_points)}</span><span class="pts muted" title="${LAST} points">${pts(r.last_season_points)}</span><span class="pts muted" title="Points per game">${ppg(r.points_per_game)}</span>
     <button class="btn btn-ghost" data-drop="${r.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Drop</button></div>`).join('')
     : '<p class="muted" style="margin:var(--space-2) 0">No players yet.</p>';
@@ -1538,7 +1540,7 @@ function waiversBox(wv, team) {
       ${o.moved_back ? '<span class="pill" title="Won a claim since the reset">Moved back</span>' : ''}
       ${wv.basis === 'goal_diff' ? `<span class="pts" title="Goal differential">${o.goal_diff > 0 ? '+' : ''}${o.goal_diff}</span>` : ''}</div>`).join('');
   const players = wv.players.length ? wv.players.map(p => `<div class="row tight">${posTag(p.position)}
-      <span class="pname" title="${esc(p.display_name)}"><strong>${esc(p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
+      <span class="pname" title="${esc(p.display_name)}"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong><span class="muted">${esc(p.real_team || '')}</span></span>
       <span class="muted" style="font-size:12px;white-space:nowrap" title="Clears ${utcLocal(p.until)}">${hoursLeft(p.until)} left</span>
       ${p.claimed ? `<button class="btn btn-secondary" data-wcancel="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claimed</button>`
         : `<button class="btn btn-primary" data-wclaim="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claim</button>`}</div>`).join('')
@@ -1572,6 +1574,7 @@ async function faAct(kind, assetId) {
 
 // ---- TRADES: Direct human trades and AI trades with league majority approval ------------------------
 let tradeSelectedOppId = null;
+let tradeWantAsset = null;     // a player to tick on the "You receive" list when the Trades tab opens (set from his player card)
 
 async function renderTrades() {
   await refreshOverview(); ensureActiveTeam();
@@ -1642,7 +1645,7 @@ async function renderTrades() {
   };
   const assetPill = (a) => `
     <span class="tag tag-neutral" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;font-size:12px;margin:2px">
-      ${posTag(a.position)} <strong>${esc(a.display_name)}</strong>
+      ${posTag(a.position)} <strong>${pl(a.draftable_asset_id, a.display_name)}</strong>
       ${a.points != null ? `<span class="muted" style="font-size:11px">(${pts(a.points)} pts)</span>` : ''}
     </span>`;
 
@@ -1836,7 +1839,7 @@ async function renderTrades() {
               <label style="display:flex;align-items:center;gap:var(--space-2);padding:4px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px">
                 <input type="checkbox" name="trade-send-chk" value="${p.draftable_asset_id}">
                 ${posTag(p.position)}
-                <span style="flex:1"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+                <span style="flex:1"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
                 <span class="pts muted">${pts(p.last_season_points)} pts</span>
               </label>
             `).join('') || '<p class="muted">No players rostered.</p>'}
@@ -1851,7 +1854,7 @@ async function renderTrades() {
               <label style="display:flex;align-items:center;gap:var(--space-2);padding:4px 6px;border-radius:var(--radius-sm);cursor:pointer;font-size:13px">
                 <input type="checkbox" name="trade-recv-chk" value="${p.draftable_asset_id}">
                 ${posTag(p.position)}
-                <span style="flex:1"><strong>${esc(p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
+                <span style="flex:1"><strong>${pl(p.draftable_asset_id, p.display_name)}</strong> <span class="muted">${esc(p.real_team || '')}</span></span>
                 <span class="pts muted">${pts(p.last_season_points)} pts</span>
               </label>
             `).join('') || '<p class="muted">No players rostered on opponent team.</p>'}
@@ -1929,6 +1932,11 @@ async function renderTrades() {
     tradeSelectedOppId = Number($('trade-opp').value);
     renderTrades();
   };
+  if (tradeWantAsset != null) {
+    const box = document.querySelector(`input[name="trade-recv-chk"][value="${tradeWantAsset}"]`);
+    tradeWantAsset = null;
+    if (box) { box.checked = true; box.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+  }
 
   const readTradeForm = () => {
     const ids = (name) => Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(c => Number(c.value));
@@ -2533,7 +2541,7 @@ async function renderKeeperPicks(lg) {
       <p>Pick up to ${k.cap} players to keep. <b class="keeper-count" data-team="${t.id}"></b> ${k.submitted ? '<span class="muted">Your picks are saved. You can change them until the deadline.</span>' : '<span class="muted">Not saved yet.</span>'}</p>
       <table><tr><th>Keep</th><th>Player</th><th>Pos</th><th>GP last season</th></tr>${k.players.map(p => `<tr>
         <td><input type="checkbox" class="keeper-box" data-team="${t.id}" value="${p.draftable_asset_id}"${p.kept ? ' checked' : ''}></td>
-        <td>${esc(p.display_name)}</td><td>${esc(p.position || '')}</td><td>${p.games_played}</td></tr>`).join('')}</table>
+        <td>${pl(p.draftable_asset_id, p.display_name)}</td><td>${esc(p.position || '')}</td><td>${p.games_played}</td></tr>`).join('')}</table>
       <button type="button" class="btn btn-primary keeper-save" data-team="${t.id}">Save keepers</button></div>`;
   }
   if (!teams.length && isCommissioner) html = `<div class="card"><p class="muted">Owners pick their own keepers. AI teams are trimmed automatically when keepers close.</p></div>`;
@@ -2681,7 +2689,7 @@ function drawLeaders() {
   list.sort((a, b) => { const x = val(a, v.sort), y = val(b, v.sort); return (x < y ? -1 : x > y ? 1 : 0) * v.dir || b.points - a.points || a.display_name.localeCompare(b.display_name); });
   $('ll-head').innerHTML = '<tr>' + LEADER_COLS.map(([k, l]) => `<th class="sort" data-k="${k}">${l}${v.sort === k ? (v.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
   $('ll-head').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = ['display_name', 'position', 'real_team', 'team'].includes(k) ? 1 : -1; } drawLeaders(); });
-  $('ll-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${esc(r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
+  $('ll-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${pl(r.draftable_asset_id, r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
     <td>${r.fantasy_team_id ? esc(teamName(r)) : '<span class="muted">Free agent</span>'}</td><td>${r.games_played}</td><td>${r.goals}</td><td>${r.assists}</td><td><strong>${r.points}</strong></td><td>${r.saves}</td><td>${r.shutouts}</td></tr>`).join('')
     || `<tr><td colspan="10" class="muted">No simulated games to count yet.</td></tr>`;
   $('ll-count').textContent = `Showing ${Math.min(100, list.length)} of ${list.length} players.`;
@@ -2707,7 +2715,7 @@ function drawStats() {
   const cols = [['display_name', 'Player'], ['position', 'Pos'], ['real_team', isHockey() ? 'NHL Team' : 'School'], ['team', 'Team'], ['last_season_points', LAST + ' pts']].concat(cache.weeks.map(w => ['w' + w, 'W' + w]));
   $('st-head').innerHTML = '<tr>' + cols.map(([k, l]) => `<th class="sort" data-k="${k}">${l}${v.sort === k ? (v.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
   $('st-head').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (v.sort === k) v.dir *= -1; else { v.sort = k; v.dir = ['display_name', 'position', 'real_team', 'team'].includes(k) ? 1 : -1; } drawStats(); });
-  $('st-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${esc(r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
+  $('st-body').innerHTML = list.slice(0, 100).map(r => `<tr><td><strong>${pl(r.draftable_asset_id, r.display_name)}</strong></td><td>${POS_LABEL[r.position] || r.position || '-'}</td><td>${esc(r.real_team || '')}</td>
     <td>${r.fantasy_team_id ? esc(teamName(r)) : '<span class="muted">Free agent</span>'}</td><td>${pts(r.last_season_points)}</td>${cache.weeks.map(w => `<td>${r.weekly[w] != null ? pts(r.weekly[w]) : '-'}</td>`).join('')}</tr>`).join('');
   $('st-count').textContent = `Showing ${Math.min(100, list.length)} of ${list.length} players.`;
 }
@@ -2944,6 +2952,12 @@ async function start() {
   $('kicker').textContent = `${isHockey() ? 'NHL' : ov.universe_codes.length && !ov.universe_codes.includes('ncaaf') ? 'NFL' : 'College football'} · ${ov.teams.length} teams · commissioner ${ov.commissioner_name || ''}`;
   $('nav-cm').style.display = isCommissioner ? '' : 'none';
   document.title = ov.name;
+  PlayerCard.configure({
+    leagueId: LEAGUE_ID,
+    onChange: () => go(tab),
+    onTrade: ({teamId, assetId}) => { tradeSelectedOppId = teamId; tradeWantAsset = assetId; return go('trades'); },
+  });
+  if (params.get('trade_team')) { tradeSelectedOppId = Number(params.get('trade_team')); tradeWantAsset = Number(params.get('trade_asset')) || null; }
   const want = params.get('tab');
   await go(tabList().some(([id]) => id === want) ? want : 'home');
 }

@@ -81,12 +81,14 @@
 </div>
 
 <script src="/static/session.js"></script>
+<script src="/static/player-card.js?v=20261018"></script>
 <script>
 // Real data only - every value below comes from the live API documented in
 // docs/data_contract.md (the "Decision: auction draft budget & round
 // resolution" section). No mocked/simulated auction state.
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id') || 1;
+PlayerCard.configure({leagueId: LEAGUE_ID});
 const AUCTION_ID = params.get('auction_id') || 1; // see scripts/seed_auction_smoke_test.py
   // and the seed run during development for how auction 1 was created
 
@@ -242,7 +244,7 @@ function renderRoundPanel() {
     <div class="card elev-sm" style="padding:var(--space-4)">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
-          <div class="card-title">${currentRound.display_name}</div>
+          <div class="card-title">${PlayerCard.link(currentRound.draftable_asset_id, currentRound.display_name)}</div>
           <div class="card-meta">Nominated by ${teamsById[currentRound.nominated_by_team_id]?.name || currentRound.nominated_by_team_id}</div>
         </div>
         <div class="tag ${expired ? 'tag-accent-2' : 'tag-accent'}" id="round-timer" style="font-variant-numeric:tabular-nums">${expired ? 'TIME UP' : Math.ceil(remaining) + 's'}</div>
@@ -288,7 +290,7 @@ function renderBoard() {
     row.style.cssText = 'flex-direction:row;align-items:center;padding:var(--space-3) var(--space-4);gap:var(--space-4)';
     row.innerHTML = `
       <span class="tag tag-neutral" style="min-width:40px;justify-content:center">${a.position || '-'}</span>
-      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${a.display_name}</span>
+      <span style="flex:1;font-family:var(--font-heading);font-size:16px">${PlayerCard.link(a.draftable_asset_id, a.display_name)}</span>
       <button class="btn btn-primary" ${canNominate ? '' : 'disabled'}>Nominate</button>
     `;
     row.querySelector('button').onclick = () => nominate(a.draftable_asset_id);
