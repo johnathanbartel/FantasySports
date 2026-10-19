@@ -89,7 +89,7 @@ def asking_prices(db: Session, league: League) -> dict[int, int]:
     """PROVISIONAL price rule: a free agent costs his hidden recruiting price,
     made public once recruiting ends. Players with no recruiting price (a league
     that never ran a recruiting draft) cost the average player's price."""
-    if not is_college(db, league.id):      # no budget outside college leagues: signings are free
+    if not is_college(db, league.id) or waivers.is_budget(league):    # no price system outside college or in a budget league
         return {a: 0 for a in pool_ids(db, league.id)}
     fallback = pricing.ROLE_MEAN_PER_WEEK * league.draft_rounds
     draft = db.query(RecruitingDraft).filter_by(league_id=league.id).first()
@@ -123,7 +123,11 @@ def team_money(db: Session, team: Team) -> dict:
 
 
 def fa_spent(db: Session, team_id: int) -> int:
-    return sum(t.price for t in db.query(FreeAgencyTransaction).filter_by(team_id=team_id, kind="add"))
+    rows = db.query(FreeAgencyTransaction).filter_by(team_id=team_id, kind="add")
+    team = db.get(Team, team_id)
+    if team is not None and waivers.is_budget(db.get(League, team.league_id)):
+        rows = rows.filter(FreeAgencyTransaction.reason != waivers.WAIVER)    # won bids come out of the acquisition budget instead
+    return sum(t.price for t in rows)
 
 
 def roster_count(db: Session, team_id: int) -> int:
@@ -216,7 +220,7 @@ def ai_fill_rosters(db: Session, league_id: int, now: datetime.datetime | None =
     value = pricing.value_by_asset(db, db.query(Team).filter_by(league_id=league_id).count(), league.draft_rounds)
     assets = {a.id: a for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(list(prices) or [0]))}
     position = {i: draftable_asset_position(a) for i, a in assets.items()}
-    on_waivers = waivers.waiver_until(db, league_id, now)
+    on_waivers = waivers.waiver_until(db, league_id, now, blanket=False)
     free = {a for a in prices if a not in rostered_ids(db, league_id) and a not in on_waivers}
     signed: dict[int, int] = {}
 
@@ -268,7 +272,7 @@ def free_agent_board(db: Session, league_id: int) -> list:
     from fantasy_sports.api.schemas import DraftBoardAsset
     from fantasy_sports.platform.draft_stats import stats_by_asset
 
-    on_waivers = waivers.waiver_until(db, league_id, datetime.datetime.utcnow())
+    on_waivers = waivers.waiver_until(db, league_id, datetime.datetime.utcnow(), blanket=False)
     free_ids = [a for a in pool_ids(db, league_id) if a not in rostered_ids(db, league_id) and a not in on_waivers]
     stats = stats_by_asset(db, free_ids)
     assets = db.query(DraftableAsset).filter(DraftableAsset.id.in_(free_ids or [0])).all()

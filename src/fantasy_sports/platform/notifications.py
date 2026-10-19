@@ -48,6 +48,8 @@ WATCHED_SETTINGS: dict[str, str] = {
     "post_draft_waivers": "Post-draft waivers on undrafted players",
     "waiver_hours": "Waiver period (hours)",
     "waiver_processing_days": "Waiver processing days",
+    "acquisition_type": "How players are acquired (no waivers, waivers, full waivers or budget)",
+    "acquisition_budget": "Acquisition budget",
     "draft_order_mode": "Draft order (random or set by the commissioner)",
     "trade_review_hours": "Trade review window (hours)",
     "trade_review_mode": "Who can veto a trade",

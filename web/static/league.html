@@ -1678,9 +1678,11 @@ function waiversBox(wv, team) {
       <span class="muted" style="font-size:12px;white-space:nowrap" title="Clears ${utcLocal(p.until)}">${hoursLeft(p.until)} left</span>
       ${p.claimed ? `<button class="btn btn-secondary" data-wcancel="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claimed</button>`
         : `<button class="btn btn-primary" data-wclaim="${p.draftable_asset_id}" ${canManage(team) ? '' : 'disabled'}>Claim</button>`}</div>`).join('')
-    : '<p class="muted" style="margin:var(--space-2) 0">Nobody is on waivers. A dropped player is held for 24 hours.</p>';
+    : '<p class="muted" style="margin:var(--space-2) 0">Nobody is on waivers.</p>';
   return `<details id="waiver-box" class="card elev-sm" style="padding:var(--space-3) var(--space-4);margin-bottom:var(--space-4)" ${view.waiversOpen ? 'open' : ''}>
     <summary style="cursor:pointer;font-weight:700">Waivers <span class="muted" style="font-weight:400">${mineIdx >= 0 ? `· your team is #${mineIdx + 1} of ${wv.order.length}` : ''}${wv.players.length ? ` · ${wv.players.length} on waivers` : ''}</span></summary>
+    ${wv.acquisition_type === 'budget' ? `<p style="margin:var(--space-2) 0"><strong>Budget:</strong> ${wv.budget_left == null ? '' : '$' + wv.budget_left + ' left of '}$${wv.budget_total} this season. Claims are bids: the highest wins.</p>` : ''}
+    ${wv.acquisition_type === 'full_waivers' ? '<p class="muted" style="font-size:13px;margin:var(--space-2) 0">Full waivers: every free player is on waivers until claims are decided.</p>' : ''}
     <p class="muted" style="font-size:13px;margin:var(--space-2) 0">${esc(wv.basis_note)} Next reset: <strong>${utcLocal(wv.next_reset_at)}</strong> (your time).</p>
     <div class="grid2" style="gap:var(--space-4)"><div><h4 style="margin:0 0 var(--space-1)">Waiver order</h4>${order}</div>
       <div><h4 style="margin:0 0 var(--space-1)">On waivers</h4>${players}</div></div></details>`;
@@ -1722,10 +1724,20 @@ async function unwatch(assetId) {
 async function waiverAct(kind, assetId) {
   showError(''); showResult('');
   try {
-    await FSC.post(`/teams/${cache.tx.team.id}/waivers/${kind}`, {draftable_asset_id: assetId});
+    const wv = cache.tx.wv, budget = wv.acquisition_type === 'budget';
+    const body = {draftable_asset_id: assetId};
+    if (kind === 'claim' && budget) {
+      const left = wv.budget_left == null ? wv.budget_total : wv.budget_left;
+      const ans = prompt(`Your bid in dollars (you have $${left} left). The highest bid wins; a tie goes to the waiver order. You pay your bid if you win and it is not refunded.`, '0');
+      if (ans === null) return;
+      const bid = parseInt(ans, 10);
+      if (Number.isNaN(bid) || bid < 0) { showError('Enter a bid of 0 or more dollars.'); return; }
+      body.bid = bid;
+    }
+    await FSC.post(`/teams/${cache.tx.team.id}/waivers/${kind}`, body);
     view.waiversOpen = true;
     await go('transactions');
-    showResult(kind === 'claim' ? 'Claim placed. It is filled when his 24 hours end, if no team ahead of you in the waiver order claims him.' : 'Claim cancelled.');
+    showResult(kind === 'claim' ? (budget ? `Bid of $${body.bid} placed. When his hold ends the highest bid wins.` : 'Claim placed. It is filled when his hold ends, if no team ahead of you in the waiver order claims him.') : 'Claim cancelled.');
   } catch (e) { showError(e.message); }
 }
 
@@ -2581,6 +2593,15 @@ async function renderLeagueSettings() {
     : `<p>After a draft is complete, a reset needs: <b>${({unanimous: 'every manager to approve', commissioner: 'the commissioner', off: 'nothing - it is not allowed'})[dr.policy]}</b>.</p>`)
     + drOpen + (dr.drafts.length ? dr.drafts.map(drState).join('') : `<p class="muted">No draft has been started in this league.</p>`) + drHist
     + `<p class="muted">While a draft is running the commissioner can reset it alone, to the start or to a chosen point. A completed draft can only be reset until games are scored or players are traded or signed. Pick order and who owns each pick never change.</p></div>`;
+  const ACQ = {waivers: 'Free agency with waivers', no_waivers: 'Free agency, no waivers', full_waivers: 'Full waivers', budget: 'Acquisition budget'};
+  const acq = lg.acquisition_type || 'waivers';
+  const acqBudget = lg.league_type === 'PAID' ? `the league dues ($${Math.floor((lg.annual_dues_cents || 0) / 100)})` : `$${lg.acquisition_budget == null ? 100 : lg.acquisition_budget}`;
+  html += `<div class="card"><h3>How Players Are Acquired</h3>` + (isCommissioner
+    ? `<p><select id="acq-type">${Object.entries(ACQ).map(([v, n]) => `<option value="${v}"${acq === v ? ' selected' : ''}>${n}</option>`).join('')}</select>
+         <label id="acq-budget-wrap"${acq === 'budget' && lg.league_type !== 'PAID' ? '' : ' hidden'} style="margin-left:var(--space-2)">Budget $<input type="number" id="acq-budget" min="0" max="100000" value="${lg.acquisition_budget == null ? 100 : lg.acquisition_budget}" style="width:5rem"></label>
+         <button type="button" class="btn btn-primary" id="acq-save">Save</button></p>`
+    : `<p>Players are acquired by: <b>${esc(ACQ[acq])}</b>${acq === 'budget' ? ` · budget ${acqBudget} per team` : ''}.</p>`)
+    + `<p class="muted"><b>No waivers:</b> a dropped player can be signed at once. <b>Waivers:</b> a dropped player is held for the waiver period, then goes to the first team in the waiver order that claimed him. <b>Full waivers:</b> every free player is always on waivers; claims are decided at the next processing day (or the weekly reset if none is set). <b>Acquisition budget:</b> like waivers, but each claim is a bid and the highest bid wins, ties going to the waiver order. The winner pays his bid, it is not refunded, and the budget starts over each season. In a paid league the budget is the league dues${acq === 'budget' ? ` (here ${acqBudget} per team)` : ''}.</p></div>`;
   html += `<div class="card"><h3>Post-Draft Waivers</h3>` + (isCommissioner
     ? `<p><label><input type="checkbox" id="pdw-on"${lg.post_draft_waivers ? ' checked' : ''}> Put every undrafted player on waivers for 24 hours after the draft ends</label>
          <button type="button" class="btn btn-primary" id="pdw-save">Save</button></p>`
@@ -2688,6 +2709,12 @@ async function renderLeagueSettings() {
     on('do-save', () => call(() => api(`/leagues/${LEAGUE_ID}/draft-order`, jsonOpts('PUT', {
       mode: $('do-mode').value, team_order: $('do-mode').value === 'manual' ? doOrder : null})), 'Draft order saved.'));
   }
+  if ($('acq-type')) $('acq-type').onchange = () => { $('acq-budget-wrap').hidden = !($('acq-type').value === 'budget' && lg.league_type !== 'PAID'); };
+  on('acq-save', () => call(() => {
+    const body = {acquisition_type: $('acq-type').value};
+    if (body.acquisition_type === 'budget' && lg.league_type !== 'PAID') body.acquisition_budget = Math.min(100000, Math.max(0, parseInt($('acq-budget').value, 10) || 0));
+    return api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', body));
+  }, 'Acquisition type saved.'));
   on('wp-save',() => call(() => {
     const days = [...document.querySelectorAll('.wp-day:checked')].map(i => +i.value);
     const hours = Math.min(168, Math.max(0, parseInt($('wp-hours').value, 10) || 0));

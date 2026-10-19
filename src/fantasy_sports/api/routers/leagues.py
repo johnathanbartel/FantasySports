@@ -159,6 +159,8 @@ def create_league(
         post_draft_waivers=payload.post_draft_waivers,
         waiver_hours=payload.waiver_hours,
         waiver_processing_days=payload.waiver_processing_days,
+        acquisition_type=payload.acquisition_type,
+        acquisition_budget=payload.acquisition_budget,
         standings_mode=payload.standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
@@ -629,7 +631,11 @@ def update_league_settings(
         league.draft_reset_policy = payload.draft_reset_policy
     if payload.post_draft_waivers is not None:
         league.post_draft_waivers = payload.post_draft_waivers
-    if payload.waiver_hours is not None or "waiver_processing_days" in sent:
+    if payload.acquisition_type is not None:
+        league.acquisition_type = payload.acquisition_type
+    if "acquisition_budget" in sent:
+        league.acquisition_budget = payload.acquisition_budget
+    if payload.waiver_hours is not None or "waiver_processing_days" in sent or payload.acquisition_type is not None:
         if payload.waiver_hours is not None:
             league.waiver_hours = payload.waiver_hours
         if "waiver_processing_days" in sent:

@@ -182,11 +182,23 @@ const PlayerCard = (() => {
     const route = {watch: [`/teams/${team}/watchlist`, 'Added to your watchlist. Find it on the Transactions tab.'], add: [`/teams/${team}/free-agency/add`, 'Signed.'], drop: [`/teams/${team}/free-agency/drop`, 'Dropped. He is on waivers for 24 hours.'],
                    claim: [`/teams/${team}/waivers/claim`, 'Claim placed. It is filled when his waiver period ends.'], cancel: [`/teams/${team}/waivers/cancel`, 'Claim cancelled.'],
                    unwatch: [null, 'Removed from your watchlist.']}[kind];
+    let body = {draftable_asset_id: id};
+    if (kind === 'claim') {
+      try {
+        const wv = await FSC.api(`/leagues/${d.league_id}/waivers?team_id=${team}`);
+        if (wv.acquisition_type === 'budget') {
+          const ans = prompt(`Your bid in dollars (you have $${wv.budget_left} left). The highest bid wins; you pay your bid if you win and it is not refunded.`, '0');
+          const bid = ans === null ? NaN : parseInt(ans, 10);
+          if (Number.isNaN(bid) || bid < 0) return;
+          body.bid = bid;
+        }
+      } catch (e) {}
+    }
     busy = true;
     el.querySelectorAll('[data-pc-act]').forEach(b => b.disabled = true);
     try {
       if (kind === 'unwatch') await FSC.del(`/teams/${team}/watchlist/${id}`);
-      else await FSC.post(route[0], {draftable_asset_id: id});
+      else await FSC.post(route[0], body);
       busy = false;
       if (cfg.onChange) { try { await cfg.onChange(kind, id); } catch (e) {} }
       const fresh = await FSC.api(`/leagues/${d.league_id}/players/${id}/card`);

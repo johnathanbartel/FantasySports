@@ -22,6 +22,17 @@ Waivers: a dropped player is on waivers for 24 hours, and teams claim him in wai
   * A commissioner can set the order by hand (platform/commissioner.py); it holds until the next reset, and a team that wins
     a claim after it was set still drops to the back.
 
+Acquisition types (leagues.acquisition_type):
+  * no_waivers   - a drop is a free agent at once; waiver_hours and post-draft waivers are ignored.
+  * waivers      - the default, described above.
+  * full_waivers - every player nobody rosters is always on waivers. Claims resolve at the next processing day (midnight
+                   Pacific), or at the weekly reset if the league set none; players nobody claims stay on waivers. The AI's
+                   roster fill ignores this hold so AI teams can still fill.
+  * budget       - as "waivers", but a claim carries a bid and the highest bid wins (waiver order breaks ties). The winner
+                   pays his bid, non-refundable. The budget is a paid league's annual dues (whole dollars), else
+                   leagues.acquisition_budget (default 100), and starts over each season. Direct signings of free agents
+                   cost nothing and the college asking-price system is off.
+
 Goal differential exists for NHL leagues (series standings). Other leagues have no weekly goal differential here, so
 their order is the draft fallback all season - PROVISIONAL, until their standings are wired in.
 """
@@ -49,6 +60,9 @@ from fantasy_sports.platform.db.models.core import (
 )
 
 WAIVER_HOURS = 24
+NO_WAIVERS, WAIVERS, FULL_WAIVERS, BUDGET = "no_waivers", "waivers", "full_waivers", "budget"
+ACQUISITION_TYPES = (NO_WAIVERS, WAIVERS, FULL_WAIVERS, BUDGET)
+DEFAULT_ACQUISITION_BUDGET = 100
 WAIVER = "waiver"                      # FreeAgencyTransaction.reason for a signing won off waivers
 PACIFIC = "America/Los_Angeles"
 _PST = datetime.timedelta(hours=-8)    # used only when the platform has no tz database (Windows without tzdata)
@@ -86,8 +100,45 @@ def next_reset(now: datetime.datetime) -> datetime.datetime:
 
 
 # ---- who is on waivers --------------------------------------------------------------------------------------------
+def acquisition_type(league: League) -> str:
+    return league.acquisition_type or WAIVERS
+
+
+def is_budget(league: League) -> bool:
+    return acquisition_type(league) == BUDGET
+
+
 def waiver_hours(league: League) -> int:
+    if acquisition_type(league) == NO_WAIVERS:
+        return 0
     return WAIVER_HOURS if league.waiver_hours is None else league.waiver_hours
+
+
+def budget_total(league: League) -> int:
+    """Whole dollars each team can bid over a season: a paid league's dues, else the league's own budget."""
+    if league.league_type == "PAID":
+        return (league.annual_dues_cents or 0) // 100
+    return DEFAULT_ACQUISITION_BUDGET if league.acquisition_budget is None else league.acquisition_budget
+
+
+def budget_left(db: Session, team: Team) -> int:
+    """The team's budget less the bids it has won this season (live transactions are cleared at rollover), plus any
+    commissioner correction."""
+    league = db.get(League, team.league_id)
+    spent = sum(t.price for t in db.query(FreeAgencyTransaction).filter_by(
+        team_id=team.id, kind="add", reason=WAIVER))
+    return budget_total(league) - spent + commissioner.faab_adjustment(db, team.id)
+
+
+def next_processing(league: League, now: datetime.datetime) -> datetime.datetime:
+    """The first processing moment after `now`: the next midnight Pacific that begins a processing day, else the weekly reset."""
+    days = set(league.waiver_processing_days or [])
+    if not days:
+        return next_reset(now)
+    day = _to_local(now).date() + datetime.timedelta(days=1)
+    while day.weekday() not in days:
+        day += datetime.timedelta(days=1)
+    return _to_utc(datetime.datetime.combine(day, datetime.time()))
 
 
 def window_end(league: League, start: datetime.datetime) -> datetime.datetime:
@@ -108,12 +159,21 @@ def window_end(league: League, start: datetime.datetime) -> datetime.datetime:
     return _to_utc(datetime.datetime.combine(day, datetime.time()))
 
 
-def waiver_until(db: Session, league_id: int, now: datetime.datetime) -> dict[int, datetime.datetime]:
-    """asset id -> the moment his waiver period ends, for every player dropped recently enough still to be held and not signed since."""
+def waiver_until(db: Session, league_id: int, now: datetime.datetime, blanket: bool = True) -> dict[int, datetime.datetime]:
+    """asset id -> the moment his waiver period ends, for every player dropped recently enough still to be held and not signed since.
+    In a full-waivers league that is every unrostered player; blanket=False leaves that out (the AI's roster fill)."""
+    from fantasy_sports.platform import free_agency
+
     league = db.get(League, league_id)
-    post_draft = _post_draft_until(db, league_id, now)
     if league is None:
         return {}
+    if acquisition_type(league) == FULL_WAIVERS:
+        if not blanket:
+            return {}
+        end = next_processing(league, now)
+        taken = free_agency.rostered_ids(db, league_id)
+        return {a: end for a in free_agency.pool_ids(db, league_id) if a not in taken}
+    post_draft = _post_draft_until(db, league_id, now)
     # Looking back the longest a hold can last: the period plus a full week to the next processing day.
     reach = datetime.timedelta(hours=waiver_hours(league)) + datetime.timedelta(days=8)
     drops = db.query(FreeAgencyTransaction).filter(
@@ -152,7 +212,7 @@ def _post_draft_until(db: Session, league_id: int, now: datetime.datetime) -> tu
     from fantasy_sports.platform import free_agency
 
     league = db.get(League, league_id)
-    if league is None or not league.post_draft_waivers:
+    if league is None or not league.post_draft_waivers or acquisition_type(league) in (NO_WAIVERS, FULL_WAIVERS):
         return None
     ended = _draft_ended_at(db, league_id)
     if ended is None:
@@ -248,7 +308,7 @@ def waiver_order(db: Session, league_id: int, at: datetime.datetime | None = Non
 
 
 # ---- claims -------------------------------------------------------------------------------------------------------
-def place_claim(db: Session, team: Team, asset_id: int, now: datetime.datetime | None = None) -> WaiverClaim:
+def place_claim(db: Session, team: Team, asset_id: int, bid: int = 0, now: datetime.datetime | None = None) -> WaiverClaim:
     """Raises ValueError with a message meant for the user."""
     from fantasy_sports.platform import free_agency
 
@@ -259,6 +319,15 @@ def place_claim(db: Session, team: Team, asset_id: int, now: datetime.datetime |
     locked, why = elimination.free_agency_locked(db.get(League, team.league_id), team)
     if locked:
         raise ValueError(why)
+    league = db.get(League, team.league_id)
+    if is_budget(league):
+        left = budget_left(db, team)
+        if bid < 0:
+            raise ValueError("A bid can't be negative")
+        if bid > left:
+            raise ValueError(f"You have ${max(0, left)} of budget left")
+    else:
+        bid = 0
     until = waiver_until(db, team.league_id, now).get(asset_id)
     if until is None:
         raise ValueError("That player isn't on waivers - sign him from the free-agent list")
@@ -266,7 +335,7 @@ def place_claim(db: Session, team: Team, asset_id: int, now: datetime.datetime |
     if existing is not None:
         raise ValueError("You already have a claim on that player")
     claim = WaiverClaim(league_id=team.league_id, team_id=team.id, draftable_asset_id=asset_id, available_at=until,
-                        created_at=now, status="pending")
+                        created_at=now, status="pending", bid=bid)
     db.add(claim)
     db.flush()
     return claim
@@ -322,16 +391,20 @@ def process(db: Session, league_id: int, now: datetime.datetime | None = None) -
         rank = {t: i for i, t in enumerate(waiver_order(db, league_id, at).teams)}
         rostered = free_agency.rostered_ids(db, league_id)
         winner = None
-        for c in sorted(claims, key=lambda c: (rank.get(c.team_id, len(rank)), c.id)):
+        budget = is_budget(league)
+        for c in sorted(claims, key=lambda c: (-c.bid if budget else 0, rank.get(c.team_id, len(rank)), c.id)):
             c.resolved_at = at
             team = db.get(Team, c.team_id)
             problem = "He was signed by another team" if asset_id in rostered else free_agency.signing_problem(db, league, team, asset_id)
+            if budget and not problem and c.bid > budget_left(db, team):
+                problem = f"Bid of ${c.bid} is more than the budget left"
             if winner is not None:
                 c.status = "lost"
             elif problem:
                 c.status, c.note = "failed", problem[:200]
             else:
-                free_agency._sign(db, team, asset_id, free_agency.asking_prices(db, league)[asset_id], WAIVER, at)
+                price = c.bid if budget else free_agency.asking_prices(db, league)[asset_id]
+                free_agency._sign(db, team, asset_id, price, WAIVER, at)
                 c.status, winner = "won", c
                 signed += 1
             db.flush()
