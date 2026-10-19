@@ -69,6 +69,7 @@
     <div role="tablist" aria-label="Draft view" style="display:flex;gap:var(--space-2);margin-bottom:var(--space-4)">
       <button class="btn btn-secondary" id="view-grid" role="tab" aria-selected="false">Draft board</button>
       <button class="btn btn-secondary" id="view-room" role="tab" aria-selected="false">Draft room</button>
+      <button class="btn btn-secondary" id="view-grades" role="tab" aria-selected="false" style="display:none">Draft grades</button>
     </div>
 
     <div id="setup-panel" class="card elev-sm" style="display:none;padding:var(--space-5);margin-bottom:var(--space-5)"></div>
@@ -80,6 +81,8 @@
       <div id="grid-board" class="grid-wrap"></div>
       <p class="text-muted" id="grid-empty" style="display:none">The draft board fills in as picks are made.</p>
     </div>
+
+    <div id="grades-view" style="display:none"></div>
 
     <div id="room-view" style="display:grid;grid-template-columns:1.7fr 1fr;gap:var(--space-6);align-items:start">
 
@@ -1027,7 +1030,8 @@ function setView(which) {
   gridView = which;
   document.getElementById('grid-view').style.display = which === 'grid' ? 'block' : 'none';
   document.getElementById('room-view').style.display = which === 'room' ? 'grid' : 'none';
-  for (const [id, key] of [['view-grid', 'grid'], ['view-room', 'room']]) {
+  document.getElementById('grades-view').style.display = which === 'grades' ? 'block' : 'none';
+  for (const [id, key] of [['view-grid', 'grid'], ['view-room', 'room'], ['view-grades', 'grades']]) {
     const b = document.getElementById(id);
     b.className = key === which ? 'btn btn-primary' : 'btn btn-secondary';
     b.setAttribute('aria-selected', key === which ? 'true' : 'false');
@@ -1036,6 +1040,30 @@ function setView(which) {
 }
 document.getElementById('view-grid').onclick = () => setView('grid');
 document.getElementById('view-room').onclick = () => setView('room');
+document.getElementById('view-grades').onclick = () => setView('grades');
+
+// ---- draft grades (NHL): shown once the draft is complete and projections exist (platform/draft_grades.py) ----
+let gradesLoaded = false, gradesTriedAt = 0;
+async function loadGrades() {
+  if (gradesLoaded || !picks.length || onClockPick() || Date.now() - gradesTriedAt < 30000) return;     // until the draft completes, look again at most every 30s
+  gradesTriedAt = Date.now();
+  let g;
+  try { g = await api(`/leagues/${LEAGUE_ID}/draft-grades`); } catch (e) { return; }     // not an NHL league: no tab
+  if (!g.available && !/history/i.test(g.reason || '')) return;
+  gradesLoaded = true;
+  const box = document.getElementById('grades-view');
+  if (!g.available) {
+    if (g.reason && /history/i.test(g.reason)) { box.innerHTML = `<p class="text-muted">Draft grades need projections: ${esc(g.reason)}.</p>`; document.getElementById('view-grades').style.display = ''; }
+    return;
+  }
+  document.getElementById('view-grades').style.display = '';
+  const pk = Object.fromEntries(g.picks.map(p => [p.pick_number, p]));
+  const pickList = (nums) => nums.map(n => pk[n] ? `#${n} ${esc(pk[n].name)} (${pk[n].value > 0 ? '+' : ''}${pk[n].value})` : '').filter(Boolean).join(', ') || '-';
+  box.innerHTML = `<p class="text-muted" style="margin:0 0 var(--space-3);font-size:13px">Half <strong>haul</strong>: the projected points of the best lineup (1 C, 2 W, 2 D, 1 G) each team drafted. Half <strong>value</strong>: how many projected points each pick returned above what that pick number normally returns. Projections come from each player's last three seasons, adjusted for age and games played, so a grade is relative to this league and is not a result.</p>
+    <div class="card elev-sm" style="padding:var(--space-2) var(--space-4);overflow-x:auto"><table class="table" style="min-width:720px"><thead><tr><th>#</th><th>Team</th><th>Grade</th><th title="Projected points of the best drafted lineup">Haul</th><th title="Projected points above the board, summed over every pick">Value</th><th>Best picks</th><th>Biggest reaches</th></tr></thead><tbody>
+      ${g.teams.map(t => `<tr><td>${t.rank}</td><td>${esc(t.team_name)}</td><td><strong style="font-size:18px">${esc(t.grade)}</strong></td><td>${t.haul_points}</td><td>${t.value_points > 0 ? '+' : ''}${t.value_points}</td><td style="font-size:12px">${pickList(t.best_picks)}</td><td style="font-size:12px">${pickList(t.worst_picks)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 
 function render() {
   if (gridView === null) {
@@ -1049,6 +1077,7 @@ function render() {
   renderPicks();
   renderGrid();
   updateQueueBadge();
+  loadGrades();
   if (rosterTab === 'queue') renderQueue();
   renderRosterTab();
 }
