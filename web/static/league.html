@@ -2586,6 +2586,16 @@ async function renderLeagueSettings() {
          <button type="button" class="btn btn-primary" id="pdw-save">Save</button></p>`
     : `<p>Post-draft waivers on undrafted players: <b>${lg.post_draft_waivers ? 'on' : 'off'}</b>.</p>`)
     + `<p class="muted">When on, teams claim undrafted players in waiver order instead of signing them the moment the draft ends. Claims not made clear to free agency after 24 hours. Applies to the draft that ends next, or one that ended in the last 24 hours.</p></div>`;
+  const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const wDays = lg.waiver_processing_days || [];
+  const wHours = lg.waiver_hours == null ? 24 : lg.waiver_hours;
+  const wSummary = `${wHours ? wHours + ' hours' : 'no hold'}${wHours && wDays.length ? ', claims decided at midnight Pacific starting ' + wDays.map(d => WD[d]).join(', ') : wHours ? ', claims decided when the period ends' : ''}`;
+  html += `<div class="card"><h3>Waiver Period</h3>` + (isCommissioner
+    ? `<p><label>Hold a dropped player on waivers for <input type="number" id="wp-hours" min="0" max="168" value="${wHours}" style="width:5rem"> hours</label> (0 = no hold)</p>
+       <p>Process claims on: ${WD.map((n, i) => `<label style="margin-right:var(--space-2)"><input type="checkbox" class="wp-day" value="${i}"${wDays.includes(i) ? ' checked' : ''}> ${n}</label>`).join('')}
+         <button type="button" class="btn btn-primary" id="wp-save">Save</button></p>`
+    : `<p>Waiver period: <b>${esc(wSummary)}</b>.</p>`)
+    + `<p class="muted">With no processing days checked, claims are decided the moment the period ends. With days checked, a player stays on waivers after the period ends until midnight Pacific at the start of the next checked day, then the claim from the team first in the waiver order wins. Claims already placed follow a change.</p></div>`;
   const pending = (await api(`/leagues/${LEAGUE_ID}/setting-changes`)).filter(c => c.status === 'voting');
   const SETTING_NAMES = {league_type: 'League type', league_format: 'League format'};
   const valueName = (f, v) => f === 'league_format' ? fmtName(v) : (v === 'PAID' ? 'Paid' : 'Free');
@@ -2678,6 +2688,11 @@ async function renderLeagueSettings() {
     on('do-save', () => call(() => api(`/leagues/${LEAGUE_ID}/draft-order`, jsonOpts('PUT', {
       mode: $('do-mode').value, team_order: $('do-mode').value === 'manual' ? doOrder : null})), 'Draft order saved.'));
   }
+  on('wp-save',() => call(() => {
+    const days = [...document.querySelectorAll('.wp-day:checked')].map(i => +i.value);
+    const hours = Math.min(168, Math.max(0, parseInt($('wp-hours').value, 10) || 0));
+    return api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {waiver_hours: hours, waiver_processing_days: days.length ? days : null}));
+  }, 'Waiver period saved.'));
   on('pdw-save',() => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {post_draft_waivers: $('pdw-on').checked})), 'Post-draft waivers setting saved.'));
   on('dr-policy-save',() => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {draft_reset_policy: $('dr-policy').value})), 'Draft reset rule saved.'));
   document.querySelectorAll('.dr-reset').forEach(b => b.onclick = () => {

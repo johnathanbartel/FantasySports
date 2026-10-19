@@ -18,6 +18,15 @@ def _naive_utc(v):
     return v
 
 
+def _processing_days(v):
+    """Waiver processing days: weekdays 0 (Monday) - 6 (Sunday), each once, sorted; an empty list is refused."""
+    if v is None:
+        return v
+    if not v or any(not 0 <= d <= 6 for d in v):
+        raise ValueError("Waiver processing days are weekdays 0 (Monday) to 6 (Sunday), at least one")
+    return sorted(set(v))
+
+
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,8 +99,13 @@ class LeagueCreateRequest(BaseModel):
     draft_order_mode: Literal["random", "manual"] = "random"
     # Undrafted players go on waivers for 24 hours after the draft ends (platform/waivers.py).
     post_draft_waivers: bool = False
+    # How long a dropped player is held (0 = not at all) and the weekdays claims are processed on (0 = Monday ... 6 = Sunday,
+    # midnight Pacific; null = the moment the hold ends).
+    waiver_hours: int = Field(default=24, ge=0, le=168)
+    waiver_processing_days: list[int] | None = None
 
     _keeper_deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
+    _waiver_days = field_validator("waiver_processing_days")(_processing_days)
 
 
 class DraftOrderRequest(BaseModel):
@@ -124,6 +138,8 @@ class LeagueSettingsRequest(BaseModel):
     commissioner_trade_vote_extra_votes: int | None = Field(default=None, ge=1, le=20)
     draft_reset_policy: Literal["unanimous", "commissioner", "off"] | None = None
     post_draft_waivers: bool | None = None
+    waiver_hours: int | None = Field(default=None, ge=0, le=168)
+    waiver_processing_days: list[int] | None = None                          # send null for "when the hold ends"
     platform_plan: Literal["AD_SUPPORTED", "AD_FREE"] | None = None          # not while a draft is in progress
     trade_review_hours: int | None = Field(default=None, ge=0, le=72)        # 0 = no review window
     trade_review_mode: Literal["none", "commissioner", "league", "both"] | None = None
@@ -142,6 +158,7 @@ class LeagueSettingsRequest(BaseModel):
     keeper_deadline: datetime.datetime | None = None
 
     _deadline = field_validator("keeper_deadline", "trade_deadline")(_naive_utc)
+    _waiver_days = field_validator("waiver_processing_days")(_processing_days)
 
 
 class TeamSetupItem(BaseModel):
@@ -235,6 +252,8 @@ class LeagueOut(ORMModel):
     draft_reset_policy: str = "unanimous"
     draft_order_mode: str = "random"
     post_draft_waivers: bool = False
+    waiver_hours: int = 24
+    waiver_processing_days: list[int] | None = None
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int

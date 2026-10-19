@@ -187,6 +187,10 @@ class League(Base):
     # Post-draft waivers (platform/waivers.py): when True, every undrafted player is on waivers for 24 hours after the
     # draft ends (claims in waiver order) instead of being an immediate free agent. Off by default.
     post_draft_waivers: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # How long a dropped player is held on waivers (hours; 0 = none, he is a free agent at once), and the weekdays claims are
+    # processed on (0 = Monday ... 6 = Sunday, at midnight Pacific; NULL = the moment the hold ends). See platform/waivers.py.
+    waiver_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    waiver_processing_days: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
