@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock Draft - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
+<style>
+  body { margin: 0; }
+  .team-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-divider); border-radius: var(--radius-md); }
+  .team-row.you { border-color: var(--color-accent); }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        FantasyMotion
+      </a>
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/join-league.html">Join league</a>
+      <a href="/static/create-league.html">Create league</a>
+      <a href="/static/mock-drafts.html" aria-current="page">Mock drafts</a>
+    </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
+  </div>
+
+  <div style="max-width:760px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+    <div id="error-banner" role="alert" style="display:none;margin-bottom:var(--space-4)"></div>
+    <div id="page"><p class="text-muted">Loading...</p></div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const leagueId = Number(params.get('league_id'));
+const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football (NFL)', nhl: 'Hockey (NHL)'};
+const KIND = {human: ['Player', 'tag-accent'], open: ['Open human slot', 'tag-neutral'], ai: ['AI', 'tag-neutral']};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const signedIn = () => !!(FSC.user() && FSC.user().token);
+
+let m = null;
+let redirected = false;
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+function countdown() {
+  if (!m || m.status !== 'lobby' || !m.start_at) return '';
+  const secs = Math.round((new Date(m.start_at + 'Z') - Date.now()) / 1000);
+  if (secs <= 0) return 'Starting...';
+  const h = Math.floor(secs / 3600), mi = Math.floor(secs % 3600 / 60), s = secs % 60;
+  return 'Starts in ' + (h ? `${h}h ` : '') + (h || mi ? `${mi}m ` : '') + `${s}s`;
+}
+
+function boardUrl() {
+  return `/static/draft-board.html?league_id=${m.id}` + (m.my_team_id ? `&team_id=${m.my_team_id}` : '');
+}
+
+function render() {
+  const startLocal = m.start_at ? new Date(m.start_at + 'Z').toLocaleString([], {weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : '';
+  const joinUrl = location.origin + `/static/mock-draft.html?league_id=${m.id}`;
+  let action = '';
+  if (m.status === 'in_progress') {
+    action = `<a class="btn btn-primary" href="${boardUrl()}">${m.my_team_id ? 'Go to the draft' : 'Watch the draft'}</a>`;
+  } else if (m.status === 'complete') {
+    action = `<a class="btn btn-primary" href="${boardUrl()}">See the results</a>`;
+  } else if (m.my_team_id) {
+    action = m.is_creator ? '' : '<button class="btn btn-secondary" id="leave-btn">Give up my slot</button>';
+  } else if (!signedIn()) {
+    action = `<a class="btn btn-primary" href="/static/login.html?redirect=${encodeURIComponent(location.pathname + location.search)}">Sign in to join</a>`;
+  } else if (m.can_join) {
+    action = '<button class="btn btn-primary" id="join-btn">Join this mock draft</button>';
+  } else {
+    action = `<span class="text-muted">${esc(m.join_blocker || 'No human slot is open.')}</span>`;
+  }
+  const creatorTools = m.is_creator ? `
+    <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-divider)">
+      ${m.status === 'lobby' ? '<button class="btn btn-secondary" id="start-btn">Start now</button>' : ''}
+      <button class="btn btn-secondary" id="cancel-btn">Delete mock draft</button>
+    </div>` : '';
+  const policy = m.fill_ai_if_unfilled
+    ? 'Empty human slots become AI teams at the start time.'
+    : 'Empty human slots are removed at the start time, so the draft may have fewer teams.';
+  document.title = `${m.name} - Mock Draft`;
+  document.getElementById('page').innerHTML = `
+    <div class="card elev-sm" style="padding:var(--space-5)">
+      <div style="display:flex;justify-content:space-between;gap:var(--space-3);align-items:baseline;flex-wrap:wrap">
+        <h1 style="margin:0;font-size:26px">${esc(m.name)}</h1>
+        <span class="tag ${m.status === 'lobby' ? 'tag-accent' : 'tag-neutral'}">${m.visibility === 'public' ? 'Public' : 'Private'}</span>
+      </div>
+      <p class="text-muted" style="margin:var(--space-2) 0 var(--space-4)">
+        ${esc(SPORT_LABELS[m.universe_code] || m.universe_code)} &middot; ${m.size} teams &middot; ${m.rounds} rounds &middot; ${m.pick_seconds}s per pick &middot; created by ${esc(m.creator_name)}
+      </p>
+      ${m.status === 'lobby' ? `
+        <div style="font-size:28px;font-family:var(--font-heading);font-weight:700" id="countdown">${countdown()}</div>
+        <div class="text-muted" style="font-size:13px;margin-bottom:var(--space-3)">${esc(startLocal)}. ${policy}</div>` :
+        `<div style="font-size:20px;font-family:var(--font-heading);font-weight:700;margin-bottom:var(--space-3)">${m.status === 'in_progress' ? 'The draft is under way' : 'The draft is finished'}</div>`}
+      <div style="margin-bottom:var(--space-4)">${action}</div>
+      ${m.visibility === 'private' && m.status === 'lobby' && m.my_team_id ? `
+        <div class="text-muted" style="font-size:13px;margin-bottom:var(--space-4)">Share this link to invite people: <code>${esc(joinUrl)}</code></div>` : ''}
+      <div style="font-size:14px;margin-bottom:var(--space-2)"><strong>${m.humans_joined} of ${m.human_slots}</strong> human slots filled</div>
+      <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+        ${m.teams.map(t => `
+          <div class="team-row ${t.is_you ? 'you' : ''}">
+            <span style="flex:1">${esc(t.name)}${t.is_you ? ' <em class="text-muted">(you)</em>' : ''}</span>
+            <span class="tag ${KIND[t.kind][1]}">${KIND[t.kind][0]}</span>
+          </div>`).join('')}
+      </div>
+      ${creatorTools}
+    </div>`;
+  const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  bind('join-btn', () => act(() => FSC.post(`/mock-drafts/${m.id}/join`)));
+  bind('leave-btn', () => act(() => FSC.post(`/mock-drafts/${m.id}/leave`)));
+  bind('start-btn', () => act(() => FSC.post(`/mock-drafts/${m.id}/start`)));
+  bind('cancel-btn', async () => {
+    if (!confirm('Delete this mock draft for everyone?')) return;
+    try { await FSC.del(`/mock-drafts/${m.id}`); location.href = '/static/mock-drafts.html'; } catch (err) { showError(err.message); }
+  });
+}
+
+async function act(fn) {
+  showError('');
+  try { m = await fn(); render(); maybeEnter(); } catch (err) { showError(err.message); refresh(); }
+}
+
+// Once the draft starts, people in it go straight to the draft room.
+function maybeEnter() {
+  if (m && m.status === 'in_progress' && m.my_team_id && !redirected) {
+    redirected = true;
+    location.href = boardUrl();
+  }
+}
+
+async function refresh() {
+  try {
+    m = await FSC.api(`/mock-drafts/${leagueId}`);
+    render();
+    maybeEnter();
+  } catch (err) {
+    document.getElementById('page').innerHTML = '';
+    showError(err.status === 404 ? 'This mock draft does not exist (it may have been deleted).' : err.message);
+  }
+}
+
+setInterval(() => { const el = document.getElementById('countdown'); if (el) el.textContent = countdown(); }, 1000);
+setInterval(refresh, 4000);
+FSC.renderNav();
+refresh();
+</script>
+</body>
+</html>

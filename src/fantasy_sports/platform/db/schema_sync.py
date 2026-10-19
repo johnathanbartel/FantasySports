@@ -39,7 +39,8 @@ def ensure_latest_schema(engine):
                               ("trade_review_hours", "INTEGER DEFAULT 24 NOT NULL"),
                               ("trade_review_mode", "VARCHAR(12) DEFAULT 'both' NOT NULL"),
                               ("draft_reset_policy", "VARCHAR(12) DEFAULT 'unanimous' NOT NULL"),
-                              ("draft_order_mode", "VARCHAR(10) DEFAULT 'random' NOT NULL")):
+                              ("draft_order_mode", "VARCHAR(10) DEFAULT 'random' NOT NULL"),
+                              ("is_mock_draft", "BOOLEAN DEFAULT 0 NOT NULL"), ("mock_pick_seconds", "INTEGER")):
                 if name not in cols:
                     conn.execute(text(f"ALTER TABLE leagues ADD COLUMN {name} {ddl}"))
 

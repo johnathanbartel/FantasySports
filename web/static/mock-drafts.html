@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock Drafts - FantasyMotion</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
+<style>
+  body { margin: 0; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-4); }
+  .field label { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; }
+  .field input[type=text], .field input[type=number], .field input[type=datetime-local], .field select {
+    padding: 8px 10px; border-radius: var(--radius-md); border: 1px solid var(--color-divider);
+    background: var(--color-bg); color: var(--color-text); font-size: 14px; font-family: var(--font-body);
+  }
+  .field .hint { font-size: 12px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+  .check { display: flex; gap: var(--space-2); align-items: flex-start; font-size: 14px; margin-bottom: var(--space-4); }
+  .check input { width: auto; margin-top: 3px; }
+  @media (max-width: 640px) { .row2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        FantasyMotion
+      </a>
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/join-league.html">Join league</a>
+      <a href="/static/create-league.html">Create league</a>
+      <a href="/static/mock-drafts.html" aria-current="page">Mock drafts</a>
+    </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
+  </div>
+
+  <div style="max-width:1100px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+    <div style="margin-bottom:var(--space-6)">
+      <h1 style="margin:0 0 var(--space-2)">Mock drafts</h1>
+      <p class="text-muted" style="max-width:640px;margin:0">Practice a draft with other managers and AI teams. Join a public mock draft, or set up your own.</p>
+    </div>
+
+    <div id="error-banner" role="alert" style="display:none;margin-bottom:var(--space-4)"></div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-6);align-items:start">
+      <div>
+        <h2 style="margin:0 0 var(--space-3);font-size:20px">Open public mock drafts</h2>
+        <div id="public-list" style="display:flex;flex-direction:column;gap:var(--space-3)"></div>
+
+        <h2 style="margin:var(--space-6) 0 var(--space-3);font-size:20px">Your mock drafts</h2>
+        <div id="mine-list" style="display:flex;flex-direction:column;gap:var(--space-3)"></div>
+      </div>
+
+      <form id="create-form" class="card elev-sm" style="padding:var(--space-5)">
+        <h2 style="margin:0 0 var(--space-4);font-size:20px">Create a mock draft</h2>
+        <div id="create-signin" class="text-muted" style="display:none;margin-bottom:var(--space-4)">
+          <a href="/static/login.html?redirect=%2Fstatic%2Fmock-drafts.html">Sign in or create an account</a> to create or join a mock draft.
+        </div>
+
+        <div class="field">
+          <label for="f-name">Name</label>
+          <input type="text" id="f-name" required maxlength="120" placeholder="Saturday night mock">
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="f-sport">Sport</label>
+            <select id="f-sport">
+              <option value="nhl">Hockey (NHL)</option>
+              <option value="nfl">Football (NFL)</option>
+              <option value="ncaaf">College Football</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-start">Starts</label>
+            <input type="datetime-local" id="f-start" required>
+            <span class="hint">Your local time. The draft starts by itself then.</span>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="f-size">Teams</label>
+            <input type="number" id="f-size" min="2" max="32" value="12" required>
+          </div>
+          <div class="field">
+            <label for="f-humans">Human slots</label>
+            <input type="number" id="f-humans" min="1" max="12" value="4" required>
+            <span class="hint">People, including you. The rest of the teams are AI.</span>
+          </div>
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label for="f-seconds">Seconds per pick</label>
+            <input type="number" id="f-seconds" min="10" max="600" value="60" required>
+          </div>
+          <div class="field">
+            <label for="f-vis">Who can join</label>
+            <select id="f-vis">
+              <option value="public">Public - anyone, listed here</option>
+              <option value="private">Private - only with the link</option>
+            </select>
+          </div>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="f-fill" checked>
+          <span>If not enough people join by the start time, let AI take the empty human slots.
+            <span class="hint" style="display:block">Unchecked, empty human slots are removed and the draft runs with fewer teams.</span></span>
+        </label>
+        <button type="submit" class="btn btn-primary btn-block" style="padding:10px">Create mock draft</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const SPORT_LABELS = {ncaaf: 'College Football', nfl: 'Football (NFL)', nhl: 'Hockey (NHL)'};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const when = iso => iso ? new Date(iso + 'Z').toLocaleString([], {weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : 'No time set';
+const signedIn = () => !!(FSC.user() && FSC.user().token);
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+
+const STATUS = {lobby: 'Waiting to start', in_progress: 'Drafting now', complete: 'Finished'};
+
+function card(m) {
+  return `
+    <a class="card elev-sm" href="/static/mock-draft.html?league_id=${m.id}" style="display:block;padding:var(--space-4);text-decoration:none;color:inherit">
+      <div style="display:flex;justify-content:space-between;gap:var(--space-3);align-items:baseline">
+        <strong>${esc(m.name)}</strong>
+        <span class="tag ${m.status === 'lobby' ? 'tag-accent' : 'tag-neutral'}">${STATUS[m.status]}</span>
+      </div>
+      <div class="text-muted" style="font-size:13px;margin-top:var(--space-1)">
+        ${esc(SPORT_LABELS[m.universe_code] || m.universe_code)} &middot; ${m.size} teams &middot; ${m.pick_seconds || 0}s picks &middot; ${when(m.start_at)}
+      </div>
+      <div style="font-size:13px;margin-top:var(--space-2)">
+        ${m.humans_joined} of ${m.human_slots} human slots filled${m.open_slots ? ` &middot; <strong>${m.open_slots} open</strong>` : ''}
+        ${m.visibility === 'private' ? ' &middot; private' : ''}
+      </div>
+    </a>`;
+}
+
+async function load() {
+  const pub = await FSC.api('/mock-drafts/public').catch(() => []);
+  document.getElementById('public-list').innerHTML = pub.length ? pub.map(card).join('')
+    : '<p class="text-muted" style="margin:0">No public mock drafts are waiting for players. Create one.</p>';
+  const mineEl = document.getElementById('mine-list');
+  if (!signedIn()) {
+    mineEl.innerHTML = '<p class="text-muted" style="margin:0">Sign in to see the mock drafts you are in.</p>';
+    document.getElementById('create-signin').style.display = 'block';
+    return;
+  }
+  const mine = await FSC.api('/mock-drafts/mine').catch(() => []);
+  mineEl.innerHTML = mine.length ? mine.map(card).join('') : '<p class="text-muted" style="margin:0">You are not in any mock drafts yet.</p>';
+}
+
+function defaultStart() {
+  const d = new Date(Date.now() + 30 * 60000);
+  d.setSeconds(0, 0);
+  d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+document.getElementById('f-start').value = defaultStart();
+
+const sizeEl = document.getElementById('f-size'), humansEl = document.getElementById('f-humans');
+function syncHumans() {
+  const size = Math.max(2, Number(sizeEl.value) || 2);
+  humansEl.max = size;
+  if (Number(humansEl.value) > size) humansEl.value = size;
+}
+sizeEl.oninput = syncHumans;
+syncHumans();
+
+document.getElementById('create-form').onsubmit = async (e) => {
+  e.preventDefault();
+  showError('');
+  if (!signedIn()) return showError('Sign in first to create a mock draft.');
+  try {
+    const m = await FSC.post('/mock-drafts', {
+      name: document.getElementById('f-name').value.trim(),
+      universe_code: document.getElementById('f-sport').value,
+      size: Number(sizeEl.value),
+      human_slots: Number(humansEl.value),
+      start_at: new Date(document.getElementById('f-start').value).toISOString(),
+      visibility: document.getElementById('f-vis').value,
+      fill_ai_if_unfilled: document.getElementById('f-fill').checked,
+      pick_seconds: Number(document.getElementById('f-seconds').value),
+    });
+    location.href = `/static/mock-draft.html?league_id=${m.id}`;
+  } catch (err) { showError(err.message); }
+};
+
+FSC.renderNav();
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>

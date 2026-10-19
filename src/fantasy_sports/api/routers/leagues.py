@@ -211,7 +211,7 @@ def my_leagues(db: Session = Depends(get_db), user: User = Depends(current_user)
     """Leagues the caller commissions or owns a team in, newest first."""
     owned = {t.league_id for t in db.query(Team).filter(Team.owner_user_id == user.id)}
     rows = db.query(League).filter(
-        (League.commissioner_user_id == user.id) | (League.id.in_(owned or {0}))
+        (League.commissioner_user_id == user.id) | (League.id.in_(owned or {0})), League.is_mock_draft.is_(False)
     ).order_by(League.id.desc()).all()
     return rows
 
@@ -242,7 +242,8 @@ def my_dashboard(db: Session = Depends(get_db), user: User = Depends(current_use
     shows: sport(s), how full the league is, the caller's team(s), and where its draft stands."""
     my_teams = db.query(Team).filter(Team.owner_user_id == user.id).order_by(Team.id).all()
     leagues = db.query(League).filter(
-        (League.commissioner_user_id == user.id) | (League.id.in_({t.league_id for t in my_teams} or {0}))
+        (League.commissioner_user_id == user.id) | (League.id.in_({t.league_id for t in my_teams} or {0})),
+        League.is_mock_draft.is_(False),
     ).order_by(League.id.desc()).all()
     ids = [lg.id for lg in leagues] or [0]
     sports: dict[int, list[str]] = defaultdict(list)
@@ -353,7 +354,7 @@ def auto_set_ai_lineups(
 def list_public_leagues(db: Session = Depends(get_db)):
     """The Join League page: public leagues with at least one team a person could join."""
     out = []
-    for league in db.query(League).filter(League.visibility == "public").order_by(League.id.desc()).all():
+    for league in db.query(League).filter(League.visibility == "public", League.is_mock_draft.is_(False)).order_by(League.id.desc()).all():
         if league_join.apply_slot_cutoff(db, league):
             db.commit()
         options, _ = league_join.joinable_teams(db, league)
