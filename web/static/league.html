@@ -41,6 +41,14 @@
   .pill.ai{border-color:var(--color-accent);color:var(--color-accent)}
   .sb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:var(--space-4);margin-bottom:var(--space-6)}
   .sb-card{padding:0;overflow:hidden;display:flex;flex-direction:column}
+  /* game-window picker: the selected window is filled, ringed and ticked; the others stay quiet */
+  .win-btn{border:2px solid transparent}
+  .win-btn.win-sel{box-shadow:0 0 0 3px color-mix(in srgb, var(--color-primary, #0284c7) 35%, transparent);transform:translateY(-1px)}
+  .win-btn:not(.win-sel){opacity:.85}
+  .ser-loading{opacity:.45;pointer-events:none;transition:opacity .1s}
+  .ser-banner{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;padding:8px 12px;margin:var(--space-2) 0 0;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-primary, #0284c7) 12%, var(--color-surface, transparent));border-left:4px solid var(--color-primary, #0284c7);font-size:13px}
+  @keyframes serspin{to{transform:rotate(360deg)}}
+  .ser-spin{width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;animation:serspin .7s linear infinite}
   .sb-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 14px;background:color-mix(in srgb, var(--color-text) 5%, transparent);border-bottom:1px solid var(--color-divider)}
   .sb-status{font-weight:700;font-size:16px;letter-spacing:.04em;text-transform:uppercase}
   .sb-body{padding:6px 14px}
@@ -538,9 +546,15 @@ function getPlayerWeeklyGames(p) {
   return { 1: [], 2: [], 3: [] };
 }
 
+// Window choices belong to one series: picking a game for next week must not change this week.
+function assignKey(teamId) {
+  const s = (typeof rosterSeriesList !== 'undefined' && rosterSeriesList[rosterSeriesIdx]) || null;
+  return `fsc_nhl_win_assign_${LEAGUE_ID}_${teamId}${s ? '_' + s.start_date : ''}`;
+}
+
 function getWindowAssignments(teamId) {
   try {
-    return JSON.parse(localStorage.getItem(`fsc_nhl_win_assign_${LEAGUE_ID}_${teamId}`) || '{}');
+    return JSON.parse(localStorage.getItem(assignKey(teamId)) || '{}');
   } catch (e) { return {}; }
 }
 
@@ -552,7 +566,7 @@ function saveWindowAssignment(teamId, pKey, val) {
     assigns[pKey] = val;
   }
   try {
-    localStorage.setItem(`fsc_nhl_win_assign_${LEAGUE_ID}_${teamId}`, JSON.stringify(assigns));
+    localStorage.setItem(assignKey(teamId), JSON.stringify(assigns));
   } catch (e) {}
 }
 
@@ -668,10 +682,52 @@ function scheduleRosterMidnight() {
   }, next - Date.now());
 }
 
+let rosterLoading = false;        // a series' real NHL schedule is still on its way
+let rosterLoadSeq = 0;            // the newest load wins; older answers are dropped
+
+// The window to open a series on: the one holding today, else the next playable one, else the last.
+function defaultWindowFor(series, todayStr) {
+  const open = getSeriesWindows(series ? series.start_date : null).filter(w => !w.isSkipped);
+  const inToday = open.find(w => w.startDate && todayStr >= w.startDate && todayStr <= w.endDate);
+  const upcoming = open.find(w => w.startDate && todayStr < w.startDate);
+  return (inToday || upcoming || open[open.length - 1] || {num: 1}).num;
+}
+
+// Switch series with no wait: repaint on the new series and window at once, then fill in its NHL games.
+async function switchRosterSeries(start) {
+  const t = activeTeam();
+  if (!t || !rosterSeriesList.length) return;
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  let idx = start === null ? rosterCurrentIdx : rosterSeriesList.findIndex(s => s.start_date === start);
+  if (idx < 0) idx = rosterCurrentIdx;
+  activeRosterSeries = start;
+  rosterSeriesIdx = idx;
+  const series = rosterSeriesList[idx];
+  activeHockeyWindow = defaultWindowFor(series, todayStr);
+  gridSel = null; poRealSchedules = {}; rosterLoading = true;
+  paintHockeyRoster();
+  const seq = ++rosterLoadSeq;
+  try {
+    const po = await api(`/teams/${t.id}/pecking-order?week=${series.start_date}`);
+    if (seq !== rosterLoadSeq || tab !== 'roster') return;
+    gridGroups = po.groups;
+    ilPlayers = po.injured_list || []; ilCapacity = po.injured_list_capacity || 0;
+    poRealSchedules = po.real_schedules || {};
+  } catch (e) {
+    if (seq === rosterLoadSeq && tab === 'roster') showError(e.message);
+  }
+  if (seq !== rosterLoadSeq || tab !== 'roster') return;
+  rosterLoading = false;
+  paintHockeyRoster();
+}
+
 async function renderHockeyRoster() {
   const t = activeTeam();
   if (!t) return;
+  const seq = ++rosterLoadSeq;
+  rosterLoading = false;
   const sch = await api(`/teams/${t.id}/series-schedule`).catch(() => null);
+  if (seq !== rosterLoadSeq || tab !== 'roster') return;   // the viewer already left the roster
   const todayStr = new Date().toLocaleDateString('en-CA');
   if (rosterDay !== todayStr) {
     rosterDay = todayStr;
@@ -690,17 +746,16 @@ async function renderHockeyRoster() {
   const series = rosterSeriesList[rosterSeriesIdx] || null;
   if (rosterWindowAuto) {
     rosterWindowAuto = false;
-    const open = getSeriesWindows(series ? series.start_date : null).filter(w => !w.isSkipped);
-    const inToday = open.find(w => w.startDate && todayStr >= w.startDate && todayStr <= w.endDate);
-    const upcoming = open.find(w => w.startDate && todayStr < w.startDate);
-    activeHockeyWindow = (inToday || upcoming || open[open.length - 1] || {num: 1}).num;
+    activeHockeyWindow = defaultWindowFor(series, todayStr);
   }
   // The real NHL schedule shown in each window has to be the chosen series' week.
   const po = await api(`/teams/${t.id}/pecking-order${series ? `?week=${series.start_date}` : ''}`);
+  if (seq !== rosterLoadSeq || tab !== 'roster') return;
   gridGroups = po.groups; gridSel = null;
   ilPlayers = po.injured_list || []; ilCapacity = po.injured_list_capacity || 0;
   injuryAlerts = canManage(t) ? await api(`/teams/${t.id}/injury-alerts`).catch(() => []) : [];
   futurePicks = ov.league_format === 'future_pick_redraft' ? await api(`/leagues/${LEAGUE_ID}/teams/${t.id}/future-picks`).catch(() => null) : null;
+  if (seq !== rosterLoadSeq || tab !== 'roster') return;
   poRealSchedules = po.real_schedules || {};
   hockeySchedule = sch;
   paintHockeyRoster();
@@ -808,6 +863,7 @@ function paintHockeyRoster() {
   const seriesInfo = rosterSeriesList[rosterSeriesIdx] || null;
   const seriesTitle = seriesInfo ? `Series vs ${esc(seriesInfo.opponent_name)} (${fmtD(seriesInfo.start_date)} – ${fmtD(seriesInfo.end_date)})` : 'Weekly Matchup · 3 Game Windows';
   const winDefs = getSeriesWindows(seriesInfo ? seriesInfo.start_date : null);
+  const todayStrNow = new Date().toLocaleDateString('en-CA');
   if (winDefs[0].isSkipped && activeHockeyWindow === 1) {
     activeHockeyWindow = 2;
   }
@@ -839,15 +895,22 @@ function paintHockeyRoster() {
           const sDate = fmtD(w.startDate);
           const eDate = fmtD(w.endDate);
           const dateRangeStr = sDate && eDate ? (sDate === eDate ? sDate : `${sDate} – ${eDate}`) : '';
-          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>' : '';
+          const sel = activeHockeyWindow === w.num;
+          const isToday = w.startDate && todayStrNow >= w.startDate && todayStrNow <= w.endDate;
+          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>'
+            : isToday ? '<span class="pill good" style="font-size:10px;margin-left:4px">Today</span>' : '';
           return `
-            <button type="button" class="btn ${activeHockeyWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-window="${w.num}" role="tab" aria-selected="${activeHockeyWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-              <div style="font-weight:700;font-size:14px">Game ${w.num} ${badge}</div>
+            <button type="button" class="btn win-btn${sel ? ' btn-primary win-sel' : ' btn-secondary'}" data-window="${w.num}" role="tab" aria-selected="${sel}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+              <div style="font-weight:700;font-size:14px">${sel ? '&#10003; ' : ''}Game ${w.num} ${badge}</div>
               <div style="font-size:12px;opacity:0.9">${w.label}</div>
-              <div class="muted" style="font-size:11px;margin-top:2px">${dateRangeStr ? dateRangeStr + ' · ' : ''}${w.full}</div>
+              <div class="${sel ? '' : 'muted'}" style="font-size:11px;margin-top:2px">${dateRangeStr ? dateRangeStr + ' · ' : ''}${w.full}</div>
             </button>
           `;
         }).join('')}
+      </div>
+      <div class="ser-banner" role="status" aria-live="polite">
+        <span>Setting lineup for <strong>Series ${rosterSeriesIdx + 1}${rosterSeriesIdx > rosterCurrentIdx ? ' (future)' : rosterSeriesIdx < rosterCurrentIdx ? ' (past)' : ' (current)'}, Game ${activeHockeyWindow}</strong>${(() => { const w = winDefs.find(x => x.num === activeHockeyWindow); return w && w.startDate ? ` · ${esc(w.full)} · ${fmtD(w.startDate)}${w.endDate !== w.startDate ? ' – ' + fmtD(w.endDate) : ''}` : ''; })()}</span>
+        ${rosterLoading ? '<span class="muted" style="display:inline-flex;align-items:center;gap:6px"><span class="ser-spin"></span> Loading NHL games…</span>' : ''}
       </div>
       ${winDefs.find(w => w.num === activeHockeyWindow && w.isSkipped) ? `
         <p class="muted" style="font-size:12px;margin:var(--space-2) 0 0;padding:6px 10px;background:var(--color-surface, #f8fafc);border-radius:var(--radius-sm);border:1px solid var(--color-divider)">Game 1 (Sun – Tue) was skipped for this league because the draft completed during Window 1. League matchups begin in <strong>Game 2 (Wed – Thu)</strong>.</p>
@@ -859,7 +922,7 @@ function paintHockeyRoster() {
     ${injuryAlertsHtml()}
     ${dropBar}
     <p class="muted" style="font-size:13px;margin:0 0 var(--space-2)">${can ? 'Click a player, then click another player of the same position (or an open spot) to swap them. Line 1 starts; Lines 2-3 are the backups, in order.' : 'Only the manager of this team (or a commissioner) can change the lines.'}</p>
-    <div class="card elev-sm" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
+    <div class="card elev-sm${rosterLoading ? ' ser-loading' : ''}" style="padding:var(--space-3) var(--space-4);overflow-x:auto">
       <table class="table" style="width:100%;table-layout:fixed;min-width:640px"><thead><tr><th style="width:70px">Position</th>
         ${Array.from({length: (typeof RosterGrid !== 'undefined' && RosterGrid.LINES) ? RosterGrid.LINES : 3}, (_, i) => i + 1).map(n => `<th>Line ${n}<div class="muted" style="font-size:11px;font-weight:400">${n === 1 ? 'Starters' : 'Backup ' + (n - 1)}</div></th>`).join('')}</tr></thead><tbody>
         ${grid.rows.map(r => `<tr><th scope="row" style="vertical-align:middle">${r.label}</th>${r.cells.map(c => `<td style="padding:4px">${cellBtn(c)}</td>`).join('')}</tr>`).join('')}
@@ -896,11 +959,7 @@ function paintHockeyRoster() {
   document.querySelectorAll('.gres').forEach(b => b.onclick = () => pickGrid({group: b.dataset.g, playerId: Number(b.dataset.pid)}));
   if ($('grid-drop') && selPlayer) $('grid-drop').onclick = () => dropPlayer(t, selPlayer.draftable_asset_id, selPlayer.display_name);
 
-  const pickRosterSeries = (start) => {
-    activeRosterSeries = start;   // null follows the current series again
-    rosterWindowAuto = true;      // reopen on that series' own current/first window
-    renderHockeyRoster();
-  };
+  const pickRosterSeries = (start) => switchRosterSeries(start);   // null follows the current series again
   $('ros-series-pick').onchange = (e) => pickRosterSeries(e.target.value);
   $('ros-series-prev').onclick = () => pickRosterSeries(rosterSeriesList[rosterSeriesIdx - 1].start_date);
   $('ros-series-next').onclick = () => pickRosterSeries(rosterSeriesList[rosterSeriesIdx + 1].start_date);
@@ -952,6 +1011,7 @@ let activeScoreboardWindow = null;   // null until the viewer picks a window: th
 let activeScoreboardSeries = null;   // start date of the series the viewer picked; null follows the current series
 let scoreboardDay = null;            // the viewer's local date the scoreboard last rendered for
 let scoreboardMidnightTimer = null;
+let sbCache = null;                  // the last series-schedule and game-scores the scoreboard loaded
 
 // Re-render just after the viewer's local midnight so the scoreboard moves to the new day's window or series.
 function scheduleScoreboardMidnight() {
@@ -967,16 +1027,27 @@ function scheduleScoreboardMidnight() {
 async function renderScoreboard() {
   activeScoreboardWindow = null;
   activeScoreboardSeries = null;
+  sbCache = null;
   await refreshOverview();
+  if (tab !== 'scoreboard') return;   // the viewer already moved on while this loaded
   if (isHockey()) return renderHockeyScoreboard();
   return renderFootballScoreboard();
 }
 
-async function renderHockeyScoreboard() {
-  const [sch, scoresRes] = await Promise.all([
-    api(`/leagues/${LEAGUE_ID}/series-schedule`).catch(() => null),
-    api(`/leagues/${LEAGUE_ID}/game-scores`).catch(() => null),
-  ]);
+// opts.cached: repaint from the data already loaded (series and window picks answer at once; the 10s refresh catches up).
+async function renderHockeyScoreboard(opts = {}) {
+  let sch, scoresRes;
+  if (opts.cached && sbCache) {
+    ({sch, scoresRes} = sbCache);
+  } else {
+    [sch, scoresRes] = await Promise.all([
+      api(`/leagues/${LEAGUE_ID}/series-schedule`).catch(() => null),
+      api(`/leagues/${LEAGUE_ID}/game-scores`).catch(() => null),
+    ]);
+    // A request that finished after the viewer left must not paint over the tab they are on now.
+    if (tab !== 'scoreboard') return;
+    sbCache = {sch, scoresRes};
+  }
 
   const seriesList = sch && sch.series ? sch.series : [];
   const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) : '';
@@ -1233,16 +1304,20 @@ async function renderHockeyScoreboard() {
         ${winDefs.map(w => {
           const sDate = fmtD(w.startDate);
           const eDate = fmtD(w.endDate);
-          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>' : '';
+          const sel = activeScoreboardWindow === w.num;
+          const isToday = w.startDate && todayStr >= w.startDate && todayStr <= w.endDate;
+          const badge = w.isSkipped ? '<span class="pill" style="font-size:10px;background:var(--color-divider);color:var(--color-text-muted);margin-left:4px">Skipped</span>'
+            : isToday ? '<span class="pill good" style="font-size:10px;margin-left:4px">Today</span>' : '';
           return `
-            <button type="button" class="btn ${activeScoreboardWindow === w.num ? 'btn-primary' : 'btn-secondary'}" data-swindow="${w.num}" role="tab" aria-selected="${activeScoreboardWindow === w.num}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
-              <div style="font-weight:700;font-size:14px">Game ${w.num} ${badge}</div>
+            <button type="button" class="btn win-btn${sel ? ' btn-primary win-sel' : ' btn-secondary'}" data-swindow="${w.num}" role="tab" aria-selected="${sel}" style="flex:1;min-width:180px;text-align:center;padding:10px 14px;cursor:pointer">
+              <div style="font-weight:700;font-size:14px">${sel ? '&#10003; ' : ''}Game ${w.num} ${badge}</div>
               <div style="font-size:12px;opacity:0.9">${w.label}</div>
-              <div class="muted" style="font-size:11px;margin-top:2px">${sDate} – ${eDate}</div>
+              <div class="${sel ? '' : 'muted'}" style="font-size:11px;margin-top:2px">${sDate} – ${eDate}</div>
             </button>
           `;
         }).join('')}
       </div>
+      <p style="font-size:13px;margin:var(--space-2) 0 0"><span class="muted">Showing</span> <strong>Series ${roundIdx + 1}, Game ${curWin.num}</strong> <span class="muted">· ${curWin.full} · ${fmtD(curWin.startDate)} – ${fmtD(curWin.endDate)}</span></p>
     </div>
 
     <div class="sb-grid">
@@ -1253,7 +1328,7 @@ async function renderHockeyScoreboard() {
   const pickSeries = (start) => {
     activeScoreboardSeries = start;   // null follows the current series again
     activeScoreboardWindow = null;    // reopen on that series' own current/first window
-    renderHockeyScoreboard();
+    renderHockeyScoreboard({cached: true});
   };
   $('sb-series-pick').onchange = (e) => pickSeries(e.target.value);
   $('sb-series-prev').onclick = () => pickSeries(rounds[roundIdx - 1].start);
@@ -1262,7 +1337,7 @@ async function renderHockeyScoreboard() {
   document.querySelectorAll('[data-swindow]').forEach(b => {
     b.onclick = () => {
       activeScoreboardWindow = Number(b.dataset.swindow);
-      renderHockeyScoreboard();
+      renderHockeyScoreboard({cached: true});
     };
   });
   if ($('btn-resched-nhl')) {
@@ -1314,6 +1389,7 @@ async function renderFootballScoreboard() {
     api(`/leagues/${LEAGUE_ID}/matchups`).catch(() => []),
     api(`/leagues/${LEAGUE_ID}/weeks`).catch(() => []),
   ]);
+  if (tab !== 'scoreboard') return;
 
   const withGames = weeks.filter(w => matchups.some(m => m.week_id === w.id));
   if (!withGames.length) {
