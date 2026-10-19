@@ -246,6 +246,31 @@ def get_pick_history(draft_id: int, db: Session = Depends(get_db)):
     return [_pick_out(p) for p in picks]
 
 
+def _available_assets(db: Session, draft: Draft) -> list[DraftableAsset]:
+    """The pool still open in this draft: the league's pool for the draft's kind, minus anyone rostered or already picked."""
+    already_picked = {r[0] for r in db.query(RosterEntry.draftable_asset_id).join(Team, Team.id == RosterEntry.team_id)
+                      .filter(Team.league_id == draft.league_id)} | {
+        p.draftable_asset_id
+        for p in db.query(DraftPick).filter(
+            DraftPick.draft_id == draft.id, DraftPick.draftable_asset_id.isnot(None)
+        )
+    }
+    return [a for a in season_rollover.pool_for_kind(league_pool(db, draft.league_id), draft.kind) if a.id not in already_picked]
+
+
+@router.get("/{draft_id}/suggestions")
+def get_pick_suggestions(draft_id: int, team_id: int | None = None, db: Session = Depends(get_db)):
+    """The three best available players in a position of need for the pick on the clock (NHL snake drafts): the most
+    projected points above what the board expects at that pick number. See platform/draft_grades.py."""
+    from fantasy_sports.platform import draft_grades
+    draft = db.get(Draft, draft_id)
+    if draft is None:
+        raise HTTPException(404, "Draft not found")
+    if not draft_grades.is_nhl_league(db, draft.league_id):
+        raise HTTPException(400, "Pick suggestions are only available for NHL drafts")
+    return draft_grades.pick_suggestions(db, draft, {a.id for a in _available_assets(db, draft)}, team_id=team_id)
+
+
 @router.get("/{draft_id}/board", response_model=list[DraftBoardAsset])
 def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     """Draftable assets in the draft's league universe(s) not yet picked in
@@ -260,18 +285,8 @@ def get_draft_board(draft_id: int, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    already_picked = {r[0] for r in db.query(RosterEntry.draftable_asset_id).join(Team, Team.id == RosterEntry.team_id)
-                      .filter(Team.league_id == draft.league_id)} | {
-        p.draftable_asset_id
-        for p in db.query(DraftPick).filter(
-            DraftPick.draft_id == draft_id, DraftPick.draftable_asset_id.isnot(None)
-        )
-    }
     points = season_points_by_asset(db)  # best last-season scorers first; unscored players A-Z after
-    available = [
-        (a, draftable_asset_display_name(a))
-        for a in season_rollover.pool_for_kind(league_pool(db, draft.league_id), draft.kind) if a.id not in already_picked
-    ]
+    available = [(a, draftable_asset_display_name(a)) for a in _available_assets(db, draft)]
     available.sort(key=lambda pair: (-points.get(pair[0].id, -1.0), pair[1]))
     stats = stats_by_asset(db, [a.id for a, _ in available if a.asset_type == "player"])
     return [

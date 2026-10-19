@@ -17,6 +17,11 @@ league's letters spread from A to F. Position is not adjusted - a point is a poi
 for the haul but the value part can reward taking a goalie early if goalies project high. Snake drafts only (the pick number
 is what the value is measured against).
 
+PICK SUGGESTIONS. On the clock, the three best available players in a position the team still needs, ranked by projected points
+above what the board expects at this pick number (so the same ranking as grading would give each pick). Need: a group short of
+its starters (1 C, 2 W, 2 D, 1 G) first; once the starters are filled, a group short of its depth target (4 C, 8 W, 8 D, 4 G,
+the four lines of docs/hockey_spec.md section 4); once those are filled too, every group.
+
 POWER RANKINGS. Teams ordered by the projected points of the best lineup their current roster can field (the same HAUL
 measure, on rosters instead of picks). Rank 1 is the highest. Nothing about results enters them: this is the starting point
 before any game is played.
@@ -34,12 +39,15 @@ from sqlalchemy.orm import Session
 from fantasy_sports.platform.db.models.core import (
     Draft, DraftPick, DraftableAsset, LeagueUniverse, RosterEntry, Team, Universe,
 )
-from fantasy_sports.platform.hockey_projection import LineupProjection, Projection, lineup_projection, project_pool
+from fantasy_sports.platform.hockey_projection import STARTERS, LineupProjection, Projection, lineup_projection, project_pool
+from fantasy_sports.platform.pecking_order import GROUP_BY_POSITION
 
 # (minimum score, letter), best first
 LETTERS = [(1.4, "A+"), (1.0, "A"), (0.7, "A-"), (0.4, "B+"), (0.15, "B"), (-0.1, "B-"), (-0.35, "C+"), (-0.6, "C"),
            (-0.85, "C-"), (-1.1, "D+"), (-1.4, "D")]
 BEST_PICKS = 3
+DEPTH_TARGET = {"C": 4, "W": 8, "D": 8, "G": 4}
+SUGGESTIONS = 3
 
 
 def letter_for(score: float) -> str:
@@ -111,6 +119,23 @@ def grade_teams(picks: list[PickResult], projections: dict[int, Projection], tea
     return rows
 
 
+def needed_groups(counts: dict[str, int]) -> list[str]:
+    """The position groups a team should draft from: short of starters, else short of depth, else all (see the docstring)."""
+    short = [g for g in STARTERS if counts.get(g, 0) < STARTERS[g]]
+    if not short:
+        short = [g for g in DEPTH_TARGET if counts.get(g, 0) < DEPTH_TARGET[g]]
+    return short or list(STARTERS)
+
+
+def rank_suggestions(candidates: list[tuple[int, Projection]], groups: list[str], expected: float, limit: int = SUGGESTIONS) -> list[dict]:
+    """The best `limit` of (asset id, projection) in `groups`, by projected points above `expected`; ties by points then id."""
+    pool = [(a, p) for a, p in candidates if p.group in groups]
+    pool.sort(key=lambda ap: (-ap[1].points, ap[0]))
+    return [{"asset_id": a, "group": p.group, "projected_points": round(p.points, 1), "projected_games": round(p.games),
+             "expected_points": round(expected, 1), "value": round(p.points - expected, 1), "source": p.source}
+            for a, p in pool[:limit]]
+
+
 # ---- database wrappers ----------------------------------------------------------------------------------------------
 
 def is_nhl_league(db: Session, league_id: int) -> bool:
@@ -175,3 +200,40 @@ def power_rankings(db: Session, league_id: int, projections: dict[int, Projectio
                        "projected_points": round(p.points, 1), "projected_games": round(p.games), "source": p.source}
                       for p in lu.starters]}
         for i, (t, lu) in enumerate(rows, 1)]}
+
+
+def pick_suggestions(db: Session, draft: Draft, available_asset_ids: set[int], projections: dict[int, Projection] | None = None,
+                     team_id: int | None = None) -> dict:
+    """The suggestions for the pick on the clock (or for `team_id`, at that pick number). `available_asset_ids` is the pool
+    still open. Never raises for a finished draft or missing data - it says why there is nothing to suggest."""
+    nxt = (db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.draftable_asset_id.is_(None))
+           .order_by(DraftPick.pick_number).first())
+    if nxt is None:
+        return {"available": False, "reason": "The draft has no open pick", "suggestions": []}
+    projections = project_pool(db) if projections is None else projections
+    if not projections:
+        return {"available": False, "reason": "No projections yet: no NHL history has been stored", "suggestions": []}
+    team = team_id if team_id is not None else nxt.team_id
+    owned = {e.draftable_asset_id for e in db.query(RosterEntry).filter_by(team_id=team)} | {
+        p.draftable_asset_id for p in db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.team_id == team,
+                                                                  DraftPick.draftable_asset_id.isnot(None))}
+    counts: dict[str, int] = {}
+    for a in owned:
+        pr = projections.get(a)
+        if pr is not None:
+            counts[pr.group] = counts.get(pr.group, 0) + 1
+    # players the model has no group for (e.g. a dual-eligible "F") are counted from their listed position
+    for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(owned or {0})):
+        if a.id not in projections and a.player and GROUP_BY_POSITION.get((a.player.position or "").upper()):
+            g = GROUP_BY_POSITION[(a.player.position or "").upper()]
+            counts[g] = counts.get(g, 0) + 1
+    groups = needed_groups(counts)
+    n_teams = db.query(Team).filter_by(league_id=draft.league_id).count()
+    board = sorted((p.points for p in projections.values()), reverse=True)
+    expected = expected_by_pick(board, nxt.pick_number, max(2, n_teams // 2))[nxt.pick_number - 1]
+    out = rank_suggestions([(a, projections[a]) for a in available_asset_ids if a in projections], groups, expected)
+    info = _names(db, {r["asset_id"] for r in out})
+    for r in out:
+        r.update(info.get(r["asset_id"], {}))
+    return {"available": True, "reason": None, "pick_number": nxt.pick_number, "round": nxt.round, "team_id": team,
+            "needs": groups, "roster_counts": counts, "suggestions": out}

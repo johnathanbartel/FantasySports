@@ -110,6 +110,7 @@
           <ul id="mx-list" style="list-style:none;margin:0;padding:0"><li class="text-muted">Checking what is available…</li></ul>
           <p class="text-muted" style="margin:0;font-size:12px">Anything marked "Not enabled" is off until the owner approves it. Nothing here connects to an outside service.</p>
         </section>
+        <section id="suggest-panel" class="card elev-sm" aria-labelledby="sg-h" style="display:none;padding:var(--space-4);margin-bottom:var(--space-5)"></section>
         <div role="tablist" aria-label="Draft side panel" style="display:flex;gap:var(--space-2);margin-bottom:var(--space-3)">
           <button class="btn btn-primary" id="tab-roster" role="tab" aria-selected="true">Roster</button>
           <button class="btn btn-secondary" id="tab-queue" role="tab" aria-selected="false">Queue (<span id="queue-count">0</span>)</button>
@@ -1042,6 +1043,35 @@ document.getElementById('view-grid').onclick = () => setView('grid');
 document.getElementById('view-room').onclick = () => setView('room');
 document.getElementById('view-grades').onclick = () => setView('grades');
 
+// ---- pick suggestions (NHL): the 3 best available players in a position of need, by projected points above what
+// the board expects at this pick number (platform/draft_grades.py). Fetched once per pick, not on every poll.
+let suggestKey = null;
+async function loadSuggestions() {
+  const box = document.getElementById('suggest-panel');
+  const next = onClockPick();
+  if (!box || !DRAFT_ID || !next) { if (box) box.style.display = 'none'; suggestKey = null; return; }
+  if (suggestKey === next.pick_number) return;
+  suggestKey = next.pick_number;
+  let g;
+  try { g = await api(`/drafts/${DRAFT_ID}/suggestions`); } catch (e) { box.style.display = 'none'; return; }    // not an NHL draft
+  if (suggestKey !== next.pick_number) return;
+  if (!g.available || !g.suggestions.length) {
+    if (/history/i.test(g.reason || '')) { suggestKey = null; box.style.display = 'none'; }
+    else if (!g.suggestions.length && g.available) box.style.display = 'none';
+    return;
+  }
+  const team = teamsById[g.team_id];
+  const canPick = !!next && isMyTeam(teamsById[next.team_id]);
+  box.style.display = '';
+  box.innerHTML = `<h4 id="sg-h" style="margin:0">Pick suggestions · pick ${g.pick_number}</h4>
+    <p class="text-muted" style="margin:2px 0 var(--space-2);font-size:12px">${esc(team ? team.name : 'On the clock')} needs <strong>${g.needs.map(esc).join(', ')}</strong>. Ranked by projected points above what pick ${g.pick_number} normally returns.</p>
+    ${g.suggestions.map(r => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-top:1px solid var(--color-divider)">
+      <div style="overflow:hidden"><div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${PlayerCard.link(r.asset_id, r.name)}</div>
+        <div class="text-muted" style="font-size:11px">${esc(r.position || r.group)} · ${r.projected_points} proj pts · ${r.value > 0 ? '+' : ''}${r.value} vs pick${r.source === 'prior' ? ' · no history' : ''}</div></div>
+      ${canPick ? `<button class="btn btn-primary" style="font-size:11px;padding:3px 8px" data-suggest-pick="${r.asset_id}">Draft</button>` : ''}</div>`).join('')}`;
+  box.querySelectorAll('[data-suggest-pick]').forEach(b => { b.onclick = () => makePick(Number(b.dataset.suggestPick)); });
+}
+
 // ---- draft grades (NHL): shown once the draft is complete and projections exist (platform/draft_grades.py) ----
 let gradesLoaded = false, gradesTriedAt = 0;
 async function loadGrades() {
@@ -1078,6 +1108,7 @@ function render() {
   renderGrid();
   updateQueueBadge();
   loadGrades();
+  loadSuggestions();
   if (rosterTab === 'queue') renderQueue();
   renderRosterTab();
 }
