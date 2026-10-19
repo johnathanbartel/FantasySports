@@ -86,6 +86,7 @@
           <option value="ncaaf">College Football</option>
           <option value="nfl">Football (NFL)</option>
           <option value="nhl">Hockey (NHL)</option>
+          <option value="nba">Basketball (NBA)</option>
         </select>
       </div>
 
@@ -501,10 +502,12 @@ const PROGRAM_SIZES = ['large', 'moderate', 'small'];
 
 const isNfl = () => document.getElementById('universe').value === 'nfl';
 const isNhl = () => document.getElementById('universe').value === 'nhl';
-const isProSport = () => isNfl() || isNhl();
+const isNba = () => document.getElementById('universe').value === 'nba';
+const isProSport = () => isNfl() || isNhl() || isNba();
 
 function getSportRosterSize() {
   const universe = document.getElementById('universe').value;
+  if (universe === 'nba') return 13; // placeholder until NBA roster slots are defined
   if (universe === 'nhl') return 18; // 3 lines of 6 (6 starters + 12 bench)
   if (universe === 'nfl') {
     const def = document.getElementById('defense-mode').value;
@@ -525,7 +528,7 @@ function updateRosterRounds() {
   const hint = document.getElementById('draft-rounds-hint');
   if (hint) {
     const u = document.getElementById('universe').value;
-    const desc = u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
+    const desc = u === 'nba' ? 'NBA (placeholder)' : u === 'nhl' ? 'NHL (3 lines: 6 starters + 12 bench)' : u === 'nfl' ? 'NFL' : 'College Football';
     hint.textContent = `Locked: set automatically to ${rounds} rounds by ${desc} roster size.`;
   }
 }
@@ -696,7 +699,7 @@ document.querySelectorAll('input[name=draft-type]').forEach(r => r.onchange = up
 document.getElementById('universe').onchange = updateUniverse;
 document.getElementById('defense-mode').onchange = updateRosterRounds;
 const requestedUniverse = new URLSearchParams(location.search).get('universe');
-if (['nfl', 'nhl'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
+if (['nfl', 'nhl', 'nba'].includes(requestedUniverse)) document.getElementById('universe').value = requestedUniverse;
 updateUniverse();
 // Preview the chosen sport's look (rink, field...) while configuring the league.
 const previewTheme = () => Retro.setTheme(Retro.THEME_BY_UNIVERSE[document.getElementById('universe').value] || 'hub');
