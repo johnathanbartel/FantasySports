@@ -143,6 +143,21 @@ def is_nhl_league(db: Session, league_id: int) -> bool:
         .filter(LeagueUniverse.league_id == league_id, Universe.code == "nhl").first() is not None
 
 
+def roster_group_counts(db: Session, owned: set[int], projections: dict[int, Projection]) -> dict[str, int]:
+    """Players per position group among `owned` asset ids. A player the model has no group for (e.g. a dual-eligible "F")
+    is counted from his listed position."""
+    counts: dict[str, int] = {}
+    for a in owned:
+        pr = projections.get(a)
+        if pr is not None:
+            counts[pr.group] = counts.get(pr.group, 0) + 1
+    for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(owned or {0})):
+        if a.id not in projections and a.player and GROUP_BY_POSITION.get((a.player.position or "").upper()):
+            g = GROUP_BY_POSITION[(a.player.position or "").upper()]
+            counts[g] = counts.get(g, 0) + 1
+    return counts
+
+
 def _names(db: Session, asset_ids: set[int]) -> dict[int, dict]:
     out = {}
     for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(asset_ids or {0})):
@@ -217,16 +232,7 @@ def pick_suggestions(db: Session, draft: Draft, available_asset_ids: set[int], p
     owned = {e.draftable_asset_id for e in db.query(RosterEntry).filter_by(team_id=team)} | {
         p.draftable_asset_id for p in db.query(DraftPick).filter(DraftPick.draft_id == draft.id, DraftPick.team_id == team,
                                                                   DraftPick.draftable_asset_id.isnot(None))}
-    counts: dict[str, int] = {}
-    for a in owned:
-        pr = projections.get(a)
-        if pr is not None:
-            counts[pr.group] = counts.get(pr.group, 0) + 1
-    # players the model has no group for (e.g. a dual-eligible "F") are counted from their listed position
-    for a in db.query(DraftableAsset).filter(DraftableAsset.id.in_(owned or {0})):
-        if a.id not in projections and a.player and GROUP_BY_POSITION.get((a.player.position or "").upper()):
-            g = GROUP_BY_POSITION[(a.player.position or "").upper()]
-            counts[g] = counts.get(g, 0) + 1
+    counts = roster_group_counts(db, owned, projections)
     groups = needed_groups(counts)
     n_teams = db.query(Team).filter_by(league_id=draft.league_id).count()
     board = sorted((p.points for p in projections.values()), reverse=True)
