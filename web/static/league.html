@@ -174,6 +174,9 @@ const pl = (id, name) => PlayerCard.link(id, name);   // a player's name that op
 const tbPayload = (host) => { const o = host._order(); return JSON.stringify(o) === JSON.stringify(DEFAULT_TIEBREAKERS) ? null : o; };
 
 const isHockey = () => !!(ov && (ov.universe_codes || []).includes('nhl'));
+const isWindowSport = () => !!(ov && (ov.universe_codes || []).some(c => c === 'nhl' || c === 'nba'));
+// First-round byes in a standard bracket: the gap up to the next power of two (6 teams: 2, 12: 4).
+const bracketByes = n => n <= 2 ? 0 : (2 ** Math.ceil(Math.log2(n))) - n;
 const pts = (v) => v == null ? '-' : Number(v).toFixed(1);
 const ppg = (v) => v == null ? '-' : Number(v).toFixed(2);
 // Transactions-tab list header and age cell. Age comes from the NHL roster sync, so only hockey shows it.
@@ -2580,18 +2583,18 @@ async function renderLeagueSettings() {
       + `<p class="muted">Teams that haven't picked by the deadline are trimmed automatically. AI teams keep the players with the best combined score of youth, points per game and games played.</p></div>`;
   }
 
-  if (isHockey()) {
+  if (isWindowSport()) {
     const nTeams = ov.teams.length, defPlayoff = Math.max(1, Math.floor(nTeams * 0.33 + 0.5));
     const inUse = lg.playoff_teams || defPlayoff;
     html += `<div class="card"><h3>Standings &amp; Playoffs</h3>` + (isCommissioner
-      ? `<p><label>Standings are sorted by <select id="standings-mode">
+      ? (isHockey() ? `<p><label>Standings are sorted by <select id="standings-mode">
             <option value="points"${lg.standings_mode === 'points' ? ' selected' : ''}>Points</option>
             <option value="win_pct"${lg.standings_mode === 'win_pct' ? ' selected' : ''}>Win Percentage</option></select></label></p>
          <p><label>Points for a win <input id="points-win" type="number" min="0" max="20" value="${lg.points_per_win}" style="width:4em"></label>
             <label> Points for a tie <input id="points-tie" type="number" min="0" max="20" value="${lg.points_per_tie}" style="width:4em"></label>
-            <span class="muted">(used when sorting by points)</span></p>
+            <span class="muted">(used when sorting by points)</span></p>` : `<p>Standings are sorted by <b>win percentage</b>.</p>`) + `
          <p><label>Playoff teams <input id="playoff-teams" type="number" min="1" max="${nTeams}" value="${inUse}" style="width:4em"></label>
-            <label> First-round byes <input id="playoff-byes" type="number" min="0" max="${nTeams}" value="${lg.playoff_byes || 0}" style="width:4em"></label></p>
+            <span class="muted">First-round byes follow a standard bracket: ${bracketByes(inUse) ? `the top ${bracketByes(inUse)} seed${bracketByes(inUse) === 1 ? '' : 's'} get a bye` : 'none with this field'}.</span></p>
          <p><label><input id="division-winners-qualify" type="checkbox"${lg.division_winners_qualify ? ' checked' : ''}> Division winners are guaranteed a playoff spot</label><br>
             <label><input id="division-winners-first" type="checkbox"${lg.division_winners_seeded_first ? ' checked' : ''}> Division winners take the top seeds (wild cards follow, by rank)</label></p>
          <p><b>When a team is eliminated from the playoffs:</b><br>
@@ -2601,7 +2604,7 @@ async function renderLeagueSettings() {
          <p><button type="button" class="btn btn-primary" id="standings-save">Save</button></p>
          ${lg.playoff_teams ? '' : `<p class="note">How many teams should make the playoffs? Until you choose, the default is ${defPlayoff} (33% of ${nTeams} teams, rounded). Pick a number and save.</p>`}`
       : `<p>Standings are sorted by <b>${lg.standings_mode === 'points' ? 'points (' + lg.points_per_win + ' for a win, ' + lg.points_per_tie + ' for a tie)' : 'win percentage'}</b>.</p>
-         <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}${lg.playoff_byes ? `, ${lg.playoff_byes} with a first-round bye` : ''}.</p>
+         <p>Playoff teams: <b>${inUse}</b>${lg.playoff_teams ? '' : ' (the default, 33% of the teams)'}${bracketByes(inUse) ? `, ${bracketByes(inUse)} with a first-round bye` : ''}.</p>
          <p>An eliminated team: <b>${lg.playoff_consolation ? 'plays consolation matchups' : 'has its season end'}</b>.</p>
          <p>Ties are broken by: <b>${(lg.tiebreakers || DEFAULT_TIEBREAKERS).map(tbLabel).join(', then ')}</b>.</p>`)
       + `<p class="muted">Win percentage is (wins + 0.5 x ties) / games played. Teams still level are separated by the tiebreakers, in order. ${lg.division_winners_qualify ? 'Every division winner is in the field, and the other spots are wild cards by rank.' : 'The best teams by rank make the field.'} ${lg.division_winners_qualify && lg.division_winners_seeded_first ? 'Division winners take the top seeds.' : 'Seeds follow rank.'} A team is marked out once no result of the games left can get it into the field.</p></div>`;
@@ -2764,9 +2767,9 @@ async function renderLeagueSettings() {
     keeper_draft_style: $('keeper-style').value, keeper_limit: $('keeper-limit').value === '' ? null : parseInt($('keeper-limit').value, 10),
     keeper_deadline: localInputToUtc($('keeper-deadline').value)})), 'Keeper settings saved.'));
   on('standings-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', {
-    standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
-    points_per_tie: parseInt($('points-tie').value, 10), playoff_teams: parseInt($('playoff-teams').value, 10),
-    playoff_byes: parseInt($('playoff-byes').value, 10) || 0, division_winners_qualify: $('division-winners-qualify').checked,
+    ...($('standings-mode') ? {standings_mode: $('standings-mode').value, points_per_win: parseInt($('points-win').value, 10),
+      points_per_tie: parseInt($('points-tie').value, 10)} : {}),
+    playoff_teams: parseInt($('playoff-teams').value, 10), division_winners_qualify: $('division-winners-qualify').checked,
     division_winners_seeded_first: $('division-winners-first').checked,
     playoff_consolation: document.querySelector('input[name=playoff-consolation]:checked').value === 'yes', tiebreakers: tbPayload($('tiebreaker-editor'))})), 'Standings and playoff settings saved. Elimination was re-checked under the new rules.'));
   on('pick-trade-save', () => call(() => api(`/leagues/${LEAGUE_ID}/settings`, jsonOpts('PATCH', Object.assign(

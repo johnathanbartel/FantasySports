@@ -52,7 +52,8 @@ def apply_slot_cutoff(db: Session, league: League, now: datetime.datetime | None
             team.open_human_slot = False        # stays an AI team
     if league.playoff_teams is not None:
         league.playoff_teams = min(league.playoff_teams, league.size)
-    league.playoff_byes = min(league.playoff_byes, league.playoff_teams or league.size)
+    from fantasy_sports.platform import playoffs
+    league.playoff_byes = playoffs.bracket_byes(playoffs.effective_playoff_teams(league, league.size))
     db.flush()
     return len(slots)
 

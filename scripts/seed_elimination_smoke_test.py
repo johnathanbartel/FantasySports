@@ -27,7 +27,7 @@ if db_path.exists():
 from fastapi.testclient import TestClient
 
 from fantasy_sports.api.main import app
-from fantasy_sports.platform import elimination, tiebreakers
+from fantasy_sports.platform import elimination, playoffs, tiebreakers
 from fantasy_sports.platform.db.base import Base
 from fantasy_sports.platform.db.models.core import League, LeagueSeries, SeriesDailyGame, Team, User
 from fantasy_sports.platform.db.session import SessionLocal, engine
@@ -68,7 +68,10 @@ check(client.post("/leagues", json={**base, "tiebreakers": ["bogus"]}, headers=H
 check(client.post("/leagues", json={**base, "tiebreakers": ["wins", "wins"]}, headers=H).status_code == 400, "a repeated tiebreaker is refused")
 check(client.post("/leagues", json={**base, "tiebreakers": ["coin_flip", "wins"]}, headers=H).status_code == 400,
       "the random draw decides every tie, so it must come last")
-check(client.post("/leagues", json={**base, "playoff_byes": 9}, headers=H).status_code == 400, "more byes than playoff spots is refused")
+check([playoffs.bracket_byes(n) for n in (1, 2, 3, 4, 5, 6, 8, 12, 16)] == [0, 0, 1, 0, 3, 2, 0, 4, 0],
+      "byes follow the standard bracket: the gap up to the next power of two")
+resp = client.post("/leagues", json={**base, "playoff_byes": 9}, headers=H)
+check(resp.status_code == 200 and resp.json()["playoff_byes"] == 0, "a byes value sent by a client is ignored: byes come from the field")
 resp = client.post("/leagues", json={**base, "tiebreakers": ["head_to_head", "wins", "goal_differential"], "playoff_byes": 0,
                                      "division_winners_qualify": False}, headers=H)
 check(resp.status_code == 200, resp.text)
@@ -88,7 +91,9 @@ check(resp.status_code == 200 and resp.json()["tiebreakers"] == ["goal_different
       and resp.json()["division_winners_qualify"] is True, "the commissioner can change the order and the playoff rules")
 resp = client.patch(f"/leagues/{lid}/settings", json={"tiebreakers": None}, headers=H)
 check(resp.status_code == 200 and resp.json()["tiebreakers"] is None, "null goes back to the default order")
-check(client.patch(f"/leagues/{lid}/settings", json={"playoff_byes": 20}, headers=H).status_code == 400, "settings refuse too many byes")
+resp = client.patch(f"/leagues/{lid}/settings", json={"playoff_byes": 20, "playoff_teams": 3}, headers=H)
+check(resp.status_code == 200 and resp.json()["playoff_byes"] == 1, "settings ignore a byes value; a 3-team field gets one bye")
+client.patch(f"/leagues/{lid}/settings", json={"playoff_teams": None}, headers=H)
 
 # --- the proof writes the flag ---------------------------------------------------------------------------------------------
 names = ["Alpha", "Bravo", "Charlie", "Delta"]
@@ -150,9 +155,9 @@ rows = {r["team_id"]: r for r in body["standings"]}
 check(rows[C]["eliminated"] and not rows[A]["eliminated"], "the standings carry the elimination flag")
 check(body["tiebreakers"] == list(tiebreakers.DEFAULT_ORDER) and body["playoff_byes"] == 0, "and the tiebreaker order in use")
 check(rows[A]["seed"] == 1 and rows[A]["bye"] is False, "A holds the one seed, no bye with byes at zero")
-client.patch(f"/leagues/{lid}/settings", json={"playoff_teams": 2, "playoff_byes": 1}, headers=H)
+client.patch(f"/leagues/{lid}/settings", json={"playoff_teams": 2}, headers=H)
 body = client.get(f"/leagues/{lid}/series-standings").json()
-check(body["playoff_byes"] == 1 and {r["team_id"]: r["bye"] for r in body["standings"]}[A] is True, "a bye goes to the top seed")
+check(body["playoff_byes"] == 0 and {r["team_id"]: r["bye"] for r in body["standings"]}[A] is False, "a 2-team field has no byes")
 
 # changing the playoff field re-proves everything: with two spots C is second, so the old flag is cleared when the rules change
 f = flags()

@@ -80,12 +80,13 @@ class LeagueCreateRequest(BaseModel):
     trade_vote_extra_votes: int = Field(default=1, ge=1, le=20)
     commissioner_trade_vote_extra_votes: int = Field(default=2, ge=1, le=20)
     # Hockey only (rejected for other sports when changed from the defaults).
-    standings_mode: Literal["points", "win_pct"] = "points"
+    # Points standings are hockey only; every other sport sorts by win percentage (left unset, hockey gets "points").
+    standings_mode: Literal["points", "win_pct"] | None = None
     points_per_win: int = Field(default=3, ge=0, le=20)
     points_per_tie: int = Field(default=1, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # None = 33% of the teams, rounded
     tiebreakers: list[str] | None = None                                # None = the default order (platform/tiebreakers.py)
-    playoff_byes: int = Field(default=0, ge=0, le=32)
+    playoff_byes: int = Field(default=0, ge=0, le=32)       # ignored: byes follow from the playoff field (platform/playoffs.py)
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
     playoff_consolation: bool = False          # False = an eliminated team's season ends; True = it plays consolation matchups
@@ -158,7 +159,7 @@ class LeagueSettingsRequest(BaseModel):
     points_per_tie: int | None = Field(default=None, ge=0, le=20)
     playoff_teams: int | None = Field(default=None, ge=1, le=64)       # send null to go back to the default
     tiebreakers: list[str] | None = None                                # send null to go back to the default order
-    playoff_byes: int | None = Field(default=None, ge=0, le=32)
+    playoff_byes: int | None = Field(default=None, ge=0, le=32)   # ignored: byes follow from the playoff field
     division_winners_qualify: bool | None = None
     division_winners_seeded_first: bool | None = None
     playoff_consolation: bool | None = None

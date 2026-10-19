@@ -309,13 +309,14 @@
       </div>
 
       <div id="hockey-settings-fields" style="display:none">
+        <div id="points-standings-fields">
         <div class="field">
           <label for="standings-mode">Standings are sorted by</label>
           <select id="standings-mode" style="padding:8px 10px;border-radius:var(--radius-md);border:1px solid var(--color-divider);background:var(--color-bg);color:var(--color-text);font-size:14px">
             <option value="points" selected>Points</option>
             <option value="win_pct">Win Percentage</option>
           </select>
-          <span class="hint">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential.</span>
+          <span class="hint">Win percentage is (wins + 0.5 x ties) / games played. Ties in the standings go to goal differential. Points standings are for hockey only.</span>
         </div>
         <div style="display:flex;gap:var(--space-4)">
           <div class="field" style="flex:1">
@@ -327,17 +328,11 @@
             <input type="number" id="points-tie" min="0" max="20" value="1">
           </div>
         </div>
+        </div>
         <div class="field">
           <label for="playoff-teams">How many teams make the playoffs?</label>
           <input type="number" id="playoff-teams" min="1">
           <span class="hint" id="playoff-teams-hint"></span>
-        </div>
-        <div style="display:flex;gap:var(--space-4)">
-          <div class="field" style="flex:1">
-            <label for="playoff-byes">First-round byes</label>
-            <input type="number" id="playoff-byes" min="0" max="32" value="0">
-            <span class="hint">The top seeds skip the first round. 0 = no byes.</span>
-          </div>
         </div>
         <div class="field">
           <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="division-winners-qualify" checked> Division winners are guaranteed a playoff spot</label>
@@ -605,11 +600,13 @@ function updateSettingsFields() {
   document.getElementById('pick-trading-field').style.display = picksFormat ? 'flex' : 'none';
   document.getElementById('pick-trade-field').style.display = ((keeper || dynasty) && picksOn) ? 'flex' : 'none';
   document.getElementById('hockey-settings-fields').style.display = isWindowSport() ? 'block' : 'none';
+  // Points standings are hockey only; every other sport sorts by win percentage.
+  document.getElementById('points-standings-fields').hidden = !isNhl();
   const size = Number(document.getElementById('league-size').value) || 0;
   const def = Math.max(1, Math.floor(size * 0.33 + 0.5));
   document.getElementById('playoff-teams').placeholder = String(def);
   document.getElementById('playoff-teams-hint').textContent =
-    `Leave blank for the default: ${def} (33% of ${size} teams, rounded). Division winners take the top seeds and the rest of the field is seeded by rank (wild cards).`;
+    `Leave blank for the default: ${def} (33% of ${size} teams, rounded). Division winners take the top seeds and the rest of the field is seeded by rank (wild cards). First-round byes follow a standard bracket: the top seeds get a bye when the field is not a power of two (6 teams: 2 byes, 12 teams: 4).`;
 }
 document.getElementById('league-format').onchange = updateSettingsFields;
 document.getElementById('pick-trading-enabled').onchange = updateSettingsFields;
@@ -650,11 +647,14 @@ function leagueSettingsPayload() {
   if (format !== 'traditional_redraft') out.pick_trading_enabled = document.getElementById('pick-trading-enabled').checked;
   if (format === 'keeper' || format === 'dynasty') out.pick_trade_seasons = num('pick-trade-seasons') || 2;
   if (isWindowSport()) {
-    out.standings_mode = document.getElementById('standings-mode').value;
-    out.points_per_win = num('points-win') ?? 3;
-    out.points_per_tie = num('points-tie') ?? 1;
+    if (isNhl()) {
+      out.standings_mode = document.getElementById('standings-mode').value;
+      out.points_per_win = num('points-win') ?? 3;
+      out.points_per_tie = num('points-tie') ?? 1;
+    } else {
+      out.standings_mode = 'win_pct';
+    }
     out.playoff_teams = num('playoff-teams');
-    out.playoff_byes = num('playoff-byes') ?? 0;
     out.division_winners_qualify = document.getElementById('division-winners-qualify').checked;
     out.division_winners_seeded_first = document.getElementById('division-winners-first').checked;
     out.playoff_consolation = document.querySelector('input[name=playoff-consolation]:checked').value === 'yes';

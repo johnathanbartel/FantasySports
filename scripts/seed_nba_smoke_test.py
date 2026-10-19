@@ -86,9 +86,11 @@ def main():
     r = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"],
                                       "size": 2, "series_length_days": 7}, headers=headers)
     assert r.status_code == 400, "series length is still refused outside the window sports"
-    r = create(standings_mode="points", points_per_win=2, playoff_teams=2)
+    r = create(playoff_teams=2)
     assert r.status_code == 200, r.text
-    assert r.json()["playoff_teams"] == 2
+    assert r.json()["playoff_teams"] == 2 and r.json()["standings_mode"] == "win_pct", "NBA sorts by win percentage"
+    assert create(standings_mode="points").status_code == 400, "points standings are hockey only"
+    assert create(points_per_win=2).status_code == 400, "points for a win are hockey only"
     print("Validation passed: draft rounds, series length 5/7/10 only, NFL still refused, standings settings accepted.")
 
     # --- window / series schedule ---------------------------------------------
