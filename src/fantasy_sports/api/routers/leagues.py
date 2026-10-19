@@ -22,7 +22,7 @@ from fantasy_sports.api.schemas import (
     TeamSetupResult, WeekOut,
 )
 from fantasy_sports.platform import commissioner, draft_order, league_branding, league_join, notifications, setting_changes
-from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover
+from fantasy_sports.platform import calendar, elimination, game_lock, lineups, platform_fees, playoffs, scoring, season_rollover, series_schedule
 from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform import waivers
 from fantasy_sports.platform.conferences import service as conferences
@@ -119,20 +119,21 @@ def create_league(
     if payload.allow_ai_takeover_in_season and payload.visibility != "public":
         raise HTTPException(400, "Taking over AI teams in season is only for public leagues")
 
-    hockey_settings_changed = (payload.standings_mode != "points" or payload.points_per_win != 3
-                               or payload.points_per_tie != 1 or payload.playoff_teams is not None
-                               or payload.tiebreakers is not None or payload.playoff_byes != 0
-                               or not payload.division_winners_qualify or not payload.division_winners_seeded_first
-                               or payload.playoff_consolation)
-    if hockey_settings_changed and not has_window_sport:
+    is_hockey = "nhl" in payload.universe_codes
+    playoff_settings_changed = (payload.playoff_teams is not None or payload.tiebreakers is not None
+                                or not payload.division_winners_qualify or not payload.division_winners_seeded_first
+                                or payload.playoff_consolation)
+    if playoff_settings_changed and not has_window_sport:
         raise HTTPException(400, "Standings and playoff settings are for hockey and basketball leagues")
+    # Points standings are hockey only; every other sport sorts by win percentage.
+    standings_mode = payload.standings_mode or ("points" if is_hockey else "win_pct")
+    if not is_hockey and (standings_mode != "win_pct" or payload.points_per_win != 3 or payload.points_per_tie != 1):
+        raise HTTPException(400, "Points standings are for hockey leagues; other sports sort by win percentage")
     if payload.playoff_teams is not None and payload.playoff_teams > payload.size:
         raise HTTPException(400, f"A {payload.size}-team league can't have {payload.playoff_teams} playoff teams")
     if payload.tiebreakers is not None and (problem := tiebreaker_rules.validate(payload.tiebreakers)):
         raise HTTPException(400, problem)
     field_size = payload.playoff_teams or playoffs.default_playoff_teams(payload.size)
-    if payload.playoff_byes > field_size:
-        raise HTTPException(400, f"A {field_size}-team playoff field can't have {payload.playoff_byes} byes")
 
     first = universes[0]
     draft_rounds = payload.draft_rounds
@@ -171,12 +172,12 @@ def create_league(
         acquisition_budget=payload.acquisition_budget,
         acquisition_limit=payload.acquisition_limit,
         acquisition_limit_period=payload.acquisition_limit_period,
-        standings_mode=payload.standings_mode,
+        standings_mode=standings_mode,
         points_per_win=payload.points_per_win,
         points_per_tie=payload.points_per_tie,
         playoff_teams=payload.playoff_teams,
         tiebreakers=payload.tiebreakers,
-        playoff_byes=payload.playoff_byes,
+        playoff_byes=playoffs.bracket_byes(min(field_size, payload.size)),
         division_winners_qualify=payload.division_winners_qualify,
         division_winners_seeded_first=payload.division_winners_seeded_first,
         playoff_consolation=payload.playoff_consolation,
@@ -596,8 +597,9 @@ def update_league_settings(
         league.division_winners_qualify = payload.division_winners_qualify
     if payload.division_winners_seeded_first is not None:
         league.division_winners_seeded_first = payload.division_winners_seeded_first
-    if payload.playoff_byes is not None:
-        league.playoff_byes = payload.playoff_byes
+    if (payload.standings_mode == "points" or payload.points_per_win is not None
+            or payload.points_per_tie is not None) and not series_schedule.league_is_nhl(db, league.id):
+        raise HTTPException(400, "Points standings are for hockey leagues; other sports sort by win percentage")
     if payload.standings_mode is not None:
         league.standings_mode = payload.standings_mode
     if payload.points_per_win is not None:
@@ -612,8 +614,7 @@ def update_league_settings(
         league.playoff_teams = payload.playoff_teams
     if hockey_fields:
         team_count = max(db.query(Team).filter_by(league_id=league.id).count(), league.size)
-        if league.playoff_byes > playoffs.effective_playoff_teams(league, team_count):
-            raise HTTPException(400, f"The playoff field can't have {league.playoff_byes} byes")
+        league.playoff_byes = playoffs.bracket_byes(playoffs.effective_playoff_teams(league, team_count))
     if payload.pick_trading_enabled is not None:
         league.pick_trading_enabled = payload.pick_trading_enabled
     if payload.visibility is not None:

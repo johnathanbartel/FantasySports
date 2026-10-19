@@ -193,11 +193,15 @@ assert create(league_format="bogus").status_code == 422
 # A non-keeper league ignores a stray keeper deadline; hockey settings are rejected for other sports.
 assert create(league_format="dynasty", keeper_deadline="2099-06-01T12:00:00Z").json()["keeper_deadline"] is None
 nfl = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"], "size": 8,
-                                    "standings_mode": "win_pct"}, headers=H)
+                                    "playoff_teams": 4}, headers=H)
 assert nfl.status_code == 400, nfl.text
+nfl_points = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"], "size": 8,
+                                           "standings_mode": "points"}, headers=H)
+assert nfl_points.status_code == 400, "points standings are hockey only"
 nfl_ok = client.post("/leagues", json={"name": "NFL", "commissioner_user_id": commissioner.id, "universe_codes": ["nfl"], "size": 8,
                                        "league_format": "dynasty", "pick_trade_seasons": 4}, headers=H)
 assert nfl_ok.status_code == 200 and nfl_ok.json()["league_format"] == "dynasty" and nfl_ok.json()["pick_trade_seasons"] == 4, nfl_ok.text
+assert nfl_ok.json()["standings_mode"] == "win_pct", "every sport but hockey sorts by win percentage"
 
 # Draft order uses the league's standings mode (and shows the points kept in the archive).
 print("Standings smoke test passed: points and win %, tiebreaks, settings API, series standings with seeds, division winners, wizard settings.")

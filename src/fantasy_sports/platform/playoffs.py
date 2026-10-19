@@ -6,7 +6,8 @@ rounded to the nearest whole team. How the field is filled and seeded is a Playo
     by rank. Off: the field is simply the best teams by rank.
   * division_winners_seeded_first - the division winners take the top seeds (in rank order) and the wild cards follow. Off:
     everyone is seeded by rank.
-  * byes - the top seeds skip the first round.
+  * byes - the top seeds skip the first round. Not a setting: a standard bracket is the next power of two, and the seeds
+    that would be missing from it get byes (4 teams: none, 6: two, 12: four).
   * consolation - teams that are out either finish their season at elimination (the default) or play consolation matchups.
     Consolation games are playoff-stage: they never change who is eliminated.
 Rank is the standings order the league chose (points or win %, then its tiebreakers). A league with no divisions just seeds by
@@ -34,6 +35,14 @@ def default_playoff_teams(team_count: int) -> int:
     return max(1, int(team_count * DEFAULT_PLAYOFF_SHARE + 0.5))
 
 
+def bracket_byes(teams: int) -> int:
+    """First-round byes in a standard single-elimination bracket of `teams`: the gap up to the next power of two."""
+    if teams <= 2:
+        return 0
+    size = 1 << (teams - 1).bit_length()
+    return size - teams
+
+
 def effective_playoff_teams(league, team_count: int) -> int:
     n = league.playoff_teams if league.playoff_teams else default_playoff_teams(team_count)
     return max(1, min(n, team_count))
@@ -41,7 +50,7 @@ def effective_playoff_teams(league, team_count: int) -> int:
 
 def rules_for(league, team_count: int) -> PlayoffRules:
     teams = effective_playoff_teams(league, team_count)
-    return PlayoffRules(teams, max(0, min(getattr(league, "playoff_byes", 0) or 0, teams)),
+    return PlayoffRules(teams, bracket_byes(teams),
                         bool(getattr(league, "division_winners_qualify", True)),
                         bool(getattr(league, "division_winners_seeded_first", True)),
                         bool(getattr(league, "playoff_consolation", False)))
