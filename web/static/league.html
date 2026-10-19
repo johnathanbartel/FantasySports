@@ -114,6 +114,7 @@
 <script src="/static/scoring-modal.js?v=20261013"></script>
 <script src="/static/player-card.js?v=20261018"></script>
 <script src="/static/commissioner-tab.js?v=20261018"></script>
+<script src="/static/chat.js?v=20261022"></script>
 <script>
 const params = new URLSearchParams(location.search);
 const LEAGUE_ID = params.get('league_id');
@@ -174,12 +175,13 @@ const money = (n) => n == null ? '-' : '$' + Math.round(n).toLocaleString();
 const rk = (id) => teamsById[id]?.poll_rank ? `<span class="rk">#${teamsById[id].poll_rank}</span>` : '';
 const tn = (id, fallback) => `${rk(id)}${esc(teamsById[id]?.name || fallback || id)}`;
 const ALL_TABS = [['home', 'Home'], ['scoreboard', 'Scoreboard'], ['roster', 'Roster'], ['transactions', 'Transactions'], ['trades', 'Trades'], ['schedule', 'Schedule'],
-              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['settings', 'Team Settings'], ['league-settings', 'League Settings'], ['commissioner', 'Commissioner'], ['rankings', 'Rankings']];
+              ['standings', 'Standings'], ['stats', 'Stats'], ['teams', 'Teams'], ['chat', 'Chat'], ['settings', 'Team Settings'], ['league-settings', 'League Settings'], ['commissioner', 'Commissioner'], ['rankings', 'Rankings']];
 // Rankings exist only for college leagues (College Football / College Basketball) to start.
-const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : label]).filter(([id]) => (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))) && (id !== 'commissioner' || isCommissioner));
+const tabList = () => ALL_TABS.map(([id, label]) => [id, id === 'stats' && isHockey() ? 'League Leaders' : id === 'chat' && chatSummary && chatSummary.total_unread ? `Chat (${chatSummary.total_unread})` : label]).filter(([id]) => (id !== 'chat' || (ov && (myTeam() || isCommissioner))) && (id !== 'rankings' || (ov && ov.has_rankings)) && (id !== 'settings' || (ov && (myTeam() || isCommissioner))) && (id !== 'commissioner' || isCommissioner));
 
 let me = null, ov = null, canActForAi = false, isCommissioner = false;   // isCommissioner: the commissioner or a co-commissioner
 let tab = 'home';
+let chatCtl = null, chatSummary = null;   // the open Chat tab's widget; unread counts for the tab label
 let teamsById = {};
 let activeTeamId = null;              // the team the Roster / Transactions tabs are looking at
 let cache = {};                       // per-tab data
@@ -219,6 +221,7 @@ async function go(id, extra = {}) {
     clearTimeout(rosterMidnightTimer);
     rosterMidnightTimer = null;
   }
+  if (chatCtl) { chatCtl.destroy(); chatCtl = null; }
   if (extra.team_id) activeTeamId = extra.team_id;
   showError(''); showResult('');
   const u = new URL(location.href); u.searchParams.set('tab', id);
@@ -227,7 +230,7 @@ async function go(id, extra = {}) {
   renderTabs();
   $('content').innerHTML = '<p class="muted">Loading...</p>';
   try { await ({home: renderHome, scoreboard: renderScoreboard, roster: renderRoster, transactions: renderTransactions, trades: renderTrades, schedule: renderSchedule,
-                standings: renderStandings, stats: renderStats, teams: renderTeams, settings: renderTeamSettings, 'league-settings': renderLeagueSettings, commissioner: renderCommissioner, rankings: renderRankings})[id](); }
+                standings: renderStandings, stats: renderStats, teams: renderTeams, chat: renderChat, settings: renderTeamSettings, 'league-settings': renderLeagueSettings, commissioner: renderCommissioner, rankings: renderRankings})[id](); }
   catch (e) { showError(e.message); $('content').innerHTML = ''; }
 }
 
@@ -2925,6 +2928,50 @@ async function renderTeamSettings() {
   }
 }
 
+// ---- CHAT (web/static/chat.js; API in api/routers/chat.py) ------------------------------------------------------
+async function refreshChatSummary() {
+  if (!(myTeam() || isCommissioner)) return;
+  try { chatSummary = await Chat.summary(LEAGUE_ID); renderTabs(); } catch (e) { /* the badge is cosmetic */ }
+}
+async function renderChat() {
+  const [sum, mem] = await Promise.all([Chat.summary(LEAGUE_ID), Chat.members(LEAGUE_ID)]);
+  chatSummary = sum; renderTabs();
+  view.chat = view.chat || {thread: 'league'};
+  const badge = (n) => n ? ` <span class="tag tag-neutral" style="font-size:11px">${n}</span>` : '';
+  const threadList = () => {
+    const dmIds = new Set(sum.dms.map(d => d.user_id));
+    return [{key: 'league', label: 'League room', unread: sum.league_unread}]
+      .concat(sum.draft ? [{key: 'draft:' + sum.draft.draft_id, label: 'Draft room', unread: sum.draft.unread}] : [])
+      .concat(sum.dms.map(d => ({key: 'dm:' + d.user_id, label: d.team_name ? `${d.name} · ${d.team_name}` : d.name, unread: d.unread, dm: true, preview: d.preview})))
+      .concat(view.chat.thread.startsWith('dm:') && !dmIds.has(Number(view.chat.thread.slice(3)))
+        ? [{key: view.chat.thread, label: (mem.find(m => 'dm:' + m.user_id === view.chat.thread) || {}).name || 'New message', unread: 0, dm: true}] : []);
+  };
+  $('content').innerHTML = `<div style="display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:var(--space-5);align-items:start">
+    <div><div id="chat-threads"></div>
+      <label style="display:block;margin-top:var(--space-4);font-size:12px" class="muted">New direct message
+        <select id="chat-new-dm" style="width:100%;margin-top:4px"><option value="">Choose a person...</option>${mem.map(m => `<option value="${m.user_id}">${esc(m.team_name ? m.name + ' · ' + m.team_name : m.name)}</option>`).join('')}</select></label></div>
+    <div><h3 id="chat-title" style="margin:0 0 var(--space-3)"></h3><div id="chat-host"></div></div></div>`;
+  const drawList = () => {
+    const list = threadList();
+    $('chat-threads').innerHTML = list.map(t => `<button type="button" class="btn ${view.chat.thread === t.key ? 'btn-primary' : 'btn-secondary'}" data-thread="${t.key}" style="display:block;width:100%;text-align:left;margin-bottom:var(--space-2)">${esc(t.label)}${badge(t.unread)}${t.preview ? `<div style="font-size:11px;font-weight:normal;opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.preview)}</div>` : ''}</button>`).join('');
+    $('chat-threads').querySelectorAll('[data-thread]').forEach(b => b.onclick = () => open(b.dataset.thread));
+    const cur = list.find(t => t.key === view.chat.thread);
+    $('chat-title').textContent = cur ? cur.label : 'Chat';
+  };
+  const open = (key) => {
+    view.chat.thread = key;
+    if (key.startsWith('dm:')) { const t = sum.dms.find(d => 'dm:' + d.user_id === key); if (t) t.unread = 0; }
+    else if (key === 'league') sum.league_unread = 0;
+    else if (sum.draft) sum.draft.unread = 0;
+    drawList();
+    if (chatCtl) chatCtl.setThread(key);
+  };
+  drawList();
+  $('chat-new-dm').onchange = (ev) => { if (ev.target.value) { view.chat.thread = 'dm:' + ev.target.value; ev.target.value = ''; drawList(); chatCtl.setThread(view.chat.thread); } };
+  chatCtl = Chat.mount($('chat-host'), {leagueId: LEAGUE_ID, thread: view.chat.thread, meId: me, canModerate: isCommissioner,
+    onRead: () => refreshChatSummary()});
+}
+
 // ---- start ------------------------------------------------------------------------------------------------------
 async function start() {
   if (!LEAGUE_ID) { showError('Missing league_id.'); return; }
@@ -2958,6 +3005,8 @@ async function start() {
     onTrade: ({teamId, assetId}) => { tradeSelectedOppId = teamId; tradeWantAsset = assetId; return go('trades'); },
   });
   if (params.get('trade_team')) { tradeSelectedOppId = Number(params.get('trade_team')); tradeWantAsset = Number(params.get('trade_asset')) || null; }
+  refreshChatSummary();
+  setInterval(() => { if (!document.hidden && tab !== 'chat') refreshChatSummary(); }, 30000);
   const want = params.get('tab');
   await go(tabList().some(([id]) => id === want) ? want : 'home');
 }
