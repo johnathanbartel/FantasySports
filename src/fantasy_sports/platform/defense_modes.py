@@ -59,7 +59,7 @@ def roster_size(db: Session, universe_id: int, mode: str) -> int | None:
     """Total roster slots (starters + bench) a universe defines for a defense mode,
     or None when it defines none. A league's draft_rounds is this number."""
     counts = [
-        s.slot_count for s in db.query(RosterSlotDefinition).filter_by(universe_id=universe_id)
+        s.slot_count for s in db.query(RosterSlotDefinition).filter_by(universe_id=universe_id, league_id=None)
         if s.defense_mode is None or s.defense_mode == mode
     ]
     return sum(counts) or None

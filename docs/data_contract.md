@@ -100,6 +100,29 @@ A player's fantasy score for a play is never the full play value credited twice 
 
 **Bid on individually, per group** — never bundled by real team. In the Timed Auction Draft, each defensive position group is its own auction line: a manager can bid on and win Georgia's DB group and Notre Dame's DL group as two separate, independent bids, and a single real team's DL/LB/DB groups are never combined into one bid line. This is consistent with the `DL/LB/DB draft pool` decision above, which already establishes each `defense_groups` row (one per real team per position group — DL, LB, DB) as an atomic `draftable_assets` entry; this decision confirms that same per-group unit is also the atomic bidding unit in the auction's round resolution logic. No additional bundling table or bundling logic is required.
 
+## Imported scoring (legacy formula)
+
+The one exception to "the platform's only points formula is the realistic model" (FS-037, owner-approved). A league brought
+over from another platform keeps its existing box-score formula.
+
+- `leagues.scoring_system`: `'realistic'` (default, every league made here) or `'imported'`. Set by code at creation only;
+  create-league refuses `'imported'`, and no route changes it. (The research doc's per-season `external:espn` label is a
+  separate, later archive field; the league flag is just `'imported'`, with the source in `imported_scoring_items.source_platform`.)
+- `imported_scoring_items` (league_id, source_platform, source_stat_id, stat_code, points, created_at; unique on
+  league_id + stat_code): the frozen formula. Written only by `imported_scoring.create_formula`, which refuses a league that
+  already has one. There is no update or delete path; a correction is an operator data fix with an audit trail.
+- The formula is a flat list of stat code -> points per unit. Double-double (`DD`) and triple-double (`TD`) are derived from
+  PTS/REB/AST/STL/BLK; a triple-double also counts as a double-double (`TRIPLE_DOUBLE_ALSO_COUNTS_DOUBLE`, unconfirmed against
+  ESPN's own documentation, so flagged).
+- Stat-line input shape: `{"PTS": 30, "3PM": 4, "REB": 10, ...}` per player-game. NBA box scores are not ingested yet, so
+  `imported_scoring.week_stat_lines` returns none and `scoring.team_week_score` gives 0 for an imported league.
+- Scale-dependent features (scoring-scale context, the AI poll, the realism audit) skip imported leagues.
+- API: `LeagueOut.scoring_system` and `LeagueOut.imported_scoring` (read-only).
+
+Per-league NBA layout: `roster_slot_definitions.league_id` (NULL = the universe default). A league with its own rows uses
+them instead of the universe's (`lineups.league_slots`); `nba_reference.apply_league_layout` sets G/F/UTIL/BENCH/IR counts.
+`IR` is never auto-filled and is not a roster spot (`league_features.roster_spots`).
+
 ## Key API actions
 
 All implemented and verified against a real database; full request/response shapes at `/docs`.

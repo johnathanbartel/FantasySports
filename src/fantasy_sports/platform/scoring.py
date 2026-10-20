@@ -30,6 +30,7 @@ from fantasy_sports.platform import calendar, season
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset,
     Game,
+    League,
     LeagueUniverse,
     LineupEntry,
     RealTeam,
@@ -41,7 +42,10 @@ from fantasy_sports.platform.scoring_scale import ScaleContext, context_for_leag
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
 
-def league_context(db: Session, league_id: int) -> ScaleContext:
+def league_context(db: Session, league_id: int) -> ScaleContext | None:
+    """The realistic scale for the league; None for an imported-scoring league, which has no scale (FS-037)."""
+    if db.get(League, league_id).scoring_system == "imported":
+        return None
     return context_for_league(db, league_id)
 
 
@@ -125,6 +129,10 @@ def team_raw_credit(db: Session, team_id: int, week_id: int) -> float:
 def team_week_score(db: Session, team_id: int, week_id: int, context: ScaleContext | None = None) -> float:
     """The team's fantasy points for the week: the fitted scale applied to its starters' summed credit.
     A team with no starters set scores 0."""
+    team = db.get(Team, team_id)
+    if db.get(League, team.league_id).scoring_system == "imported":
+        from fantasy_sports.platform import imported_scoring       # a frozen box-score formula, no realistic scale
+        return imported_scoring.team_week_score(db, team_id, week_id, team.league_id)
     lines = lineup_breakdown(db, team_id, week_id)
     if not lines:
         return 0.0

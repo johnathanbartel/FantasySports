@@ -36,6 +36,7 @@ from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
 BENCH = "BENCH"
+IR = "IR"      # injured-reserve slot (FS-037): never auto-filled, not a roster spot (league_features.roster_spots)
 
 
 def _heal_nhl_counts(db: Session, universe_id: int, rows: list[RosterSlotDefinition]) -> None:
@@ -62,11 +63,14 @@ def league_slots(db: Session, league_id: int) -> list[RosterSlotDefinition]:
     lu = db.query(LeagueUniverse).filter_by(league_id=league_id).first()
     if lu is None:
         raise ValueError("League has no universe assigned")
-    rows = [
-        s for s in db.query(RosterSlotDefinition).filter_by(universe_id=lu.universe_id)
-        if s.defense_mode is None or s.defense_mode == lu.defense_mode
-    ]
-    _heal_nhl_counts(db, lu.universe_id, rows)
+    # A league with its own layout (nba_reference.apply_league_layout) uses those rows instead of the universe's.
+    rows = db.query(RosterSlotDefinition).filter_by(league_id=league_id).all()
+    if not rows:
+        rows = [
+            s for s in db.query(RosterSlotDefinition).filter_by(universe_id=lu.universe_id, league_id=None)
+            if s.defense_mode is None or s.defense_mode == lu.defense_mode
+        ]
+        _heal_nhl_counts(db, lu.universe_id, rows)
 
     def order(s: RosterSlotDefinition):
         return (not s.is_starter, len(s.eligible_positions) > 1, s.id)
@@ -141,6 +145,8 @@ def best_lineup(db: Session, team: Team, prior: dict[int, float] | None = None) 
     remaining = sorted(roster, key=strength, reverse=True)
     out: dict[str, list[int]] = {}
     for slot in slots:   # starters (position slots first, FLEX after), then bench
+        if slot.slot_code == IR:
+            continue
         chosen = []
         for a in list(remaining):
             if len(chosen) == slot.slot_count:

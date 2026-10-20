@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from fantasy_sports.api.helpers import draftable_asset_position
 from fantasy_sports.platform import lineups, scoring, scoring_scale, season
-from fantasy_sports.platform.db.models.core import DraftableAsset, Game, RosterEntry, Team
+from fantasy_sports.platform.db.models.core import DraftableAsset, Game, League, RosterEntry, Team
 from fantasy_sports.platform.recruiting.pricing import season_points_by_asset
 from fantasy_sports.sports.football.models import WeeklyPlayerScore
 
@@ -181,6 +181,9 @@ def team_projections(db: Session, league_id: int) -> list[dict]:
 
 def poll(db: Session, league_id: int) -> dict:
     """The AI voter panel's poll for the current point of the season (see the module docstring)."""
+    league = db.get(League, league_id)
+    if league is not None and league.scoring_system == "imported":      # no realistic scale to rank on (FS-037)
+        return {"as_of_week": 0, "size": 0, "voters": 0, "remaining_weeks": [], "ranked": [], "others": [], "epa_ranking": []}
     done, _ = scored_weeks(db, league_id)
     as_of = done[-1].week_number if done else 0
     teams = team_projections(db, league_id)
