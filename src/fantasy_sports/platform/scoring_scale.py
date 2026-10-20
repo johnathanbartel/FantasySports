@@ -135,6 +135,7 @@ def context_for_league(db, league_id: int) -> ScaleContext:
     nfl = db.query(Universe).filter(Universe.id.in_(universe_ids or [0]), Universe.code == "nfl").first()
     slots: dict[str, int] = {}
     for d in db.query(RosterSlotDefinition).filter(RosterSlotDefinition.universe_id.in_(universe_ids or [0]),
+                                                   RosterSlotDefinition.league_id.is_(None),
                                                    RosterSlotDefinition.is_starter.is_(True)):
         # a slot tied to a defense mode only counts in leagues drafting defense that way
         if d.defense_mode is not None and d.defense_mode != modes.get(d.universe_id):

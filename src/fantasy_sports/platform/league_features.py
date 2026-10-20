@@ -70,10 +70,10 @@ def draft_state(db: Session, league_id: int) -> str:
 
 
 def roster_spots(db: Session, league_id: int) -> int:
-    """How many players a team's roster holds: every lineup slot (starters and bench). 0 if the league has no slots."""
+    """How many players a team's roster holds: every lineup slot (starters and bench) except injured reserve. 0 if the league has no slots."""
     from fantasy_sports.platform import lineups
     try:
-        return sum(s.slot_count for s in lineups.league_slots(db, league_id))
+        return sum(s.slot_count for s in lineups.league_slots(db, league_id) if s.slot_code != lineups.IR)
     except ValueError:
         return 0
 

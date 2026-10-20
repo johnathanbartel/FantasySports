@@ -28,6 +28,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     LargeBinary,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -111,6 +112,7 @@ class League(Base):
         CheckConstraint("unfilled_slot_policy IN ('fill_ai', 'remove')", name="ck_league_unfilled_slot_policy"),
         CheckConstraint("draft_reset_policy IN ('unanimous', 'commissioner', 'off')", name="ck_league_draft_reset_policy"),
         CheckConstraint("draft_order_mode IN ('random', 'manual')", name="ck_league_draft_order_mode"),
+        CheckConstraint("scoring_system IN ('realistic', 'imported')", name="ck_league_scoring_system"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -200,6 +202,10 @@ class League(Base):
     # (the default). The period is "day", "week", "game", "series" or "season".
     acquisition_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     acquisition_limit_period: Mapped[str] = mapped_column(String(8), default="week", server_default="week")
+    # FS-037 (platform/imported_scoring.py): 'realistic' (every league made on the platform) or 'imported' (a league brought
+    # over from another platform, its stat formula copied once and frozen in imported_scoring_items). Set at creation by
+    # code only; no API route accepts or changes it.
+    scoring_system: Mapped[str] = mapped_column(String(10), default="realistic", server_default="realistic")
     # FS-036 (platform/platform_fees.py): AD_SUPPORTED (default) or AD_FREE, where each person-managed team pays a flat
     # per-season platform fee (snapshotted into platform_fee_cents when the plan becomes AD_FREE).
     platform_plan: Mapped[str] = mapped_column(String(12), default="AD_SUPPORTED", server_default="AD_SUPPORTED")
@@ -249,8 +255,16 @@ class League(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
     universes: Mapped[list["LeagueUniverse"]] = relationship(back_populates="league")
+    imported_scoring_rows: Mapped[list["ImportedScoringItem"]] = relationship(
+        viewonly=True, order_by="ImportedScoringItem.id")
     teams: Mapped[list["Team"]] = relationship(back_populates="league")
     series: Mapped[list["LeagueSeries"]] = relationship(back_populates="league")
+
+    @property
+    def imported_scoring(self) -> list[dict]:
+        """The frozen formula, read-only, for the league payload: [{stat_code, source_stat_id, points, source_platform}]."""
+        return [{"stat_code": r.stat_code, "source_stat_id": r.source_stat_id, "points": float(r.points),
+                 "source_platform": r.source_platform} for r in self.imported_scoring_rows]
 
 
 class LeagueSeason(Base):
@@ -537,6 +551,9 @@ class RosterSlotDefinition(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     universe_id: Mapped[int] = mapped_column(ForeignKey("universes.id"))
+    # FS-037: NULL = the universe's default layout. A set league_id makes the row part of THAT league's own layout, which
+    # replaces the universe rows for that league (lineups.league_slots); universe-level code reads league_id IS NULL only.
+    league_id: Mapped[int | None] = mapped_column(ForeignKey("leagues.id"), nullable=True, index=True)
     slot_code: Mapped[str] = mapped_column(String(20))  # "QB","RB","FLEX","DL","BENCH",...
     eligible_positions: Mapped[list] = mapped_column(JSON)  # e.g. ["RB","WR","TE"] for FLEX
     slot_count: Mapped[int] = mapped_column(Integer)
@@ -549,6 +566,22 @@ class RosterSlotDefinition(Base):
     # sees the slots matching its own league_universes.defense_mode plus
     # every NULL row.
     defense_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+
+class ImportedScoringItem(Base):
+    """One line of an imported league's frozen scoring formula (FS-037): `points` per unit of the canonical `stat_code`.
+    Written only by imported_scoring.create_formula while the league is created; nothing updates or deletes a row."""
+
+    __tablename__ = "imported_scoring_items"
+    __table_args__ = (UniqueConstraint("league_id", "stat_code", name="uq_imported_scoring_league_stat"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id"), index=True)
+    source_platform: Mapped[str] = mapped_column(String(20))        # 'espn'
+    source_stat_id: Mapped[int] = mapped_column(Integer)
+    stat_code: Mapped[str] = mapped_column(String(10))              # 'PTS', '3PM', 'DD', ...
+    points: Mapped[float] = mapped_column(Numeric(8, 3))
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class Draft(Base):

@@ -50,6 +50,8 @@ def create_league(
 ):
     if payload.commissioner_user_id != user.id:
         raise HTTPException(403, "You can only create a league with yourself as commissioner")
+    if payload.scoring_system not in (None, "realistic"):
+        raise HTTPException(400, "Imported scoring is only for leagues brought over from another platform")
     has_window_sport = bool(WINDOW_SPORTS & set(payload.universe_codes))
     if has_window_sport:
         series_length_days = 7 if payload.series_length_days is None else payload.series_length_days
@@ -98,7 +100,7 @@ def create_league(
     no_team_mode = [
         u.code for u in universes
         if payload.defense_modes.get(u.code) == "team"
-        and not db.query(RosterSlotDefinition).filter_by(universe_id=u.id, defense_mode="team").first()
+        and not db.query(RosterSlotDefinition).filter_by(universe_id=u.id, league_id=None, defense_mode="team").first()
     ]
     if no_team_mode:
         raise HTTPException(400, f"Universe(s) {sorted(no_team_mode)} don't offer whole-team defense")

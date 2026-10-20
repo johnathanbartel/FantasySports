@@ -19,7 +19,7 @@ def fill_slots(
     out = []
     for slot in slots:
         chosen: list[RosterItem] = []
-        for item in list(remaining):
+        for item in ([] if slot.slot_code == "IR" else list(remaining)):
             if len(chosen) == slot.slot_count:
                 break
             if item[1] in slot.eligible_positions:

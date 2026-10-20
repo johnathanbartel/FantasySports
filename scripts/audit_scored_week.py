@@ -76,6 +76,9 @@ def main():
     teams_meta = {t.id: t for t in db.query(RealTeam)}
     all_pts = [g.home_score for g in games] + [g.away_score for g in games]
     context = scoring.league_context(db, args.league)
+    if context is None:
+        print(f"League {args.league} uses imported scoring (no realistic scale): skipped")
+        return
     season_ppg = scoring_scale._params(context)["ppg"]       # the fitted league-average points per team-game
     sport = "NFL" if context.universe == "nfl" else "NCAA"
     fbs_pts = [p for tid, p in real_pts.items() if teams_meta[tid].classification == "fbs"]

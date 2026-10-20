@@ -35,6 +35,8 @@ class ORMModel(BaseModel):
 
 class LeagueCreateRequest(BaseModel):
     name: str
+    # Accepted only to be refused: imported scoring is never offered to a new league (FS-037).
+    scoring_system: str | None = None
     commissioner_user_id: int
     universe_codes: list[str]  # e.g. ["ncaaf"], or ["ncaaf", "nfl"] for Dual Universe
     size: int = 12
@@ -269,6 +271,10 @@ class LeagueOut(ORMModel):
     acquisition_budget: int | None = None
     acquisition_limit: int | None = None
     acquisition_limit_period: str = "week"
+    # FS-037, read-only: 'realistic' or 'imported'; imported_scoring is the frozen [{stat_code, source_stat_id, points,
+    # source_platform}] formula of an imported league (empty otherwise).
+    scoring_system: str = "realistic"
+    imported_scoring: list[dict] = []
     platform_plan: str
     platform_fee_cents: int | None
     trade_review_hours: int
