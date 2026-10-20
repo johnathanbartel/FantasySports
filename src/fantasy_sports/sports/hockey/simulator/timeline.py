@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 
 from fantasy_sports.platform.simulator.contract import SimEventInput
 from fantasy_sports.sports.hockey.simulator.division import Division, is_overtime
+from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
 from fantasy_sports.sports.hockey.simulator.model import (
     GAME_SECONDS, MAX_SHOT_EVENTS_PER_SIDE, MAX_TEXTURE_EVENTS_PER_SIDE, PERIODS, PERIOD_SECONDS, TIEBREAK_WINDOW,
     Contribution, CreditLine, HockeyGameInputs, Ledger, Normalized,
@@ -62,32 +63,84 @@ def place(second: int) -> int:
     return period_index * PERIOD_SECONDS + offset
 
 
-def weighted_draw(items: list[Contribution], k: int, rng: random.Random) -> list[Contribution]:
-    """k items without replacement, probability proportional to value; deterministic for a seeded rng."""
+def is_real_goal(item: Contribution) -> bool:
+    """Whether the item is a shot that really went in (the value model also makes saved shots goal-sized items)."""
+    return item.kind == "goal_credit" and any(l.is_goal for l in item.lines)
+
+
+def weighted_draw(items: list[Contribution], k: int, rng: random.Random,
+                  same_moment=None) -> list[Contribution]:
+    """k items without replacement, probability proportional to value; deterministic for a seeded rng. Shots that really
+    were goals are drawn before saved shots, so a scoreboard goal is a real goal (with its real assists) whenever there are
+    enough. `same_moment(item)` (optional) names the moment an item happens; two picks never share one, so a shooter's
+    rebounds in the same second cannot both become goals."""
     keyed = []
     for item in items:  # items arrive sorted by item_id, so the rng consumption order is fixed
         u = max(rng.random(), 1e-12)
-        keyed.append((math.log(u) / item.value, item.item_id, item))
-    keyed.sort(key=lambda t: (-t[0], t[1]))
-    return [t[2] for t in keyed[:k]]
+        keyed.append((not is_real_goal(item), math.log(u) / item.value, item.item_id, item))
+    keyed.sort(key=lambda t: (t[0], -t[1], t[2]))
+    out, seen = [], set()
+    for _, _, _, item in keyed:
+        if len(out) >= k:
+            break
+        moment = same_moment(item) if same_moment else None
+        if moment is not None and moment in seen:
+            continue
+        if moment is not None:
+            seen.add(moment)
+        out.append(item)
+    return out
 
 
 def _credit_dict(line: CreditLine) -> dict:
     return {"asset_id": line.asset_id, "name": line.player_name, "role": line.role, "points": round(line.points, 6)}
 
 
-def _earned_goal(side_name: str, item: Contribution, rng: random.Random) -> tuple[str, dict]:
+PRIMARY_ASSIST_RATE = 0.94      # share of NHL goals with a primary assist (the stored 2024-25 goals: 7887 of 8428)
+SECONDARY_ASSIST_RATE = 0.75    # share of those with a secondary assist too (6343 of 7887)
+SKATER_ASSIST_WEIGHT = {"D": 2.0}   # forwards 3, defence 2: defencemen assist less often than forwards
+
+
+def fabricated_assists(inputs: HockeyGameInputs, division: Division | None, period: int | None, side: str,
+                       item: Contribution) -> list[str]:
+    """Names of up to two teammates shown as assisting a goal that has no stored assist: a saved shot the scoreboard turned into
+    a goal, which the feed never credited. Like the filler shots they are fabricated: they carry no credit and change no
+    player's points; the goal's detail marks them. Teammates are the side's skaters who play in this fantasy period (everyone
+    for a whole-game script). Seeded by the game, period and item alone, so a rebuilt period names the same players and no
+    other draw is disturbed. Real goals keep their real assists; this only fills the ones the feed never had."""
+    scorer = next((l for l in item.lines if l.role == "shooter"), item.lines[0])
+    playing = None if division is None or period is None else {s.asset_id for s in division.chunks[period - 1]}
+    pool = sorted((c for c in inputs.counting_games
+                   if c.side == side and c.position.upper() != "G" and c.asset_id != scorer.asset_id
+                   and (playing is None or c.asset_id in playing)), key=lambda c: c.asset_id)
+    rng = derive_rng(inputs.daily_game_id, period or 0, f"assist:{item.item_id}")
+    names: list[str] = []
+    if pool and rng.random() < PRIMARY_ASSIST_RATE:
+        for rate in (1.0, SECONDARY_ASSIST_RATE):
+            if not pool or rng.random() >= rate:
+                break
+            pick = rng.choices(pool, weights=[SKATER_ASSIST_WEIGHT.get(c.position.upper()[:1], 3.0) for c in pool])[0]
+            names.append(pick.player_name)
+            pool.remove(pick)
+    return names
+
+
+def _earned_goal(side_name: str, item: Contribution, rng: random.Random, extra_assists: list[str] | None = None) -> tuple[str, dict]:
     shooter = next((l for l in item.lines if l.role == "shooter"), None)
     assists = [l for l in item.lines if l.role in ("primary_assist", "secondary_assist")]
     assists.sort(key=lambda l: (l.role != "primary_assist", l.line_id))
     detail = {"origin": "earned", "credits": [_credit_dict(l) for l in item.lines], "value": round(item.value, 6)}
+    assist_names = [a.player_name for a in assists]
+    if extra_assists and not assists:
+        assist_names = list(extra_assists)
+        detail["fabricated_assists"] = list(extra_assists)
     lead = shooter.player_name if shooter else None
     if lead:
         text = f"GOAL! {lead} scores for {side_name}"
-        if assists:
-            text += " (assists: " + ", ".join(a.player_name for a in assists) + ")"
+        if assist_names:
+            text += " (assists: " + ", ".join(assist_names) + ")"
     else:
-        text = f"GOAL! {side_name} score, set up by " + ", ".join(a.player_name for a in assists)
+        text = f"GOAL! {side_name} score, set up by " + ", ".join(assist_names)
     return text, detail
 
 
@@ -167,12 +220,20 @@ def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int],
         items = ledger.items[side]
         base_goals = goals[side] - (1 if tiebreak_side == side else 0)
         goal_items = [i for i in items if i.kind in ("goal_credit", "inverted")]
-        chosen = weighted_draw(goal_items, base_goals, rng)
+        def moment(item):
+            if item.kind != "goal_credit":
+                return None
+            lead = lead_of(item)
+            return lead.asset_id, place(division.place(lead.asset_id, lead.real_second))
+
+        chosen = weighted_draw(goal_items, base_goals, rng, same_moment=moment)
         chosen_ids = {c.item_id for c in chosen}
 
         for item in chosen:
             if item.kind == "goal_credit":
-                text, detail = _earned_goal(names[side], item, rng)
+                has_assist = any(l.role in ("primary_assist", "secondary_assist") for l in item.lines)
+                extra = None if has_assist else fabricated_assists(inputs, division, period, side, item)
+                text, detail = _earned_goal(names[side], item, rng, extra)
                 lead = lead_of(item)
                 second, tie = at(lead.asset_id, lead.real_second)
             else:
@@ -257,6 +318,8 @@ def _assemble_period(inputs: HockeyGameInputs, raw: list[_Raw], period: int, sta
             totals[f"{r.side}_score"] += r.d_score
         if r.d_shot:
             totals[f"{r.side}_shots"] += r.d_shot
+        if r.d_score:   # a goal is a shot: a goal the scoreboard invented brings its own, so shots never trail goals
+            totals[f"{r.side}_shots"] = max(totals[f"{r.side}_shots"], totals[f"{r.side}_score"])
         emit(r.kind, period, r.second, r.side, r.headline, r.detail)
     emit("period_end", period, limit, None, f"End of period {period}", {})
     if period == PERIODS:
@@ -289,6 +352,8 @@ def _assemble(inputs: HockeyGameInputs, raw: list[_Raw], norm: Normalized) -> li
                 totals[f"{r.side}_score"] += r.d_score
             if r.d_shot:
                 totals[f"{r.side}_shots"] += r.d_shot
+            if r.d_score:
+                totals[f"{r.side}_shots"] = max(totals[f"{r.side}_shots"], totals[f"{r.side}_score"])
             emit(r.kind, period, r.second, r.side, r.headline, r.detail)
             index += 1
         emit("period_end", period, limit, None, f"End of period {period}", {})
