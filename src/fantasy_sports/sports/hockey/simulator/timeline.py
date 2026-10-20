@@ -34,7 +34,7 @@ from fantasy_sports.platform.simulator.contract import SimEventInput
 from fantasy_sports.sports.hockey.simulator.division import Division, is_overtime
 from fantasy_sports.sports.hockey.simulator.normalize import derive_rng
 from fantasy_sports.sports.hockey.simulator.model import (
-    GAME_SECONDS, MAX_SHOT_EVENTS_PER_SIDE, MAX_TEXTURE_EVENTS_PER_SIDE, PERIODS, PERIOD_SECONDS, TIEBREAK_WINDOW,
+    EPS, GAME_SECONDS, MAX_SHOT_EVENTS_PER_SIDE, MAX_TEXTURE_EVENTS_PER_SIDE, PERIODS, PERIOD_SECONDS, TIEBREAK_WINDOW,
     Contribution, CreditLine, HockeyGameInputs, Ledger, Normalized,
 )
 
@@ -98,49 +98,58 @@ def _credit_dict(line: CreditLine) -> dict:
 
 PRIMARY_ASSIST_RATE = 0.94      # share of NHL goals with a primary assist (the stored 2024-25 goals: 7887 of 8428)
 SECONDARY_ASSIST_RATE = 0.75    # share of those with a secondary assist too (6343 of 7887)
-SKATER_ASSIST_WEIGHT = {"D": 2.0}   # forwards 3, defence 2: defencemen assist less often than forwards
 
 
-def fabricated_assists(inputs: HockeyGameInputs, division: Division | None, period: int | None, side: str,
-                       item: Contribution) -> list[str]:
-    """Names of up to two teammates shown as assisting a goal that has no stored assist: a saved shot the scoreboard turned into
-    a goal, which the feed never credited. Like the filler shots they are fabricated: they carry no credit and change no
-    player's points; the goal's detail marks them. Teammates are the side's skaters who play in this fantasy period (everyone
-    for a whole-game script). Seeded by the game, period and item alone, so a rebuilt period names the same players and no
-    other draw is disturbed. Real goals keep their real assists; this only fills the ones the feed never had."""
+def value_assists(inputs: HockeyGameInputs, side: str, item: Contribution) -> list[CreditLine]:
+    """The assists of a goal the feed gave none, decided by value created. A saved shot the scoreboard turns into a goal has no
+    stored assist, so its assisters are drawn from the side's other skaters in proportion to the value each created in the
+    same lines the scoreboard is built from (shots, assists, blocks, hits, takeaways: xG created), without replacement; a skater
+    who created nothing cannot assist, so a goal can end up with fewer assists than the feed would give. How many assists (one, two
+    or none) follows the real rates. Each assist takes its share of the goal's xG (ASSIST_SHARE, primary 2/3, secondary 1/3), the
+    same split a real goal uses. Seeded by the game and the item alone, so a rebuilt period names the same players and no other draw moves. Nothing here touches a player's box score."""
+    from fantasy_sports.sports.hockey.simulator.model import ASSIST_SHARE
     scorer = next((l for l in item.lines if l.role == "shooter"), item.lines[0])
-    playing = None if division is None or period is None else {s.asset_id for s in division.chunks[period - 1]}
-    pool = sorted((c for c in inputs.counting_games
-                   if c.side == side and c.position.upper() != "G" and c.asset_id != scorer.asset_id
-                   and (playing is None or c.asset_id in playing)), key=lambda c: c.asset_id)
-    rng = derive_rng(inputs.daily_game_id, period or 0, f"assist:{item.item_id}")
-    names: list[str] = []
-    if pool and rng.random() < PRIMARY_ASSIST_RATE:
-        for rate in (1.0, SECONDARY_ASSIST_RATE):
-            if not pool or rng.random() >= rate:
-                break
-            pick = rng.choices(pool, weights=[SKATER_ASSIST_WEIGHT.get(c.position.upper()[:1], 3.0) for c in pool])[0]
-            names.append(pick.player_name)
-            pool.remove(pick)
-    return names
+    created: dict[int, CreditLine] = {}
+    value: dict[int, float] = {}
+    for l in inputs.side(side).lines:
+        if l.role != "goalie" and l.points > EPS and l.asset_id != scorer.asset_id:
+            created.setdefault(l.asset_id, l)
+            value[l.asset_id] = value.get(l.asset_id, 0.0) + l.points
+    rng = derive_rng(inputs.daily_game_id, 0, f"assist:{item.item_id}")
+    wanted = 0
+    if rng.random() < PRIMARY_ASSIST_RATE:
+        wanted = 2 if rng.random() < SECONDARY_ASSIST_RATE else 1
+    keyed = sorted(((math.log(max(rng.random(), 1e-12)) / v, a) for a, v in value.items()), key=lambda t: (-t[0], t[1]))
+    picked = [a for _, a in keyed[:wanted]]
+    pool = ASSIST_SHARE * item.value
+    shares = (pool,) if len(picked) == 1 else (pool * 2 / 3, pool / 3)
+    return [CreditLine(f"va:{item.item_id}:{role}", scorer.group_id, a, created[a].player_name, created[a].position, role, share,
+                       scorer.real_second, scorer.xg, scorer.is_goal, scorer.empty_net, scorer.game_id)
+            for (role, a, share) in zip(("primary_assist", "secondary_assist"), picked, shares)]
 
 
-def _earned_goal(side_name: str, item: Contribution, rng: random.Random, extra_assists: list[str] | None = None) -> tuple[str, dict]:
+def _earned_goal(side_name: str, item: Contribution, rng: random.Random, derived: list[CreditLine] | None = None) -> tuple[str, dict]:
     shooter = next((l for l in item.lines if l.role == "shooter"), None)
     assists = [l for l in item.lines if l.role in ("primary_assist", "secondary_assist")]
+    credits = [_credit_dict(l) for l in item.lines]
+    detail = {"origin": "earned", "credits": credits, "value": round(item.value, 6)}
+    if derived and not assists:
+        # The assist value comes out of the shooter's share, so the goal's credits still add up to its xG.
+        taken = sum(d.points for d in derived)
+        for c in credits:
+            if c["role"] == "shooter":
+                c["points"] = round(c["points"] - taken, 6)
+        credits.extend(_credit_dict(d) for d in derived)
+        detail["assists_from_value"] = True
+        assists = derived
     assists.sort(key=lambda l: (l.role != "primary_assist", l.line_id))
-    detail = {"origin": "earned", "credits": [_credit_dict(l) for l in item.lines], "value": round(item.value, 6)}
-    assist_names = [a.player_name for a in assists]
-    if extra_assists and not assists:
-        assist_names = list(extra_assists)
-        detail["fabricated_assists"] = list(extra_assists)
     lead = shooter.player_name if shooter else None
     if lead:
         text = f"GOAL! {lead} scores for {side_name}"
-        if assist_names:
-            text += " (assists: " + ", ".join(assist_names) + ")"
+        if assists:
+            text += " (assists: " + ", ".join(a.player_name for a in assists) + ")"
     else:
-        text = f"GOAL! {side_name} score, set up by " + ", ".join(assist_names)
+        text = f"GOAL! {side_name} score, set up by " + ", ".join(a.player_name for a in assists)
     return text, detail
 
 
@@ -232,7 +241,7 @@ def collect_raw(inputs: HockeyGameInputs, ledger: Ledger, goals: dict[str, int],
         for item in chosen:
             if item.kind == "goal_credit":
                 has_assist = any(l.role in ("primary_assist", "secondary_assist") for l in item.lines)
-                extra = None if has_assist else fabricated_assists(inputs, division, period, side, item)
+                extra = None if has_assist else value_assists(inputs, side, item)
                 text, detail = _earned_goal(names[side], item, rng, extra)
                 lead = lead_of(item)
                 second, tie = at(lead.asset_id, lead.real_second)
