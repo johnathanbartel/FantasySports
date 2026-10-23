@@ -54,6 +54,7 @@ from fantasy_sports.platform.db.models.core import (
     Week,
 )
 from fantasy_sports.platform.db.session import DATABASE_URL, SessionLocal, engine
+from fantasy_sports.platform.nhl_game_type import season_type_from_nhl_game_id
 from fantasy_sports.sports.hockey.models import Shot, ShotCredit  # noqa: F401
 from seed_hockey_universe import ROSTER_SLOTS
 
@@ -453,6 +454,7 @@ def _sync_shots(db, universe: Universe, teams, week: Week, shots_path: Path, sea
                         home_team_id=teams[home_code].id,
                         away_team_id=teams[away_code].id,
                         status="final",
+                        season_type=season_type_from_nhl_game_id(game_ref),
                     )
                     db.add(game)
                     db.flush()
