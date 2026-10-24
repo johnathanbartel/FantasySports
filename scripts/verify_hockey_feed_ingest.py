@@ -31,7 +31,7 @@ def main() -> None:
         from fantasy_sports.platform.db.base import Base
         from fantasy_sports.platform.db.models.core import Game, RealTeam, Universe
         from fantasy_sports.platform.db.session import SessionLocal, engine
-        from fantasy_sports.sports.hockey.models import GameEvent
+        from fantasy_sports.sports.hockey.models import GameEvent, PlayerGameToi, Shot
 
         Base.metadata.create_all(bind=engine)
         with SessionLocal() as db:
@@ -106,6 +106,32 @@ def main() -> None:
         state["schedule_ok"] = False
         report = ingest()
         check(report["schedule"].startswith("FETCH FAILED") and events_by_game() == after, "an unreadable schedule is reported and nothing is lost")
+        # ---- a finished day stored before the flag existed still gets its season_type -------------------------------------------------
+        day2 = datetime.date(2026, 10, 16)
+        with SessionLocal() as db:
+            nhl_u = db.query(Universe).filter_by(code="nhl").one()
+            team = {t.external_ref: t.id for t in db.query(RealTeam).all()}
+            stored = []
+            for k, (away, home, ref) in enumerate([("TOR", "BOS", "2026:2026020500:7"), ("MTL", "NYR", "2026030001:7"), ("DET", "SEA", "no-game-id:7")]):
+                g = Game(universe_id=nhl_u.id, week_id=1, home_team_id=team[home], away_team_id=team[away],
+                         kickoff_at=datetime.datetime(2026, 10, 16, 19, 0), status="final")
+                db.add(g)
+                db.flush()
+                db.add(GameEvent(game_id=g.id, source="nhl_api", external_event_id=ref, event_type="faceoff"))
+                db.add(Shot(game_id=g.id, source="nhl_api", external_shot_id=f"s{k}"))
+                db.add(PlayerGameToi(game_id=g.id, draftable_asset_id=1, toi_seconds=60))
+                stored.append(g.id)
+            db.commit()
+        calls.clear()
+        with SessionLocal() as db:
+            nhl_u = db.query(Universe).filter_by(code="nhl").one()
+            report = {}
+            sync.ingest_daily_slate_if_needed(db, nhl_u, day2, report)
+            db.commit()
+            kinds = [db.get(Game, i).season_type for i in stored]
+        check(report["schedule"].startswith("skipped") and not calls, "a fully stored final day is still skipped: nothing fetched")
+        check(kinds == ["regular", "playoff", None], "...but its games got season_type from their stored game ids (02 regular, 03 playoff), none invented")
+
         print("feed ingest checks passed")
 
 

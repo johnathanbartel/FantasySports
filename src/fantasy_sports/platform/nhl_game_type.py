@@ -27,3 +27,12 @@ def season_type_from_nhl_game_id(game_id: int | str | None) -> str | None:
     if len(s) == 5:
         return _BY_TYPE_DIGITS.get("0" + s[0])
     return None
+
+
+def nhl_game_id_from_event_ref(ref: str | None) -> str | None:
+    """The 10-digit NHL game id inside a stored game_events.external_event_id.
+
+    Two forms exist: "<season>:<game id>:<event>" and "<game id>:<event>".
+    """
+    parts = (ref or "").split(":")
+    return next((p for p in parts[:2] if len(p) == 10 and p.isdigit()), None)
