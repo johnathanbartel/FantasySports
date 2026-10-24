@@ -784,6 +784,8 @@ class Game(Base):
     away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     kickoff_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
+    # NHL only: "regular" or "playoff", from the NHL game type (digits 5-6 of the game id).
+    season_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
 
 class WeeklyMatchup(Base):

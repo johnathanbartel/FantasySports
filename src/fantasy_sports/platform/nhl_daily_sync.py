@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po, series_schedule
+from fantasy_sports.platform.nhl_game_type import season_type_from_nhl_game_id
 from fantasy_sports.platform.player_age import parse_birth_date
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, Game, League, LeagueSeries, LeagueUniverse, Player, RealTeam, SeriesDailyGame, Universe, Week,
@@ -365,6 +366,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
             game.away_score = away_score
             game.status = game_status
             game.kickoff_at = game_start_et
+            game.season_type = season_type_from_nhl_game_id(nhl_game_id) or game.season_type
             if len(existing_games) > 1:
                 for dup in existing_games[1:]:
                     db.delete(dup)
@@ -373,7 +375,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
             game = Game(
                 universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
                 home_score=home_score, away_score=away_score, kickoff_at=game_start_et,
-                status=game_status,
+                status=game_status, season_type=season_type_from_nhl_game_id(nhl_game_id),
             )
             db.add(game)
             db.flush()
@@ -666,13 +668,15 @@ def seed_week_schedule_if_needed(db: Session, nhl: Universe, target_date: dateti
                 existing.status = game_status
                 existing.home_score = home_score
                 existing.away_score = away_score
+                existing.season_type = season_type_from_nhl_game_id(g_meta.get("id")) or existing.season_type
                 if len(existing_games) > 1:
                     for dup in existing_games[1:]:
                         db.delete(dup)
             else:
                 new_game = Game(
                     universe_id=nhl.id, week_id=week.id, home_team_id=home_team.id, away_team_id=away_team.id,
-                    home_score=home_score, away_score=away_score, kickoff_at=kickoff_naive, status=game_status
+                    home_score=home_score, away_score=away_score, kickoff_at=kickoff_naive, status=game_status,
+                    season_type=season_type_from_nhl_game_id(g_meta.get("id")),
                 )
                 db.add(new_game)
     db.flush()

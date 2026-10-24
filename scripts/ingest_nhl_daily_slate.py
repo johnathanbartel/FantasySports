@@ -47,6 +47,7 @@ from fantasy_sports.platform.db.models.core import (
     Week,
 )
 from fantasy_sports.platform.db.session import DATABASE_URL, SessionLocal, engine
+from fantasy_sports.platform.nhl_game_type import season_type_from_nhl_game_id
 from fantasy_sports.sports.hockey.models import EventCredit, GameEvent, Shot, ShotCredit
 from fantasy_sports.sports.hockey.pipeline import (
     BlockXgEstimator,
@@ -257,6 +258,7 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                     away_score=away_score,
                     kickoff_at=game_start_et,
                     status=game_status,
+                    season_type=season_type_from_nhl_game_id(nhl_game_id),
                 )
                 db.add(game)
                 db.flush()
@@ -265,6 +267,7 @@ def ingest_daily_slate(target_date: datetime.date, cache_dir: Path | None = None
                 game.away_score = away_score
                 game.status = game_status
                 game.kickoff_at = game_start_et
+                game.season_type = season_type_from_nhl_game_id(nhl_game_id) or game.season_type
                 db.flush()
 
             # Clean previous shots, events, and credits for this game for clean idempotency
