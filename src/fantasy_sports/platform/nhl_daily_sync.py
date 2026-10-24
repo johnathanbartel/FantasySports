@@ -19,11 +19,11 @@ import logging
 import math
 import urllib.request
 from zoneinfo import ZoneInfo
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from fantasy_sports.platform import pecking_order as po, series_schedule
-from fantasy_sports.platform.nhl_game_type import season_type_from_nhl_game_id
+from fantasy_sports.platform.nhl_game_type import nhl_game_id_from_event_ref, season_type_from_nhl_game_id
 from fantasy_sports.platform.player_age import parse_birth_date
 from fantasy_sports.platform.db.models.core import (
     DraftableAsset, Game, League, LeagueSeries, LeagueUniverse, Player, RealTeam, SeriesDailyGame, Universe, Week,
@@ -247,6 +247,21 @@ def _shot_clock_seconds(period: int, clock_str: str) -> int:
         return 0
 
 
+def _fill_season_type_from_events(db: Session, games: list[Game]) -> None:
+    """Marks games still without a season_type from the NHL game id kept with their stored events. No network: this runs
+    before the "every game is final and stored" early return of ingest_daily_slate_if_needed, which skips the code that
+    otherwise sets it from the schedule, so a finished day stored before the flag existed would never get its value."""
+    blank = {g.id: g for g in games if g.season_type is None}
+    if not blank:
+        return
+    refs = db.query(GameEvent.game_id, func.min(GameEvent.external_event_id)).filter(
+        GameEvent.game_id.in_(list(blank))).group_by(GameEvent.game_id).all()
+    for game_id, ref in refs:
+        season_type = season_type_from_nhl_game_id(nhl_game_id_from_event_ref(ref))
+        if season_type:
+            blank[game_id].season_type = season_type
+
+
 def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: datetime.date, report: dict | None = None) -> int:
     """Fetches and stores real NHL games for target_date from the NHL API if not already stored. Returns count of games stored.
 
@@ -262,6 +277,7 @@ def ingest_daily_slate_if_needed(db: Session, nhl: Universe, target_date: dateti
         Game.universe_id == nhl.id, Game.kickoff_at >= start_day, Game.kickoff_at < end_day
     ).all()
     game_ids = [g.id for g in games_for_day]
+    _fill_season_type_from_events(db, games_for_day)
     try:
         with db.begin_nested():
             ensure_standings_snapshot(db, nhl, target_date)  # Best Matchup reads the snapshot dated the lock day
