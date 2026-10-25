@@ -56,6 +56,15 @@ class PlannedWindow:
     day_index: int             # 0-based day within the series on which the window starts
 
 
+def game_number(day: datetime.date, window_index: int | None = None) -> int:
+    """The game of the series' Sunday-to-Saturday week a day falls in: 1 Sun-Tue, 2 Wed-Thu, 3 Fri-Sat. The scoreboard counts the
+    same way, so a skipped first window leaves its number unused instead of renumbering the rest."""
+    if window_index:
+        return window_index
+    since_sunday = (day.weekday() + 1) % 7
+    return 1 if since_sunday <= 2 else 2 if since_sunday <= 4 else 3
+
+
 def plan_windows(series: "PlannedSeries | LeagueSeries") -> list[PlannedWindow]:
     """The fantasy windows a series covers, earliest first. Consecutive days that fall in the same window of the same
     week form one window. Pure."""

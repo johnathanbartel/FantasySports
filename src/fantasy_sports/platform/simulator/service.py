@@ -178,7 +178,8 @@ def _finalize(db: Session, sim: SimulatorGame, events: list[SimulatorEvent], at:
     sim.finalized_at = at
     last = events[-1]
     dg.status = "FINAL"
-    dg.home_score, dg.away_score = max(dg.home_score, last.home_score), max(dg.away_score, last.away_score)
+    # The published script's last total is the canonical result; the mirror is set to it, never merged with an older value.
+    dg.home_score, dg.away_score = last.home_score, last.away_score
     dg.current_period, dg.seconds_remaining = shape.periods, 0
     series = db.get(LeagueSeries, dg.series_id)
     db.flush()

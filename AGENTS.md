@@ -32,6 +32,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | Script | Purpose | Venv | External API / .env | Writes DB |
 |---|---|---|---|---|
 | `scripts/audit_hockey_lineups.py` | Read-only audit of every NHL window game in one league: frozen lineup vs what the pecking order gives on today's schedule; pass `--league` (a league id, not a game id) | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | No (read-only; PostgreSQL transaction opened READ ONLY) |
+| `scripts/audit_league_results.py` | Read-only audit of one NHL league's results: standings rebuilt from the canonical final results vs the stored score columns, drift list, and the exact UPDATEs a repair would run (never run); pass `--league` (a league id) | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | No (read-only; PostgreSQL transaction opened READ ONLY) |
 | `scripts/audit_scored_week.py` | Read-only realism audit of one scored week (team scores vs real games, credit-vs-real correlation, standings tie-out); pass a throwaway DB, `--league`, `--week` | `.venv-api` | No | No (read-only) |
 | `scripts/calibrate_hockey_value_scale.py` | Read-only: net value and goals of a league's finished value-model window games, and the `VALUE_SCALE` that would give a target average; pass `--league` | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | No (read-only; PostgreSQL transaction opened READ ONLY) |
 | `scripts/convert_to_window_rows.py` | Moves NHL schedules from one game per day to one per fantasy window; unplayed windows collapse and their simulations are discarded, played days are untouched (dry run default; `--yes` applies; run after `alembic upgrade head`) | `.venv-api` | No | Yes (`DATABASE_URL`; destructive for unplayed windows with `--yes`) |
@@ -83,6 +84,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_trade_counter_smoke_test.py` | Trade counter offers: the receiving manager counters a direct offer, original closes as countered and links to the counter, only the receiving team can counter, a refused counter leaves the offer open, counters can be countered back, accepting a counter swaps what it lists, AI-involved trades can't be countered | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_pickups_smoke_test.py` | Trending and recommended pickups: trend percentage (leagues counted once, mock drafts / AI fill / old adds / own league left out), recommended free agents ranked by projected points above the team's weakest starter on the draft-suggestion engine, open-slot flag, closed free agency | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_player_card_smoke_test.py` | Player card endpoint: bio, injury, simulation stats and game log from a published sim game (G/A/SOG/SV/SO), spoiler rule, schedule, acquisition, transactions, % owned (mock drafts excluded), trade block, the add/claim/cancel/drop/trade/watch buttons per situation, and the private per-team watchlist (add, unwatch, status per row, access rules) | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/seed_standings_consistency_smoke_test.py` | One canonical final result per NHL game: skipped first window numbering, tie, hidden final counted for every viewer, out-of-order finals, independent rebuild of every team's GP W L T PTS PCT GF GA HOME AWAY, competing score versions, repeated meetings of the same teams, standings read refresh | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_smoke_test.py` | Smoke test round-tripping schema and API endpoints via TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/serve_demo.py` | Runs FastAPI server via Uvicorn against local demo dataset | `.venv-api` | No (unverified in docstring) | Yes (copies demo DB) |
 
@@ -113,6 +115,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_player_card_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_draft_grades_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_pickups_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_standings_consistency_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_elimination_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_elimination_engine.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/verify_playoff_odds.py`

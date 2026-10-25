@@ -808,6 +808,7 @@ class TeamSeriesGameOut(BaseModel):
     calendar_date: datetime.date
     calendar_date_end: datetime.date | None = None
     window_index: int | None = None
+    game_number: int | None = None      # 1 Sun-Tue, 2 Wed-Thu, 3 Fri-Sat of the series' week: the number the scoreboard shows
     is_matchup_day: bool
     home_away: str
     status: str
@@ -818,6 +819,7 @@ class TeamSeriesGameOut(BaseModel):
 
 class TeamSeriesOut(BaseModel):
     series_id: int
+    series_number: int | None = None    # 1-based round of the league (matchups starting the same day), as the scoreboard counts
     opponent_id: int
     opponent_name: str
     start_date: datetime.date
@@ -941,6 +943,7 @@ class SeriesStandingsOut(BaseModel):
     division_winners_qualify: bool = True
     division_winners_seeded_first: bool = True
     playoff_consolation: bool = False
+    games_counted: int = 0              # FINAL games in the table; GP across teams is twice this
     standings: list[SeriesStandingOut]
 
 

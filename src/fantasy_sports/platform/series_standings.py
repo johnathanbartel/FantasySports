@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from fantasy_sports.platform import game_results
 from fantasy_sports.platform import tiebreakers as tb
 from fantasy_sports.platform.db.models.core import LeagueSeries, SeriesDailyGame, Team
 
@@ -148,8 +149,12 @@ def load_league(db: Session, league_id: int) -> tuple[list[int], list[SeriesReco
     if ids:
         rows = db.query(SeriesDailyGame).filter(SeriesDailyGame.series_id.in_(ids)).order_by(
             SeriesDailyGame.calendar_date, SeriesDailyGame.id)
-        games = [GameRecord(g.series_id, g.calendar_date, g.home_team_id, g.away_team_id, g.home_score, g.away_score,
-                            g.status == "FINAL", g.id) for g in rows]
+        rows = list(rows)
+        canonical = game_results.final_scores(db, league_id=league_id)
+        games = []
+        for g in rows:
+            home, away = game_results.score_of(g, canonical)
+            games.append(GameRecord(g.series_id, g.calendar_date, g.home_team_id, g.away_team_id, home, away, g.status == "FINAL", g.id))
     return team_ids, series, games
 
 
