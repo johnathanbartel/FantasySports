@@ -29,9 +29,15 @@ def main() -> int:
     db = SessionLocal()
     if engine.dialect.name == "postgresql":
         db.execute(text("SET TRANSACTION READ ONLY"))
+    where = engine.url.render_as_string(hide_password=True)
+    print(f"Database: {where}")
     league = db.get(League, args.league)
-    if league is None or league.series_length_days is None:
-        print(f"League {args.league} is not an NHL league")
+    if league is None:
+        print(f"No league with id {args.league} in this database. If it is a production league, set DATABASE_URL to the production "
+              f"database in this terminal first; with no DATABASE_URL this script reads the local fantasy.db.")
+        return 1
+    if league.series_length_days is None:
+        print(f"League {args.league} ({league.name}) is not an NHL league (no series length)")
         return 1
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league.id)}
     team_ids, series, games = ss.load_league(db, league.id)
