@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from sqlalchemy import text
 
-from fantasy_sports.platform import game_results, series_standings as ss
+from fantasy_sports.platform import game_results, series_standings as ss, spoilers
 from fantasy_sports.platform.db.models.core import League, SeriesDailyGame, Team
 from fantasy_sports.platform.db.session import SessionLocal, engine
 
@@ -25,6 +25,7 @@ from fantasy_sports.platform.db.session import SessionLocal, engine
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--league", type=int, required=True, help="league id (not a game id)")
+    ap.add_argument("--as-user", type=int, default=None, help="also print the table the old standings showed this user id (unwatched finals left out)")
     args = ap.parse_args()
     db = SessionLocal()
     if engine.dialect.name == "postgresql":
@@ -58,6 +59,18 @@ def main() -> int:
               f"{s.goals_for}-{s.goals_against}{flag}")
     print(f"Totals: GP {sum(r.games_played for r in canonical)}  W {sum(r.wins for r in canonical)}  L {sum(r.losses for r in canonical)}  "
           f"T {sum(r.ties for r in canonical)}  GF {sum(r.goals_for for r in canonical)}  GA {sum(r.goals_against for r in canonical)}")
+    if args.as_user is not None:
+        # What the OLD standings showed this viewer: finals the viewer has not been allowed to see were left out of the table.
+        _, held = spoilers.final_sims(db, league.id, args.as_user)
+        held_ids = {dg.id for _, dg in held}
+        old_games = [dataclasses.replace(g, final=False) if g.game_id in held_ids else g for g in games]
+        old = {r.team_id: r for r in ss.compute_standings(team_ids, series, old_games, rules=rules)}
+        print(f"\nOld rule for user {args.as_user}: {len(held_ids)} of {len(finals)} finals held back as unwatched")
+        print(f"{'Team':26} {'GP':>3} {'W':>3} {'L':>3} {'T':>3} {'GF':>4} {'GA':>4}   owner user id")
+        owners = {t.id: t.owner_user_id for t in db.query(Team).filter_by(league_id=league.id)}
+        for r in canonical:
+            o = old[r.team_id]
+            print(f"{names[r.team_id][:26]:26} {o.games_played:3} {o.wins:3} {o.losses:3} {o.ties:3} {o.goals_for:4} {o.goals_against:4}   {owners[r.team_id]}")
     drift = game_results.drift(db, league.id)
     print(f"\n{len(drift)} FINAL game(s) whose stored score differs from the published simulation:")
     for d in drift:
