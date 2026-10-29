@@ -5,6 +5,7 @@ platform/game_score.py). Only the publish endpoint writes, and only series_daily
 
 import dataclasses
 import datetime
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -19,6 +20,7 @@ from fantasy_sports.platform import tiebreakers as tiebreaker_rules
 from fantasy_sports.platform.db.models.core import League, LeagueSeries, SeriesDailyGame, Team, User
 from fantasy_sports.platform.db.session import get_db
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["series-standings"])
 
 
@@ -35,10 +37,20 @@ def _nhl_league(db: Session, league_id: int) -> League:
 def read_series_standings(league_id: int, as_of: datetime.date | None = None, db: Session = Depends(get_db),
                           user: User | None = Depends(optional_user)):
     _nhl_league(db, league_id)
+    # Same freshness as the scoreboard and schedule: they finish due games on read, so the table must too or it lags them.
+    try:
+        from fantasy_sports.platform.nhl_daily_sync import auto_sync_league_scoreboard
+        auto_sync_league_scoreboard(db, league_id)
+        db.commit()
+    except Exception:
+        logger.exception("scoreboard sync failed for league %s", league_id)
+        db.rollback()
+    # One read of the committed results, then everything below is computed from that list: the table is a complete snapshot.
+    # The same table for every viewer: a final waits only until an owner opens it or the next game of either team has started
+    # (platform/spoilers.standings_held). What this viewer has watched never changes it.
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
     team_ids, series, games = series_standings.load_league(db, league_id)
-    # Results the viewer has not been allowed to see yet (unwatched games) stay out of the table.
-    _, held = spoilers.final_sims(db, league_id, user.id if user else None)
-    held_ids = {dg.id for _, dg in held}
+    held_ids = spoilers.standings_held(db, league_id, current_eastern_date())
     games = [dataclasses.replace(g, final=False) if g.game_id in held_ids else g for g in games]
     league = db.get(League, league_id)
     teams = db.query(Team).filter_by(league_id=league_id).all()
@@ -57,7 +69,8 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
                               tiebreakers=list(rules.tiebreakers), playoff_byes=playoff_rules.byes,
                               division_winners_qualify=playoff_rules.division_winners_qualify,
                               division_winners_seeded_first=playoff_rules.division_winners_seeded_first,
-                              playoff_consolation=playoff_rules.consolation, standings=[
+                              playoff_consolation=playoff_rules.consolation,
+                              games_counted=sum(1 for g in games if g.final and (as_of is None or g.calendar_date <= as_of)), standings=[
         SeriesStandingOut(rank=r.rank, team_id=r.team_id, team_name=names[r.team_id], wins=r.wins, losses=r.losses,
                           ties=r.ties, goals_for=r.goals_for,
                           goals_against=r.goals_against, goal_diff=r.goal_diff, h2h_wins=r.h2h_wins,
@@ -75,8 +88,8 @@ def read_playoff_odds(league_id: int, simulations: int = Query(1000, ge=100, le=
     """Playoff and bye chances from simulating the rest of the season on each team's Pythagorean strength. An estimate: it never
     eliminates anyone. Games the viewer has not watched yet are treated as unplayed, so this cannot leak a result."""
     league = _nhl_league(db, league_id)
-    _, held = spoilers.final_sims(db, league_id, user.id if user else None)
-    report = elimination.playoff_odds(db, league, simulations, seed, frozenset(dg.id for _, dg in held))
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+    report = elimination.playoff_odds(db, league, simulations, seed, frozenset(spoilers.standings_held(db, league_id, current_eastern_date())))
     if report is None:
         raise HTTPException(409, "Playoff odds need a schedule and an in-season league")
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}

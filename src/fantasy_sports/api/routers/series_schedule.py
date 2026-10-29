@@ -67,7 +67,22 @@ def _project_start_times(db: Session, universe_id: int, rows: list[LeagueSeries]
                 g.first_start_at = eastern_naive_to_utc(min(kicks)).isoformat() + "Z"
 
 
-def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, viewer_user_id: int | None = None) -> SeriesScheduleOut:
+def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, viewer_user_id: int | None = None,
+         project_starts: bool = True) -> SeriesScheduleOut:
+    """The response is built on the ORM rows with this viewer's scores written onto them (what they may see, live totals).
+    Those are display values: autoflush is off while they are set, and they are expired afterwards, so a later flush or commit in
+    the same session can never write a viewer's view of a score over the stored game."""
+    if db is None:
+        return _build_out(league, rows, db, viewer_user_id, project_starts)
+    with db.no_autoflush:
+        try:
+            return _build_out(league, rows, db, viewer_user_id, project_starts)
+        finally:
+            db.expire_all()
+
+
+def _build_out(league: League, rows: list[LeagueSeries], db: Session | None, viewer_user_id: int | None,
+               project_starts: bool) -> SeriesScheduleOut:
     watched_map = {}
     ready_map: dict[int, bool] = {}
     slate_summary = None
@@ -136,8 +151,8 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                         totals = st.totals_through(sim_evs, len(sim_evs))
                         g.home_shots = totals.home_shots
                         g.away_shots = totals.away_shots
-                        g.home_score = max(g.home_score, totals.home_score)
-                        g.away_score = max(g.away_score, totals.away_score)
+                        g.home_score = totals.home_score      # the canonical result (platform/game_results.py), not the older mirror
+                        g.away_score = totals.away_score
                     elif sim.status == "LIVE":
                         elapsed = st.public_elapsed(shape, sim.status, sim.started_at, now_utc)
                         seq = st.count_through([e.game_second for e in sim_evs], elapsed)
@@ -185,7 +200,7 @@ def _out(league: League, rows: list[LeagueSeries], db: Session | None = None, vi
                 else:
                     slate_summary = f"{real_total} real NHL games scheduled today"
 
-        if nhl:
+        if nhl and project_starts:
             _project_start_times(db, nhl.id, rows, current_eastern_date())
 
     for s in rows:
@@ -278,8 +293,11 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db), user:
     league = db.get(League, team.league_id)
     rows = _league_series(db, team.league_id)
     # Final scores follow the scoreboard's no-spoiler rule: shown once the owner has watched (AI vs AI games always are).
-    shown = {g.id: g for s in _out(league, rows, db, viewer_user_id=user.id if user else None).series for g in s.daily_games}
+    # Only scores and watched flags are used here, so the start-time projection (the heaviest, failure-prone part) is skipped.
+    shown = {g.id: g for s in _out(league, rows, db, viewer_user_id=user.id if user else None, project_starts=False).series
+             for g in s.daily_games}
     out = []
+    round_no = {d: i for i, d in enumerate(sorted({r.start_date for r in rows}), start=1)}
     for s in rows:
         if team_id not in (s.team_a_id, s.team_b_id):
             continue
@@ -292,10 +310,11 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db), user:
             visible = final and v.owner_watched
             games.append(TeamSeriesGameOut(
                 daily_game_id=g.id, calendar_date=g.calendar_date, calendar_date_end=g.calendar_date_end,
-                window_index=g.window_index, is_matchup_day=g.is_matchup_day, home_away="home" if home else "away",
+                window_index=g.window_index, game_number=series_schedule.game_number(g.calendar_date, g.window_index),
+                is_matchup_day=g.is_matchup_day, home_away="home" if home else "away",
                 status=g.status, team_score=(v.home_score if home else v.away_score) if visible else None,
                 opponent_score=(v.away_score if home else v.home_score) if visible else None,
                 score_hidden=final and not visible))
-        out.append(TeamSeriesOut(series_id=s.id, opponent_id=opp, opponent_name=names.get(opp, "Opponent"), start_date=s.start_date,
+        out.append(TeamSeriesOut(series_id=s.id, series_number=round_no[s.start_date], opponent_id=opp, opponent_name=names.get(opp, "Opponent"), start_date=s.start_date,
                                  end_date=s.end_date, total_days=s.total_days, status=s.status, games=games))
     return TeamSeriesScheduleOut(team_id=team_id, league_id=team.league_id, series=out)

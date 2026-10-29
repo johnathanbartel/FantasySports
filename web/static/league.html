@@ -2333,7 +2333,9 @@ async function renderTrades() {
 // Team scores are fantasy points (platform/scoring_scale.py); per-player numbers are raw EPA credit.
 const fmt = (x) => (x === null || x === undefined) ? '-' : (x > 0 ? '+' : '') + x.toFixed(2);
 
+let scheduleRenderSeq = 0;
 async function renderSchedule() {
+  const mySeq = ++scheduleRenderSeq;     // an older render that finishes late must not paint over the newest pick
   await refreshOverview();
   const [state, matchups, champ] = await Promise.all([
     api(`/leagues/${LEAGUE_ID}/schedule/state`), api(`/leagues/${LEAGUE_ID}/matchups`), api(`/leagues/${LEAGUE_ID}/championships`)]);
@@ -2402,7 +2404,7 @@ async function renderSchedule() {
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:var(--space-3)">${list.map(card).join('')}</div>
       <div id="m-detail" style="margin-top:var(--space-5)"></div>`;
     view._list = list; view._wk = wk;
-  } else if (state.has_schedule) {
+  } else if (state.has_schedule && selfSchedule) {     // leagues with a generated schedule show it above; no empty-board footer
     board = '<p class="muted">No games to show yet.</p>';
   }
 
@@ -2412,6 +2414,7 @@ async function renderSchedule() {
         ${champ.byes.length ? `<p class="muted" style="margin:var(--space-2) 0 0;font-size:13px">Bye - season over: ${champ.byes.map(b => tn(b.team_id, b.team_name)).join(', ')}</p>` : ''}`
       : '<p class="muted" style="margin:0;font-size:14px">Set once weeks 1-9 are scored: within each conference the #1 team plays #2, #3 plays #4, and so on. In a conference with an odd number of teams the worst team gets a bye and its season is over.</p>'}</div>`;
 
+  if (mySeq !== scheduleRenderSeq) return;
   $('content').innerHTML = banner + mine + board + champBox;
   wireSchedule(state);
 }
@@ -2432,12 +2435,19 @@ async function proScheduleHtml(state) {
       ${ready && isCommissioner ? '<button class="btn btn-primary" id="mk-sched">Generate schedule now</button>' : ''}`);
   }
   if (isHockey()) {
-    const s = await api(`/teams/${t.id}/series-schedule`);
+    let s;
+    try { s = await api(`/teams/${t.id}/series-schedule`); }
+    catch (e) { return head(`<p style="color:var(--color-danger,#b91c1c)">Could not load ${esc(t.name)}'s schedule: ${esc(e.message)}</p>`); }   // never leave another team's table under this pick
     const fmtD = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
-    const rows = s.series.flatMap((x, si) => x.games.map(g => ({x, g, si})))
-      .sort((a, b) => a.g.calendar_date.localeCompare(b.g.calendar_date) || a.g.daily_game_id - b.g.daily_game_id);
-    let gameNo = 0;
-    rows.forEach(r => { r.no = r.g.is_matchup_day ? ++gameNo : null; });   // the team's game number of the season
+    // Numbered as the scoreboard does: Series N (the league's round) and Game 1-3 (Sun-Tue, Wed-Thu, Fri-Sat of that week).
+    // A window the series skipped (the draft ended after it began) keeps its number and is listed as Skipped.
+    const rows = s.series.flatMap((x, si) => {
+      const seriesNo = x.series_number ?? si + 1;
+      const played = x.games.map(g => ({x, g, seriesNo, no: g.game_number, date: g.calendar_date}));
+      const skipped = getSeriesWindows(x.start_date).filter(w => w.isSkipped && !x.games.some(g => g.game_number === w.num))
+        .map(w => ({x, g: null, seriesNo, no: w.num, date: w.startDate, win: w}));
+      return [...skipped, ...played];
+    }).sort((a, b) => a.date.localeCompare(b.date) || (a.g ? a.g.daily_game_id : 0) - (b.g ? b.g.daily_game_id : 0));
     const result = (g) => {
       const link = (txt) => `<a href="/static/nhl-game.html?daily_game_id=${g.daily_game_id}">${txt}</a>`;
       if (!g.is_matchup_day) return '<span class="muted">No matchup</span>';
@@ -2450,7 +2460,10 @@ async function proScheduleHtml(state) {
       return '<span class="muted">Not played</span>';
     };
     return head(`<table class="table"><thead><tr><th>Game</th><th>Series</th><th>Dates</th><th>Opponent</th><th>Home / Away</th><th>Result</th></tr></thead><tbody>
-      ${rows.map(({x, g, si, no}) => `<tr><td>${no ?? '-'}</td><td>${si + 1}</td>
+      ${rows.map(({x, g, seriesNo, no, win}) => g === null
+        ? `<tr><td>${no}</td><td>${seriesNo}</td><td>${fmtD(win.startDate)} - ${fmtD(win.endDate)}</td><td class="muted">-</td><td></td>
+            <td><span class="pill" style="background:var(--color-divider);color:var(--color-text-muted)">Skipped</span> <span class="muted" style="font-size:11px">(draft ended after it began)</span></td></tr>`
+        : `<tr><td>${no ?? '-'}</td><td>${seriesNo}</td>
         <td>${fmtD(g.calendar_date)}${g.calendar_date_end && g.calendar_date_end !== g.calendar_date ? ' - ' + fmtD(g.calendar_date_end) : ''}</td>
         <td>${tn(x.opponent_id, x.opponent_name)}</td><td>${g.is_matchup_day ? (g.home_away === 'home' ? 'Home' : 'Away') : ''}</td><td>${result(g)}</td></tr>`).join('')}
       </tbody></table>
