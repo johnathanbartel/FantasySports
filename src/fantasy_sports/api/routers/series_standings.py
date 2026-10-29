@@ -3,6 +3,7 @@ NHL series standings, rivalry history and Game Score (derived on read; see platf
 platform/game_score.py). Only the publish endpoint writes, and only series_daily_games.game_score_rating.
 """
 
+import dataclasses
 import datetime
 import logging
 
@@ -45,8 +46,12 @@ def read_series_standings(league_id: int, as_of: datetime.date | None = None, db
         logger.exception("scoreboard sync failed for league %s", league_id)
         db.rollback()
     # One read of the committed results, then everything below is computed from that list: the table is a complete snapshot.
-    # Whether this viewer has watched a game never decides if it counts (platform/game_results.py).
+    # The same table for every viewer: a final waits only until an owner opens it or the next game of either team has started
+    # (platform/spoilers.standings_held). What this viewer has watched never changes it.
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
     team_ids, series, games = series_standings.load_league(db, league_id)
+    held_ids = spoilers.standings_held(db, league_id, current_eastern_date())
+    games = [dataclasses.replace(g, final=False) if g.game_id in held_ids else g for g in games]
     league = db.get(League, league_id)
     teams = db.query(Team).filter_by(league_id=league_id).all()
     names = {t.id: t.name for t in teams}
@@ -83,8 +88,8 @@ def read_playoff_odds(league_id: int, simulations: int = Query(1000, ge=100, le=
     """Playoff and bye chances from simulating the rest of the season on each team's Pythagorean strength. An estimate: it never
     eliminates anyone. Games the viewer has not watched yet are treated as unplayed, so this cannot leak a result."""
     league = _nhl_league(db, league_id)
-    _, held = spoilers.final_sims(db, league_id, user.id if user else None)
-    report = elimination.playoff_odds(db, league, simulations, seed, frozenset(dg.id for _, dg in held))
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+    report = elimination.playoff_odds(db, league, simulations, seed, frozenset(spoilers.standings_held(db, league_id, current_eastern_date())))
     if report is None:
         raise HTTPException(409, "Playoff odds need a schedule and an in-season league")
     names = {t.id: t.name for t in db.query(Team).filter_by(league_id=league_id)}

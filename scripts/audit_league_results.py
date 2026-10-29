@@ -59,6 +59,9 @@ def main() -> int:
               f"{s.goals_for}-{s.goals_against}{flag}")
     print(f"Totals: GP {sum(r.games_played for r in canonical)}  W {sum(r.wins for r in canonical)}  L {sum(r.losses for r in canonical)}  "
           f"T {sum(r.ties for r in canonical)}  GF {sum(r.goals_for for r in canonical)}  GA {sum(r.goals_against for r in canonical)}")
+    from fantasy_sports.platform.nhl_daily_sync import current_eastern_date
+    held_now = spoilers.standings_held(db, league.id, current_eastern_date())
+    print(f"New hold rule today: {len(held_now)} of {len(finals)} finals not yet in the live table (unwatched and no next game started)")
     if args.as_user is not None:
         # What the OLD standings showed this viewer: finals the viewer has not been allowed to see were left out of the table.
         _, held = spoilers.final_sims(db, league.id, args.as_user)

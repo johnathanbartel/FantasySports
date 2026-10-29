@@ -29,6 +29,9 @@ patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None).sta
 sync_calls = []
 patch("fantasy_sports.platform.nhl_daily_sync.auto_sync_league_scoreboard", side_effect=lambda db, lid: sync_calls.append(lid)).start()
 
+TODAY = [datetime.date(2026, 10, 28)]
+patch("fantasy_sports.platform.nhl_daily_sync.current_eastern_date", side_effect=lambda: TODAY[0]).start()
+
 db_path = Path(os.environ.get("STANDINGS_CONSISTENCY_DB", "standings_consistency_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
 if db_path.exists():
@@ -163,10 +166,12 @@ db.commit()
 OUTS = {}
 
 
-def derive():
-    """Independent rebuild: nothing from series_standings, only the list of canonical finals recorded above."""
+def derive(skip=()):
+    """Independent rebuild: nothing from series_standings, only the list of canonical finals recorded above (minus `skip` keys)."""
     rows = {t: dict(gp=0, w=0, l=0, t=0, gf=0, ga=0, home=[0, 0, 0], away=[0, 0, 0]) for t in name}
     for _key, home, away, hs, as_ in expected:
+        if _key in skip:
+            continue
         for tid, gf, ga, side in ((home, hs, as_, "home"), (away, as_, hs, "away")):
             r = rows[tid]
             r["gp"] += 1
@@ -181,15 +186,16 @@ def derive():
     return rows
 
 
-def compare(label, out, rows):
+def compare(label, out, rows, n_games=None):
+    n_games = len(expected) if n_games is None else n_games
     for s in out["standings"]:
         r = rows[s["team_id"]]
         got = (s["games_played"], s["wins"], s["losses"], s["ties"], s["points"], s["win_pct"], s["goals_for"], s["goals_against"],
                [s["home_wins"], s["home_losses"], s["home_ties"]], [s["away_wins"], s["away_losses"], s["away_ties"]])
         want = (r["gp"], r["w"], r["l"], r["t"], r["pts"], r["pct"], r["gf"], r["ga"], r["home"], r["away"])
         check(got == want, f"{label}: {name[s['team_id']]} app {got} != rebuilt {want}")
-    check(out["games_counted"] == len(expected), f"{label}: games_counted {out['games_counted']} != {len(expected)}")
-    check(sum(s["games_played"] for s in out["standings"]) == 2 * len(expected), f"{label}: GP != 2 x games")
+    check(out["games_counted"] == n_games, f"{label}: games_counted {out['games_counted']} != {n_games}")
+    check(sum(s["games_played"] for s in out["standings"]) == 2 * n_games, f"{label}: GP != 2 x games")
     check(sum(s["wins"] for s in out["standings"]) == sum(s["losses"] for s in out["standings"]), f"{label}: W != L")
     check(sum(s["goals_for"] for s in out["standings"]) == sum(s["goals_against"] for s in out["standings"]), f"{label}: GF != GA")
     check(sum(s["points"] for s in out["standings"]) == 3 * sum(s["wins"] for s in out["standings"]) + sum(s["ties"] for s in out["standings"]),
@@ -208,6 +214,33 @@ for i, u in enumerate(users[:3]):
     out = client.get(f"/leagues/{lid}/series-standings", headers=login(u)).json()
     check(out["standings"] == anon["standings"], f"viewer {i} sees a different table than the anonymous viewer")
 check(anon["games_counted"] == 15, f"15 finals expected, got {anon['games_counted']}")
+
+# ---- the hold rule: one table for every viewer; a final waits only until an owner opens it or the next game has started -----
+last_games = [f"s2g3:{DE}", f"s2g3:{CA}", f"s2g3:{B}"]       # the DE/TO and CA/T3 pairs have no next game; Boston/Mesa's next is Oct 25
+TODAY[0] = D(2026, 10, 24)
+at24 = client.get(f"/leagues/{lid}/series-standings").json()
+compare("Oct 24, three last games still held", at24, derive(skip=last_games), 12)
+check(client.get(f"/leagues/{lid}/series-standings", headers=login(users[1])).json()["standings"] == at24["standings"],
+      "the held table is the same for every viewer")
+TODAY[0] = D(2026, 10, 25)
+check(client.get(f"/leagues/{lid}/series-standings").json()["games_counted"] == 15, "Oct 25: the games with no next game are released after their end date, and the next game has started for Boston/Mesa")
+TODAY[0] = D(2026, 10, 24)
+# An owner opening a game releases it for everyone.
+db.add(SimulatorReveal(simulator_game_id=db.query(SimulatorGame).filter_by(daily_game_id=game_rows[f"s2g3:{CA}"]).one().id, user_id=users[4].id, mode="SKIPPED"))
+db.commit()
+opened = client.get(f"/leagues/{lid}/series-standings").json()
+compare("Oct 24, Cascade's owner opened his last game", opened, derive(skip=[f"s2g3:{DE}", f"s2g3:{B}"]), 13)
+# Two AI teams: nobody to wait for.
+owner_of = {tid: db.get(Team, tid).owner_user_id for tid in (DE, TO)}
+for tid in (DE, TO):
+    db.get(Team, tid).owner_user_id, db.get(Team, tid).is_ai_owned = None, True
+db.commit()
+compare("Oct 24, Delta v Tootoo both AI", client.get(f"/leagues/{lid}/series-standings").json(), derive(skip=[f"s2g3:{B}"]), 14)
+for tid in (DE, TO):
+    db.get(Team, tid).is_ai_owned, db.get(Team, tid).owner_user_id = False, owner_of[tid]
+db.query(SimulatorReveal).delete()
+db.commit()
+TODAY[0] = D(2026, 10, 28)
 
 # Finals completing out of order: the table taken after only Game 3 was in (before Game 2) was complete for what was final then, and
 # the final table equals the in-order rebuild; a repeated read is byte-for-byte the same.
