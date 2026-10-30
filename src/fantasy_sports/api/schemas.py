@@ -776,6 +776,7 @@ class SeriesDailyGameOut(ORMModel):
     game_score_rating: int = 50
     status: str
     owner_watched: bool = False
+    score_complete: bool = True      # False while this viewer has watched only part of a period-by-period game: the score above is partial
     highlights_ready: bool = False   # the viewer has a simulated period of this game they have not watched yet
     first_start_at: str | None = None   # UTC ISO instant the first segment of the first period begins (wall-clock games)
 
