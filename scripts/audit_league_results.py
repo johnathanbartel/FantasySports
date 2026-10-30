@@ -15,10 +15,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 
 from fantasy_sports.platform import game_results, series_standings as ss, spoilers
-from fantasy_sports.platform.db.models.core import League, SeriesDailyGame, Team
+from fantasy_sports.platform.db.models.core import (
+    League, LeagueSeries, SeriesDailyGame, SimulatorEvent, SimulatorGame, SimulatorReveal, Team,
+)
 from fantasy_sports.platform.db.session import SessionLocal, engine
 
 
@@ -26,6 +28,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--league", type=int, required=True, help="league id (not a game id)")
     ap.add_argument("--as-user", type=int, default=None, help="also print the table the old standings showed this user id (unwatched finals left out)")
+    ap.add_argument("--team", default=None, help="part of a team name: list every game it appears in, stored vs simulation score, and who has watched")
     args = ap.parse_args()
     db = SessionLocal()
     if engine.dialect.name == "postgresql":
@@ -74,6 +77,51 @@ def main() -> int:
         for r in canonical:
             o = old[r.team_id]
             print(f"{names[r.team_id][:26]:26} {o.games_played:3} {o.wins:3} {o.losses:3} {o.ties:3} {o.goals_for:4} {o.goals_against:4}   {owners[r.team_id]}")
+    # Does every game row belong to the two teams of its series? The standings tally a game for its own home/away teams; the schedule
+    # lists it under its series' teams. A disagreement puts one team's result in another team's record.
+    rows = (db.query(SeriesDailyGame, LeagueSeries).join(LeagueSeries, LeagueSeries.id == SeriesDailyGame.series_id)
+            .filter(LeagueSeries.league_id == league.id).order_by(SeriesDailyGame.calendar_date, SeriesDailyGame.id).all())
+    stray = [(g, s) for g, s in rows if {g.home_team_id, g.away_team_id} != {s.team_a_id, s.team_b_id}]
+    print(f"\n{len(stray)} game row(s) whose home/away teams are not the two teams of their series:")
+    for g, s in stray:
+        print(f"  game {g.id} {g.calendar_date} series {s.id} ({names.get(s.team_a_id)} v {names.get(s.team_b_id)}) but game is "
+              f"{names.get(g.home_team_id)} (home) v {names.get(g.away_team_id)} (away), {g.status} {g.home_score}-{g.away_score}")
+    if args.team:
+        pick = [tid for tid, n in names.items() if args.team.lower() in n.lower()]
+        if len(pick) != 1:
+            print(f"\n--team {args.team!r} matches {[names[t] for t in pick]}; give a unique part of the name")
+        else:
+            tid = pick[0]
+            canon = game_results.final_scores(db, league_id=league.id)
+            owners = {t.id: t.owner_user_id for t in db.query(Team).filter_by(league_id=league.id)}
+            print(f"\nEvery game {names[tid]} appears in (by the game's own teams, which is what the standings count):")
+            wl = [0, 0, 0]
+            for g, s in rows:
+                if tid not in (g.home_team_id, g.away_team_id, s.team_a_id, s.team_b_id):
+                    continue
+                sim = db.query(SimulatorGame).filter_by(daily_game_id=g.id).first()
+                last = db.query(func.max(SimulatorEvent.seq)).filter_by(simulator_game_id=sim.id).scalar() if sim else None
+                seen = ""
+                if sim:
+                    rv = db.query(SimulatorReveal).filter(SimulatorReveal.simulator_game_id == sim.id).all()
+                    seen = "; ".join(f"user {r.user_id} {r.mode} {r.cursor_seq}/{last}" for r in rv) or "no one has opened it"
+                c = canon.get(g.id)
+                mine_home = g.home_team_id == tid
+                tag = ""
+                if g.status == "FINAL" and c:
+                    gf, ga = (c[0], c[1]) if mine_home else (c[1], c[0])
+                    tag = "W" if gf > ga else "L" if gf < ga else "T"
+                    wl[0 if tag == "W" else 1 if tag == "L" else 2] += 1
+                line = (f"  game {g.id} {g.calendar_date} series {s.id}: {names[g.home_team_id]} (home) v {names[g.away_team_id]} (away) | "
+                        f"{g.status} stored {g.home_score}-{g.away_score}")
+                if c:
+                    line += f" sim {c[0]}-{c[1]}"
+                if tag:
+                    line += f" -> {names[tid]} {tag}"
+                if seen:
+                    line += f" | {seen}"
+                print(line)
+            print(f"  record from these games: {wl[0]}-{wl[1]}-{wl[2]}; owner of {names[tid]}: user {owners.get(tid)}")
     drift = game_results.drift(db, league.id)
     print(f"\n{len(drift)} FINAL game(s) whose stored score differs from the published simulation:")
     for d in drift:

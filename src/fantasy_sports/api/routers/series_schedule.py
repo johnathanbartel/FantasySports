@@ -85,6 +85,7 @@ def _build_out(league: League, rows: list[LeagueSeries], db: Session | None, vie
                project_starts: bool) -> SeriesScheduleOut:
     watched_map = {}
     ready_map: dict[int, bool] = {}
+    complete_map: dict[int, bool] = {}
     slate_summary = None
     real_total = 0
     real_final = 0
@@ -176,6 +177,7 @@ def _build_out(league: League, rows: list[LeagueSeries], db: Session | None, vie
                         ready_map[g.id] = service.period_marks(sim_evs).get(sim.published_periods or 0, 0) > cursor
                         shown = st.totals_through(sim_evs, cursor)
                         g.home_score, g.away_score = shown.home_score, shown.away_score
+                        complete_map[g.id] = sim.status == "FINAL" and cursor >= len(sim_evs)
 
         nhl = db.query(Universe).join(LeagueUniverse, LeagueUniverse.universe_id == Universe.id).filter(
             LeagueUniverse.league_id == league.id, Universe.code == "nhl"
@@ -208,6 +210,7 @@ def _build_out(league: League, rows: list[LeagueSeries], db: Session | None, vie
         for g in s.daily_games:
             g.owner_watched = watched_map.get(g.id, False)
             g.highlights_ready = ready_map.get(g.id, False)
+            g.score_complete = complete_map.get(g.id, True)
     return SeriesScheduleOut(
         league_id=league.id,
         series_length_days=league.series_length_days,
@@ -307,7 +310,9 @@ def read_team_series_schedule(team_id: int, db: Session = Depends(get_db), user:
             home = g.home_team_id == team_id
             v = shown.get(g.id)
             final = g.status == "FINAL" and v is not None
-            visible = final and v.owner_watched
+            # A result is shown only when it is the whole game: a viewer part-way through the highlights has a partial score, which
+            # would read as a win or loss that the standings (the final score) can contradict.
+            visible = final and v.owner_watched and v.score_complete
             games.append(TeamSeriesGameOut(
                 daily_game_id=g.id, calendar_date=g.calendar_date, calendar_date_end=g.calendar_date_end,
                 window_index=g.window_index, game_number=series_schedule.game_number(g.calendar_date, g.window_index),

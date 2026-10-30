@@ -292,6 +292,25 @@ riv = client.get(f"/leagues/{lid}/rivalries/{B}/{M}").json()
 check(riv["daily_low_wins"] + riv["daily_high_wins"] + riv["daily_ties"] == 6, riv)
 check(len(set(game_rows[e[0]] for e in bm)) == 6, "six distinct games")
 
+# ---- a game watched only part of the way is not a result on the schedule ---------------------------------------------------------
+# Boston v Mesa (4-2, final) published period by period. Boston's owner has watched the first event only (Boston 1-0 up).
+sim_b = db.query(SimulatorGame).filter_by(daily_game_id=game_rows[f"s1g2:{B}"]).one()
+sim_b.published_periods = 3
+rev = SimulatorReveal(simulator_game_id=sim_b.id, user_id=users[0].id, mode="WATCHING", cursor_seq=1)
+db.add(rev)
+db.commit()
+part = client.get(f"/teams/{B}/series-schedule", headers=H).json()
+first_game = part["series"][0]["games"][0]
+check(first_game["status"] == "FINAL" and first_game["score_hidden"] and first_game["team_score"] is None,
+      f"a partly watched final must not show its partial score as a result: {first_game}")
+rev.mode, rev.cursor_seq = "WATCHING", 2           # watched to the last event
+db.commit()
+full = client.get(f"/teams/{B}/series-schedule", headers=H).json()["series"][0]["games"][0]
+check((full["team_score"], full["opponent_score"], full["score_hidden"]) == (4, 2, False), f"fully watched shows the final 4-2: {full}")
+db.delete(rev)
+sim_b.published_periods = None
+db.commit()
+
 # ---- scoreboard and team schedule agree on identity and numbering --------------------------------------------------------------
 ts = client.get(f"/teams/{B}/series-schedule", headers=H).json()
 check([s["series_number"] for s in ts["series"]] == [1, 2, 3], ts["series"])
