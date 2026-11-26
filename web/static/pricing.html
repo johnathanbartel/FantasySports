@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FantasyMotion - Free and Premium</title>
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/retro.js"></script>
+<style>
+  body { margin: 0; }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--space-5); }
+  .plan ul { margin: var(--space-3) 0 var(--space-4); padding-left: 1.2em; line-height: 1.7; }
+  .price { font-size: 30px; font-weight: 700; margin: var(--space-2) 0 0; }
+  .price small { font-size: 14px; font-weight: 400; }
+  .buy-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .banner { padding: var(--space-3); margin-bottom: var(--space-4); border: 2px solid var(--ink); background: var(--panel-2); }
+</style>
+</head>
+<body>
+<div style="min-height:100vh;background:var(--color-bg);color:var(--color-text)">
+
+  <div class="nav" style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-3) var(--space-5);border-bottom:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <a href="/static/index.html" class="nav-brand" style="text-decoration:none;color:inherit;font-weight:700">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        FantasyMotion
+      </a>
+      <a href="/static/index.html">Home</a>
+      <a href="/static/dashboard.html">My leagues</a>
+      <a href="/static/pricing.html" aria-current="page">Premium</a>
+    </div>
+    <div id="nav-auth" style="display:flex;align-items:center;gap:var(--space-3)"></div>
+  </div>
+
+  <div style="max-width:960px;margin:0 auto;padding:var(--space-8) var(--space-5)">
+    <h1 style="margin:0 0 var(--space-2)">Free and Premium</h1>
+    <p class="text-muted" style="margin:0 0 var(--space-5)">Everything you need to play a full season is free. Premium adds the commissioner and AI tools.</p>
+
+    <div id="banner" class="banner" style="display:none"></div>
+
+    <div class="plans">
+      <div class="card plan">
+        <div class="card-kicker">Free</div>
+        <p class="price">$0</p>
+        <ul id="free-list"></ul>
+      </div>
+      <div class="card plan">
+        <div class="card-kicker">Premium</div>
+        <p class="price" id="premium-price"></p>
+        <ul id="premium-list"></ul>
+        <div id="premium-actions"></div>
+      </div>
+    </div>
+    <p class="text-muted" id="test-note" style="margin-top:var(--space-4);font-size:13px;display:none">
+      Test mode: no real money moves. Use Stripe's test card 4242 4242 4242 4242, any future date and any CVC.
+    </p>
+  </div>
+</div>
+
+<script src="/static/session.js"></script>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const banner = (text) => { const b = document.getElementById('banner'); b.textContent = text; b.style.display = text ? '' : 'none'; };
+
+async function go(path, body) {
+  try {
+    const r = await FSC.post(path, body);
+    location.href = r.url;                 // Stripe's own hosted page
+  } catch (e) {
+    banner(e.message);
+  }
+}
+
+async function load() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('checkout') === 'success') banner('Thanks! Your payment went through. Premium switches on as soon as Stripe confirms it, usually within a few seconds.');
+  if (params.get('checkout') === 'cancelled') banner('Checkout was cancelled. Nothing was charged.');
+
+  let plans;
+  try { plans = await FSC.api('/billing/plans'); } catch (e) { banner('Plans are unavailable right now: ' + e.message); return; }
+  document.getElementById('free-list').innerHTML = plans.free.features.map(f => `<li>${esc(f)}</li>`).join('');
+  document.getElementById('premium-list').innerHTML = plans.premium.features.map(f => `<li>${esc(f)}</li>`).join('');
+  document.getElementById('premium-price').innerHTML = plans.premium.prices
+    .map(p => `${esc(p.price)}<small> / ${esc(p.per)}</small>`).join('<br>');
+  if (plans.test_mode) document.getElementById('test-note').style.display = '';
+
+  const box = document.getElementById('premium-actions');
+  const me = plans.me;
+  if (!FSC.user()) {
+    const back = encodeURIComponent(location.pathname);
+    box.innerHTML = `<a class="btn btn-primary" href="/static/login.html?redirect=${back}">Sign in to upgrade</a>`;
+    return;
+  }
+  if (me && me.premium) {
+    const end = me.current_period_end ? new Date(me.current_period_end + 'Z').toLocaleDateString() : '';
+    const note = me.cancel_at_period_end ? `Ends ${esc(end)}.` : (end ? `Renews ${esc(end)}.` : '');
+    box.innerHTML = `<p><strong>You have Premium.</strong> ${note}</p>` +
+      (me.can_manage ? `<button class="btn btn-secondary" id="manage">Manage subscription</button>` : '');
+    const m = document.getElementById('manage');
+    if (m) m.onclick = () => go('/billing/portal');
+    return;
+  }
+  if (!plans.checkout_ready) {
+    box.innerHTML = `<p class="text-muted">Checkout isn't switched on yet. Check back soon.</p>`;
+    return;
+  }
+  box.innerHTML = `<div class="buy-row">` + plans.premium.prices.map(p =>
+    `<button class="btn btn-primary" data-interval="${esc(p.interval)}">${esc(p.label)}: ${esc(p.price)}</button>`).join('') + `</div>`;
+  box.querySelectorAll('button[data-interval]').forEach(b => b.onclick = () => go('/billing/checkout', {interval: b.dataset.interval}));
+}
+load();
+</script>
+</body>
+</html>

@@ -52,6 +52,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/run_mock_recruiting_period.py` | Runs mock recruiting draft with timed periods and sealed bids | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
 | `scripts/run_mock_schedule_rankings.py` | Tests preseason schedule stage, week-10 championships, and rankings | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
 | `scripts/run_mock_scoring.py` | Audits scoring, matchups, standings, and retroactive lineup edits | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB, or live DB if `--keep-live`) |
+| `scripts/seed_billing_smoke_test.py` | Premium billing offline: plans, Stripe Checkout (monthly/yearly, missing settings, live keys refused), signed webhook (bad/old signatures, duplicates, out-of-order, cancel, live events ignored), customer portal, Premium gate on Commissioner Mode and draft grades; Stripe is faked, never called | `.venv-api` | No (Stripe calls are replaced) | Yes (throwaway test DB) |
 | `scripts/seed_auction_smoke_test.py` | Smoke test for timed sealed-bid auction draft engine round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_conference_smoke_test.py` | Smoke test for conference tiers, team placement, and tier expansion | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/seed_demo_league.py` | Seeds demo league with real CFBD rosters, 240-pick draft, and 3 scored weeks | `.venv` | Yes (calls CFBD API, requires `CFBD_API_KEY`; unverified in docstring) | Yes (resets `DATABASE_URL`) |
@@ -93,6 +94,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 There is no pytest test suite. Offline verification commands (PowerShell from repository root):
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_auction_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_billing_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_hockey_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_nba_smoke_test.py`

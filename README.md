@@ -96,6 +96,24 @@ $env:PYTHONPATH = "src"
 Copy `.env.example` to `.env` and supply provider credentials before running
 ingestion. Lookup data and Python packages are included by `pyproject.toml`.
 
+## Free and Premium (Stripe Checkout, test mode)
+
+Everything needed to play a season is free. Premium (per user, every sport) unlocks the features listed in
+`PREMIUM_FEATURES` in `src/fantasy_sports/platform/entitlements.py`: Commissioner Mode and AI draft grades. Remove a
+name from that tuple to make it free again. The pricing page is `/static/pricing.html`; display prices live in
+`PLANS` in `src/fantasy_sports/platform/billing.py` and must match the Stripe prices.
+
+Flow: `POST /billing/checkout` sends the user to Stripe's hosted checkout; Stripe calls `POST /billing/webhook`
+(signature checked), which records the subscription in `user_subscriptions`; that row is what turns Premium on.
+`POST /billing/portal` opens Stripe's page to cancel or change plan. Live keys are refused unless
+`STRIPE_LIVE_MODE_APPROVED=yes`.
+
+Settings (names only): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PREMIUM_MONTHLY`,
+`STRIPE_PRICE_PREMIUM_YEARLY`, optional `FSC_PUBLIC_BASE_URL`. Run `alembic upgrade head` before deploying (adds
+`user_subscriptions` and `billing_events`). Leave `FSC_GRANT_ALL_PREMIUM` unset in Production, or everyone is Premium.
+
+Offline check: `.venv-api\Scripts\python.exe scripts/seed_billing_smoke_test.py`
+
 ## Local verification and demo data
 
 Run the isolated API/database smoke test:
