@@ -36,11 +36,9 @@ for xG-based scoring and roster rules.
 
 ## Branch model
 
-`master` is the single integration branch and deployable source of truth. Sport
-work belongs in short-lived feature branches and returns to `master`; sports do
-not get permanent branches. `origin/main` is a stale initial-commit branch and
-should be removed by a repository administrator once protected-branch settings
-and external integrations have been checked.
+`main` is the single integration branch, the GitHub default branch, and the
+branch Vercel deploys to Production. Sport work belongs in short-lived feature
+branches and returns to `main`; sports do not get permanent branches.
 
 ## Setup
 
@@ -78,6 +76,26 @@ $env:DATABASE_URL = "<production-postgres-url>"
 The bundled frontend is same-origin and needs no CORS configuration. If a
 separate frontend must call the API, set `CORS_ALLOWED_ORIGINS` to a
 comma-separated allowlist of exact origins.
+
+If `DATABASE_URL` is missing on Vercel the site still starts: pages load, API
+calls answer 503 with a plain message, and `/health/details` reports what is
+wrong. After a deploy, open `/health/details` to check the database:
+
+- `"database": "not_configured: ..."` - add `DATABASE_URL` in Vercel and redeploy.
+- `"database": "unreachable (...)"` - the database is down, paused, or the URL is wrong.
+- `"schema": "behind: ..."` or `"empty: ..."` - run `alembic upgrade head` against it.
+
+Environment variables the deployed app reads (names only):
+
+| Name | Needed | Purpose |
+|---|---|---|
+| `DATABASE_URL` (or `POSTGRES_URL`) | Yes | Postgres connection string |
+| `CORS_ALLOWED_ORIGINS` | No | Only for a frontend on another origin |
+| `FSC_SMTP_HOST`, `FSC_SMTP_PORT`, `FSC_SMTP_USER`, `FSC_SMTP_PASSWORD`, `FSC_SMTP_FROM`, `FSC_SMTP_STARTTLS` | No | Outgoing email; without `FSC_SMTP_HOST` emails are only recorded |
+| `FSC_GRANT_ALL_PREMIUM` | No | `1` gives everyone premium; dev only, never in Production |
+| `VERCEL` | Set by Vercel | Turns on the production guards |
+
+`CFBD_API_KEY` is for the ingestion scripts on a workstation, not the website.
 
 Then import the Git repository in Vercel or deploy it with Vercel CLI 48.1.8 or
 newer. Confirm `/health`, `/static/index.html`, and one database-backed endpoint

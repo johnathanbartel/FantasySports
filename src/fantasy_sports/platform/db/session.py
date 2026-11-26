@@ -10,14 +10,28 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+MISSING_DATABASE_MESSAGE = (
+    "DATABASE_URL (or POSTGRES_URL) is required on Vercel; "
+    "SQLite files are not persistent in Vercel Functions."
+)
+
+
+class DatabaseNotConfigured(RuntimeError):
+    """Raised on first database use when the deployment has no database setting.
+
+    The site still starts (pages load, /health says what is missing) instead of
+    every request failing with Vercel's opaque FUNCTION_INVOCATION_FAILED.
+    """
+
+
 DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
+DATABASE_CONFIGURED = True
 if not DATABASE_URL:
     if os.environ.get("VERCEL"):
-        raise RuntimeError(
-            "DATABASE_URL (or POSTGRES_URL) is required on Vercel; "
-            "SQLite files are not persistent in Vercel Functions."
-        )
-    DATABASE_URL = "sqlite:///./fantasy.db"
+        # Never fall back to SQLite on Vercel: function-local files vanish.
+        DATABASE_CONFIGURED = False
+    else:
+        DATABASE_URL = "sqlite:///./fantasy.db"
 elif DATABASE_URL.startswith("postgres://"):
     # SQLAlchemy 2 expects the canonical dialect name. Some hosted Postgres
     # integrations still publish the legacy URI scheme.
@@ -38,9 +52,15 @@ elif DATABASE_URL.startswith("postgresql://"):
         "postgresql://", "postgresql+psycopg2://", 1
     )
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+if DATABASE_CONFIGURED:
+    connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+else:
+    engine = None
+
+    def SessionLocal():  # noqa: N802 - stands in for the sessionmaker of the same name
+        raise DatabaseNotConfigured(MISSING_DATABASE_MESSAGE)
 
 
 def get_db():

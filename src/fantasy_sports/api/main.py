@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
@@ -11,7 +11,8 @@ from fantasy_sports.api.routers import (
     auction, banking, chat, commissioner, draft, draft_broadcast, draft_grades, draft_reset, entitlements, league_home, league_leaders, leagues, media, mock_drafts, offline_draft, offline_phone, pecking_order, pickups, player_card, predraft_hub, recruiting, rosters, schedule, scoring, series_schedule, series_standings, sessions, simulator, teams, trades, watchlist, weekly_redraft,
 )
 from fantasy_sports.platform.db.models.core import League
-from fantasy_sports.platform.db.session import get_db
+from fantasy_sports.platform.db import session as db_session
+from fantasy_sports.platform.db.session import DatabaseNotConfigured, get_db
 
 FRONTEND_DIR = Path(__file__).resolve().parents[3] / "web" / "static"
 
@@ -95,9 +96,46 @@ async def revalidate_static(request, call_next):
     return response
 
 
+@app.exception_handler(DatabaseNotConfigured)
+def database_not_configured(request, exc):
+    """No database setting on this deployment: say so plainly instead of crashing the whole function."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _schema_state() -> str:
+    """Compare the database's migration revision with the newest one in this build (names only, no secrets)."""
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    heads = set(ScriptDirectory.from_config(Config(str(REPO_ROOT / "alembic.ini"))).get_heads())
+    with db_session.engine.connect() as conn:
+        current = set(MigrationContext.configure(conn).get_current_heads())
+    if not current:
+        return "empty: run alembic upgrade head"
+    return "up_to_date" if current == heads else "behind: run alembic upgrade head"
+
+
+@app.get("/health/details", include_in_schema=False)
+def health_details():
+    """Deploy check: is a database configured, reachable, and migrated? Never shows the address or any secret."""
+    if not db_session.DATABASE_CONFIGURED:
+        return {"status": "degraded", "database": "not_configured: set DATABASE_URL (or POSTGRES_URL)",
+                "schema": "unknown"}
+    try:
+        schema = _schema_state()
+    except Exception as exc:  # noqa: BLE001 - report the kind of failure, never the connection string
+        return {"status": "degraded", "database": f"unreachable ({type(exc).__name__})", "schema": "unknown"}
+    status = "ok" if schema == "up_to_date" else "degraded"
+    return {"status": status, "database": "reachable", "schema": schema}
 
 
 @app.get("/l/{slug}", include_in_schema=False)
