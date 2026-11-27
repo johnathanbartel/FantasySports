@@ -1,8 +1,21 @@
 # NCAAB (college basketball) fantasy windows and flexing: specification
 
-Status: windows optimizer built (`src/fantasy_sports/platform/ncaab_windows.py`, report `scripts/ncaab_window_curve.py`, checks `scripts/seed_ncaab_windows_smoke_test.py`). Flexing, database tables, API, UI, ingestion, scoring and the lock rule are **not built**. Ticket FS-038.
+Status: windows optimizer built (`src/fantasy_sports/platform/ncaab_windows.py`, report `scripts/ncaab_window_curve.py`, checks `scripts/seed_ncaab_windows_smoke_test.py`). Flexing, database tables, API, UI, ingestion, scoring and the lock rule are **not built**. Ticket FS-038. Game, flex and window rules settled by the owner on 2026-11-26 (ticket FS-039, see "Settled rules" below).
 
 Related: [hockey spec section 5](hockey_spec.md#5-the-3-game-weekly-schedule--multi-game-window-resolution) (what hockey already does with fixed windows), [basketball scoring decisions](basketball-scoring-decisions.md) (scoring), `analysis/ncaab_schedule/summary.md` (the schedule study this builds on; owner's local files, not in git).
+
+---
+
+## Settled rules (owner's decisions, 2026-11-26)
+
+These six rules are decided. The rest of this document follows them.
+
+1. **Which game counts.** As in hockey, when a player has more than one game in a window, the user picks which of those games counts for his starter slot. The pick must be made before the player's first game in that window starts. If the user makes no pick, the player's first game in the window counts.
+2. **One counted game per slot.** Each starter slot counts at most one game per window. A player's other games in that window score nothing there; the only way to use them is to flex them (rules 4 and 6).
+3. **Empty slots score 0.** A starter slot with no counted game in a window scores 0 for that window. There is no replacement-level credit in v1.
+4. **Flex forward only.** A game can only be flexed into a later window, never an earlier one.
+5. **One window plan per season.** Each NCAAB season has one window plan, shared by every NCAAB league; leagues do not choose their own number of windows. The default is 28 windows, taken from the optimizer. The plan is published and frozen before the season's first lock. A postponed game counts in whichever frozen window holds its new start time.
+6. **Where a flexed game can go.** A flexed game can move to any later window. If the player already has a game in that window, the flexed game is the one that counts for his slot, and it replaces the user's pick or the first-game fallback from rule 1.
 
 ---
 
@@ -22,10 +35,10 @@ Hockey cuts every week into three fixed windows (Sun-Tue, Wed-Thu, Fri-Sat). Col
 
 Two things pull in opposite directions:
 
-1. **Empty starter slots (bad, minimized).** If a window is short, some players' teams don't play in it, and a starter slot can end up with nobody who played. More windows = shorter windows = more empty slots.
-2. **Surplus games (also bad, but the other way).** If a window is long, many teams play twice or three times in it, but only one game per player counts. The extra games are "surplus": real games that score nothing unless they are flexed (see below). Fewer windows = longer windows = more surplus games.
+1. **Empty starter slots (bad, minimized).** If a window is short, some players' teams don't play in it, and a starter slot can end up with nobody who played; that slot scores 0 for the window (rule 3). More windows = shorter windows = more empty slots.
+2. **Surplus games (also bad, but the other way).** If a window is long, many teams play twice or three times in it, but each starter slot counts only one game per window (rule 2). The extra games are "surplus": real games that score nothing unless they are flexed (see below). Fewer windows = longer windows = more surplus games.
 
-There is no single right number of windows. Each season the program runs the real schedule for a range of window counts and shows both numbers side by side; **the season (or the users) picks a point on the curve.** The platform does not hard-code 24, 28 or 31 windows.
+There is no single right number of windows. Each season the program runs the real schedule for a range of window counts and shows both numbers side by side; **one point on the curve is used for the whole season, by every NCAAB league** (rule 5). The default is 28 windows, from the optimizer. Leagues do not choose their own window count.
 
 For 2025-26, for example (per 10-player roster, per season):
 
@@ -53,37 +66,38 @@ The platform provides **regular-season windows only.** Playoffs, conference tour
 
 All fantasy time is US Eastern. A fantasy day starts at 4am Eastern, so a late West Coast game stays with the evening it was played. A window runs from one boundary up to, but not including, the next, and a game belongs to the window in which it **starts**.
 
-### Flexing (rules decided, not built yet)
+### Which game counts, and flexing (rules decided, not built yet)
 
 Flexing is how surplus games stop being wasted:
 
-1. **One counted game per player per window.** If a player's team plays several games in one window, only one counts for that window (as in hockey).
-2. **Forward only, to any later window.** One of the extra games may be moved to a later window, any later window that season (hockey only allows an open window later that same week). A game never moves into a window that has already finished.
-3. **Any eligible position.** The moved game can be placed in any position the player is currently eligible for.
-4. **Start or backup.** The manager can either start the player with that game or set him as the backup for the slot.
+1. **One counted game per starter slot per window.** If a player's team plays several games in one window, only one counts for his starter slot in that window (rule 2). The user picks which one, before the player's first game in that window starts; with no pick, the first game counts (rule 1). A slot with no counted game scores 0 (rule 3).
+2. **Forward only, to any later window.** One of the extra games may be moved to a later window, any later window that season (hockey only allows an open window later that same week). Never to an earlier window (rule 4), so a game never moves into a window that has already finished.
+3. **Even into a window where the player already plays.** Unlike hockey, the target window does not have to be free: if the player already has a game there, the flexed game is the one that counts for that slot, replacing the user's pick or the first-game fallback (rule 6).
+4. **Any eligible position.** The moved game can be placed in any position the player is currently eligible for.
+5. **Start or backup.** The manager can either start the player with that game or set him as the backup for the slot.
 
 In the simulation, flexing a surplus game forward cut the empty slots at 31 windows in the worst season from 5.1 to 1.5 per roster (moving only within the same slot) or 1.2 (guards sharing PG/SG and forwards sharing SF/PF); at 28 windows it leaves 0.04-0.16.
 
-### Publishing and freezing a season's windows (proposal; details are open questions)
+### Publishing and freezing a season's windows (rules decided, not built yet)
 
 1. Before the season, once the schedule is published, the platform runs the optimizer over the season span and shows the curve.
-2. A window count is chosen (the default point on the curve is an open question).
-3. The chosen plan's boundaries are published to every league and **frozen before the first lock.** After that, boundaries never move, so no result is ever rewritten.
-4. The optimizer works from the real schedule. A postponed or added game after the freeze does not move the windows; it simply lands in whichever frozen window holds its new start time. The exact rule for such games is an open question.
+2. The season's plan uses 28 windows by default (rule 5). There is one plan per season, shared by every NCAAB league; leagues do not choose their own window count.
+3. The plan's boundaries are published to every NCAAB league and **frozen before the season's first lock.** After that, boundaries never move, so no result is ever rewritten.
+4. The optimizer works from the real schedule. A postponed or added game after the freeze does not move the windows: it counts in whichever frozen window holds its new start time (rule 5).
 
 ### What the numbers do and don't tell you
 
 - The simulation puts every roster player on a different real team and has no real player or position data. Real rosters cluster (several players from one team or one conference), which makes empty slots more likely, not less.
 - The windows come from the final schedule. Postponements and added games shift where the gaps are, so a plan built in October will be slightly worse in practice than these numbers.
 
-### OPEN QUESTIONS (not decided)
+### Former open questions (all resolved 2026-11-26)
 
-1. **Which game counts** when a player has several in one window: the first, the best, or the average? (Hockey: the earliest game sets the lock and the manager picks which matchup counts; basketball may differ.)
-2. **Cap of one counted game per slot per window**: is it wanted for basketball, and is the surplus unevenness (rosters with many double-game players have more total games) acceptable once flexing exists?
-3. **A starter slot that ends the season empty**: replacement-level credit, or leave it as a loss?
-4. **Backward flexing**: may games also move backward in time, and how are rosters helped in the first windows, when nobody has a banked game yet?
-5. **Publishing**: what gets published and when (the plan must be fixed before the first lock), how postponements are handled (frozen windows with a rule for a moved game), and the default point on the curve.
-6. **Hockey's guardrail**: does "a surplus game can only go to a window where the player has no active game scheduled" also apply to basketball?
+1. **Which game counts** when a player has several in one window: the first, the best, or the average? **Resolved 2026-11-26, rule 1:** the user picks, before the player's first game in the window starts; with no pick, the first game counts.
+2. **Cap of one counted game per slot per window**: is it wanted for basketball, and is the surplus unevenness (rosters with many double-game players have more total games) acceptable once flexing exists? **Resolved 2026-11-26, rule 2:** yes, at most one counted game per starter slot per window; extra games are used only through flexing.
+3. **A starter slot that ends the season empty**: replacement-level credit, or leave it as a loss? **Resolved 2026-11-26, rule 3:** a slot with no counted game in a window scores 0; no replacement-level credit in v1.
+4. **Backward flexing**: may games also move backward in time, and how are rosters helped in the first windows, when nobody has a banked game yet? **Resolved 2026-11-26, rule 4:** no, forward only. There is no special help for the first windows in v1: an empty slot there scores 0 (rule 3).
+5. **Publishing**: what gets published and when (the plan must be fixed before the first lock), how postponements are handled (frozen windows with a rule for a moved game), and the default point on the curve. **Resolved 2026-11-26, rule 5:** one plan per season for every NCAAB league, 28 windows by default, published and frozen before the season's first lock; a postponed game counts in the frozen window holding its new start time.
+6. **Hockey's guardrail**: does "a surplus game can only go to a window where the player has no active game scheduled" also apply to basketball? **Resolved 2026-11-26, rule 6:** no. A flexed game may go to any later window; if the player already has a game there, the flexed game counts for the slot and replaces the pick or first-game fallback.
 
 ---
 
@@ -94,9 +108,9 @@ In the simulation, flexing a surplus game forward cut the empty slots at 31 wind
 1. Roster: 10 players, 5 starters (PG, SG, SF, PF, C) + 5 bench; G fills PG/SG, F fills SF/PF.
 2. One window = one fantasy game (one head-to-head result). No matchup periods, no fixed weekly shape. A season is a sequence of windows over the regular season.
 3. Fantasy time is US Eastern; a day starts at 4am. UTC is converted by hand-coded DST rules (no tz database on the machine): DST starts the second Sunday in March at 07:00 UTC and ends the first Sunday in November at 06:00 UTC.
-4. The window count is not fixed; the optimizer reports a curve and a point is chosen per season.
+4. One window plan per NCAAB season, shared by every NCAAB league; leagues do not set their own window count. The optimizer reports a curve each season and the plan uses N=28 by default. The plan is published and frozen before the season's first lock; a postponed game is assigned to the frozen window holding its new start time (Settled rule 5).
 5. Regular-season span only (see Part 1). Playoffs and tournaments are league-configured.
-6. Flexing: one counted game per player per window; one extra game may move forward to any later window; it fills any position the player is eligible for, as starter or backup; never into a finished window.
+6. Counting and flexing (Settled rules 1-4, 6): each starter slot counts at most one game per window. With several games in a window, the user's pick counts (pick locks at the player's first game in that window); with no pick, the earliest game counts. A slot with no counted game scores 0 (no replacement-level credit in v1). One extra game may move forward to any later window, never backward and never into a finished window; it fills any position the player is eligible for, as starter or backup. The target window may already hold a game for the player: the flexed game then counts for the slot and overrides the pick or earliest-game fallback (no hockey-style "free window" guardrail).
 
 ### B. Cost and surplus
 
