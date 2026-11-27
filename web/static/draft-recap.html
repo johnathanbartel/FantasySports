@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Draft Recap - FantasyMotion</title>
 <link rel="stylesheet" href="/static/styles.css">
+<script src="/static/session.js"></script>
 <style>
 body{margin:0;background:var(--color-bg);color:var(--color-text)}
 .recap{max-width:720px;margin:0 auto;padding:var(--space-4) 16px var(--space-6)}
@@ -44,7 +45,7 @@ const LEAGUE_ID = params.get('league_id') || 1;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const signed = n => (n > 0 ? '+' : '') + n;
 // Public reads only, so a link opens for anyone without signing in.
-const get = async path => { const r = await fetch(path); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); };
+const get = path => FSC.api(path);       // sends the viewer's session, so Premium members see the grades
 const ORD = n => { const s = ['th','st','nd','rd'], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); };
 
 let grades, leagueName = '', teamId = null;
@@ -129,6 +130,7 @@ function setUrl() {
     render();
     setUrl();
   } catch (e) {
+    if (e.status === 402) { box.innerHTML = `<p class="msg text-muted">Draft grades are a Premium feature. <a href="/static/pricing.html">See Premium</a>.</p>`; return; }
     box.innerHTML = `<p class="msg text-muted">Draft recap unavailable: ${esc(e.message)}</p>`;
   }
 })();

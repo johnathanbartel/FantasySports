@@ -3,8 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from fantasy_sports.platform import draft_grades
-from fantasy_sports.platform.db.models.core import Team
+from fantasy_sports.api.auth import optional_user
+from fantasy_sports.platform import draft_grades, entitlements
+from fantasy_sports.platform.db.models.core import Team, User
 from fantasy_sports.platform.db.session import get_db
 
 router = APIRouter(tags=["draft-grades"])
@@ -18,10 +19,12 @@ def _require_nhl_league(db: Session, league_id: int) -> None:
 
 
 @router.get("/leagues/{league_id}/draft-grades")
-def league_draft_grades(league_id: int, db: Session = Depends(get_db)):
+def league_draft_grades(league_id: int, db: Session = Depends(get_db), user: User | None = Depends(optional_user)):
     """Each team's grade for the newest completed snake draft, and every pick's value. `available` is false, with a reason,
-    until a draft is complete and projections exist."""
+    until a draft is complete and projections exist. A Premium feature (platform/entitlements.py): 402 otherwise."""
     _require_nhl_league(db, league_id)
+    if not entitlements.has_feature(db, user, entitlements.DRAFT_GRADES):
+        raise HTTPException(402, "Draft grades are a Premium feature. See /static/pricing.html to upgrade.")
     return draft_grades.draft_grades(db, league_id)
 
 

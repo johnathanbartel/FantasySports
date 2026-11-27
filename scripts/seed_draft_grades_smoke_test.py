@@ -20,6 +20,7 @@ patch("fantasy_sports.platform.injury_sync.fetch_report", return_value=None).sta
 
 db_path = Path(os.environ.get("DRAFT_GRADES_SMOKE_DB", "draft_grades_smoke_test.db"))
 os.environ["DATABASE_URL"] = f"sqlite:///./{db_path.as_posix()}"
+os.environ["FSC_GRANT_ALL_PREMIUM"] = "1"       # draft grades are Premium; this test checks the grades, seed_billing_smoke_test the gate
 if db_path.exists() and not os.environ.get("DRAFT_GRADES_KEEP_DB"):      # DRAFT_GRADES_KEEP_DB=1 keeps the data to look at in a browser
     db_path.unlink()
 
