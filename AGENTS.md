@@ -43,6 +43,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/ingest_nhl_daily_slate.py` | Ingests real NHL schedule, plays, shots and credits for a specific date slate | `.venv` | Yes (NHL API; no key) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_season_points.py` | Ingests full-season stat lines from CFBD and stores ESPN standard points | `.venv` | Yes (CFBD API; requires `CFBD_API_KEY`) | Yes (`DATABASE_URL`) |
 | `scripts/ingest_week_scores.py` | Scores real games for season weeks (games, plays, credits, weekly scores) | `.venv` | Yes (CFBD API; `CFBD_API_KEY` unverified in docstring) | Yes (`DATABASE_URL`) |
+| `scripts/ncaab_window_curve.py` | Read-only NCAAB windows-versus-gaps curve for one season from the saved CBBD files in `analysis/ncaab_schedule/raw/`: expected empty starter slot-windows and surplus games per window count; `--show N` prints the N-window plan | `.venv-api` | No (saved files only; does not read `.env`) | No |
 | `scripts/resimulate_hockey_games.py` | Voids NHL window games the audit calls "locked, differs" so the next sync simulates them again on the full-schedule lineup (dry run default; `--yes` executes; operator-run, never agent-run against production) | `.venv-api` | No (does not read `.env`; uses `DATABASE_URL`) | Yes (`DATABASE_URL`; destructive with `--yes`: deletes the voided games' events and viewers' progress) |
 | `scripts/run_nfl_mock_run.py` | NFL Timed Auction Draft (12 AI teams) plus one scored week, then runs the realism audit | `.venv-api` | No | Yes (throwaway copy `nfl_mock_run.db` of `nfl_score_run.db`) |
 | `scripts/run_mock_auction_draft.py` | Runs timed auction draft end-to-end via FastAPI TestClient | `.venv-api` | No (unverified in docstring) | Yes (throwaway copy DB) |
@@ -70,6 +71,7 @@ All scripts reside in `scripts`. Run using the specified Python interpreter from
 | `scripts/seed_league_branding_smoke_test.py` | League logo and custom URL: slug rules and uniqueness, commissioner-only, `/l/<slug>` redirect, logo type/size checks, serving, removal | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_chat_smoke_test.py` | Chat: league room, draft room and direct messages - members only, validation, rate limit, removal rules, DMs private even from the commissioner, polling with `after_id`, unread counts | `.venv-api` | No | Yes (throwaway test DB) |
 | `scripts/seed_nba_smoke_test.py` | NBA stand-up: universe and 15 roster slots (5 starters + 10 bench) seeded on demand by league creation, 15 draft rounds, series length 5/7/10 and the series schedule shared with hockey (window sport set), window lock, a draft pick, NHL unaffected | `.venv-api` | No | Yes (throwaway test DB) |
+| `scripts/seed_ncaab_windows_smoke_test.py` | Offline checks of the NCAAB window optimizer: hand-coded DST, season spans and team/game counts, plan shape and determinism, cost rises and surplus falls with N, hand-worked ties and brute force, full-season coverage | `.venv-api` | No | No (pure; reads saved files) |
 | `scripts/seed_hockey_smoke_test.py` | Smoke test for the NHL universe, roster slot definitions, and draft round-trip | `.venv-api` | No (unverified in docstring) | Yes (throwaway test DB) |
 | `scripts/verify_hockey_toi_substitution.py` | Offline check that a starter with no ice time in his counting game is replaced by the next player on the pecking order (early, late, skipped chains, unstored boxscore) | `.venv-api` | No (network functions are faked) | No (throwaway temp DB) |
 | `scripts/seed_hockey_universe.py` | Idempotently adds the "nhl" universe + roster slot definitions to whatever `DATABASE_URL` points at, so NHL leagues can be created from the same site already hosting CFB leagues | `.venv-api` | No | Yes (`DATABASE_URL`; additive-only, safe to re-run) |
@@ -96,6 +98,7 @@ There is no pytest test suite. Offline verification commands (PowerShell from re
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_conference_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_hockey_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_nba_smoke_test.py`
+- `.\.venv-api\Scripts\python.exe` `scripts/seed_ncaab_windows_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_join_league_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_mock_draft_smoke_test.py`
 - `.\.venv-api\Scripts\python.exe` `scripts/seed_commissioner_tools_smoke_test.py`
